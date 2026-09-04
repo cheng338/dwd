@@ -17,7 +17,7 @@ except ImportError:
     )
     raise
 
-class DWD(BaseEstimator, LinearClassifierMixin):
+class DWD(LinearClassifierMixin, BaseEstimator):
     def __init__(self, C=1.0, solver_kws=None):
         """
         Parameters

@@ -429,7 +429,7 @@ def V_grad_(u, q=1):
 
 
 # vectorized DWD loss gradient
-V_grad = np.vectorize(V_grad_, excluded=['q'])
+V_grad = np.vectorize(V_grad_, excluded=['q'], otypes=[float])
 
 
 def dwd_obj(X, y, q, lambd, beta, offset):

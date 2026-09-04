@@ -10,7 +10,7 @@ from dwd.kernel_utils import KernelClfMixin
 from dwd.cv import run_cv
 
 
-class KernGDWD(BaseEstimator, KernelClfMixin):
+class KernGDWD(KernelClfMixin, BaseEstimator):
     """
     Kernel Generalized Distance Weighted Discrimination
 
@@ -123,7 +123,7 @@ class KernGDWD(BaseEstimator, KernelClfMixin):
             return None
 
 
-class KernGDWDCV(BaseEstimator, KernelClfMixin):
+class KernGDWDCV(KernelClfMixin, BaseEstimator):
     """
     Fits kernel gDWD with cross-validation. gDWD cross-validation
     can be significnatly faster if certain quantities are precomputed.
