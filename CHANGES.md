@@ -1,5 +1,14 @@
 # Updates
 
+## 1.0.5+compat2
+
+- Replace the removed `np.int` alias with Python's `int` for prediction indices.
+- Put scikit-learn classifier mixins before `BaseEstimator`, following current
+  estimator method-resolution-order requirements.
+- Declare floating output for the vectorized DWD loss gradient so NumPy does not
+  infer an integer output type from an integer-valued first element.
+- Add compatibility regression tests and provenance documentation.
+
 ## 1.0.5 (2022-01-10)
 
 - Since `cvxpy` is not supported on all platforms, make this an optional dependency installable via `pip install dwd[socp]`. 

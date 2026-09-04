@@ -1,5 +1,10 @@
 # Overview
 
+> **Compatibility fork:** This fork is based on upstream DWD 1.0.5 and applies a
+> small set of NumPy/scikit-learn compatibility corrections. The DWD algorithm and
+> its loss-gradient formula are unchanged. See [COMPATIBILITY_FIXES.md](COMPATIBILITY_FIXES.md)
+> for provenance, the exact changes, and validation details.
+
 This package implements Distance Weighted Discrimination (DWD). DWD For details see
 ([Marron et al 2007][marron-et-al], [Wang and Zou 2018][wang-zou]). Originally
 implemented in Python by [Iain Carmichael][iain-carmichael]. Currently maintained by
