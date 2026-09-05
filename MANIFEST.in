@@ -1,3 +1,9 @@
 include LICENSE.txt
-include README.rst
-include updates.MD
+include README.md
+include CHANGES.md
+include COMPATIBILITY_FIXES.md
+include AUDIT_CHANGES.md
+recursive-include tests *.py *.md *.txt
+recursive-include doc *.py *.rst *.md
+recursive-include docs *.py *.rst *.md
+global-exclude *.py[cod]

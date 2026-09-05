@@ -22,9 +22,11 @@ class LinearClassifierMixin(ClassifierMixin):
     """
 
     def decision_function(self, X):
-        check_is_fitted(self)
+        check_is_fitted(self, ['coef_', 'intercept_', 'classes_'])
 
         X = check_array(X, accept_sparse=['csr', 'csc', 'coo'])
+        if X.shape[1] != self.coef_.shape[1]:
+            raise ValueError('Feature count differs from training data.')
         return safe_sparse_dot(X, self.coef_.T, dense_output=True).flatten() + self.intercept_
 
     def predict(self, X):

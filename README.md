@@ -1,21 +1,26 @@
 # Overview
 
-> **Compatibility fork:** This fork is based on upstream DWD 1.0.5 and applies a
-> small set of NumPy/scikit-learn compatibility corrections. The DWD algorithm and
-> its loss-gradient formula are unchanged. See [COMPATIBILITY_FIXES.md](COMPATIBILITY_FIXES.md)
-> for provenance, the exact changes, and validation details.
+> **Audited research fork — 1.0.5+audit1:** Based on upstream DWD 1.0.5, this
+> candidate includes compatibility fixes, performance improvements, and opt-in
+> corrections to the generalized DWD solvers. These corrections can change fitted
+> models and accuracy. Read [AUDIT_CHANGES.md](AUDIT_CHANGES.md) before upgrading.
+> The original DWD loss and gradient formulas and the unregularized intercept are
+> unchanged. Historical compatibility fixes are in
+> [COMPATIBILITY_FIXES.md](COMPATIBILITY_FIXES.md).
 
 This package implements Distance Weighted Discrimination (DWD). DWD For details see
 ([Marron et al 2007][marron-et-al], [Wang and Zou 2018][wang-zou]). Originally
-implemented in Python by [Iain Carmichael][iain-carmichael]. Currently maintained by
-[Kitware, Inc][kitware].
+implemented in Python by [Iain Carmichael][iain-carmichael], with upstream
+maintenance by David Allemang / [Kitware, Inc][kitware]. This independent fork is
+maintained at [cheng338/dwd](https://github.com/cheng338/dwd); audit changes were
+prepared with Codex. Original author credit and the MIT license are retained.
 
 The package currently implements:
 
 - Original DWD formulation solved with Second Order Cone Programming (SOCP) and solved
 using cvxpy.
 
-- Genralized DWD (gDWD) and kernel gDWD solved with the Majorization-Minimization
+- Generalized DWD (gDWD) and kernel gDWD solved with the Majorization-Minimization
 algorithm presented in Wang and Zou, 2018.
 
 
@@ -29,16 +34,38 @@ of the Royal Statistical Society: Series B (Statistical Methodology) 80, no. 1 (
 
 # Installation
 
-The DWD package can be installed via pip or github. This package is currently only
-tested in python 3.6.
+This fork targets Python 3.11+ and scikit-learn 1.6+. The audited configuration is
+Python 3.11.16, NumPy 2.4.6, SciPy 1.17.1 and scikit-learn 1.9.0 on Windows.
+Other dependency combinations are not claimed to have been tested. Install from
+a checkout of this fork, not the upstream PyPI package:
 
 ```
-$ pip install dwd
+python -m pip install .
 ```
 
-The conic solver `socp_dwd.DWD` depends on `cvxpy`, which is not available on all platforms. See [the `cvxpy` installation instructions][cvxpy]. If `cvxpy` dependencies are met, then use `pip install dwd[socp]`. 
+The conic solver `socp_dwd.DWD` depends on optional `cvxpy`. From this checkout,
+use `python -m pip install ".[socp]"` to include it; see the
+[cvxpy installation instructions][cvxpy].
 
-[Flit][flit] is used for packaging, and all package metadata is stored in `pyproject.toml`. To install this project locally or for development, use `flit install` or build a pip-installable wheel with `flit build`.
+[Flit][flit] is the build backend, with metadata in `pyproject.toml`. To build a
+wheel and source distribution, install the `build` frontend and run
+`python -m build`. This does not require compiling NumPy or SciPy.
+
+## Choosing the solver
+
+Set `solver_mode='schur'` explicitly for the corrected linear/kernel MM updates.
+The package default remains `'legacy'` to avoid silently changing existing
+experiments; **legacy retains known update-algebra errors** and is intended for
+historical comparisons only. Both modes leave the intercept unregularized.
+Corrected mode forms its matrices from float64 features. For an externally
+precomputed kernel or eigensystem, compute it in float64 too; casting an already
+rounded float32 matrix cannot restore the lost precision.
+
+`max_iter` controls the step cap. Inspect `converged_`, `n_iter_`,
+`termination_reason_` and `gradient_inf_norm_`; a small objective change alone
+does not prove convergence to the optimum. Larger iteration caps do not guarantee
+better classification accuracy. Corrected mode can reject numerically unstable
+rank-deficient/tiny-penalty combinations rather than silently modify the kernel.
 
 [cvxpy]: https://www.cvxpy.org/install/index.html
 [flit]: https://github.com/takluyver/flit
@@ -73,14 +100,17 @@ from dwd.gen_kern_dwd import KernGDWD
 # sample some non-linear, toy data
 X, y = make_circles(n_samples=200, noise=0.2, factor=0.5, random_state=1)
 
-# fit kernel DWD wit gaussian kernel
+# fit corrected kernel DWD with a Gaussian kernel
 kdwd = KernGDWD(
     lambd=.1, kernel='rbf',
     kernel_kws={'gamma': 1},
+    solver_mode='schur', random_state=1,
+    max_iter=1000, obj_tol=1e-7,
 ).fit(X, y)
 
 # compute training accuracy
-kdwd.score(X, y)  # 0.915
+kdwd.score(X, y)
+print(kdwd.converged_, kdwd.n_iter_, kdwd.gradient_inf_norm_)
 ```
 
 ![kern_dwd][kern_dwd]
@@ -94,11 +124,24 @@ Additional documentation, examples and code revisions are coming soon.
 
 ## Documentation
 
-The source code is located on github: https://github.com/slicersalt/dwd
+Fork: https://github.com/cheng338/dwd . Upstream: https://github.com/slicersalt/dwd .
+The historical example figures/notebooks below are upstream artifacts, not
+new validation results for the corrected solver.
 
 ## Testing
 
-Testing is done using `nose`.
+From a checkout, install the test extras and run the self-contained regression
+suite (no external datasets or neighboring folders required):
+
+```shell
+python -m pip install ".[test]"
+python -m unittest discover -s tests -v
+```
+
+Tests cover the scalar loss/gradient, preserved legacy trajectories, independent
+augmented-system checks of corrected updates, kernel/CV behavior, and optional
+SOCP utilities. Optional-dependency tests skip when those dependencies are absent.
+Passing these tests is not a guarantee of improved accuracy on a new dataset.
 
 ## Contributing
 

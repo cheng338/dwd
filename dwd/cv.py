@@ -1,7 +1,7 @@
-from sklearn.base import clone
+from sklearn.base import clone, is_classifier
 from sklearn.metrics import check_scoring
 from sklearn.utils import check_X_y
-from sklearn.model_selection import check_cv
+from sklearn.model_selection import check_cv, ParameterGrid
 from time import time
 from copy import deepcopy
 import numpy as np
@@ -44,7 +44,7 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     scorer = check_scoring(estimator=clf, scoring=scoring)
 
     # init cross-validation generator
-    cv = check_cv(cv)
+    cv = check_cv(cv, y=y, classifier=is_classifier(clf))
     folds = list(cv.split(X, y))
     n_folds = len(folds)
 
@@ -53,10 +53,16 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
 
     # get tuning path for each fold
     all_cv_results = []
-    for f_idx, (test, train) in enumerate(folds):
-        X_train = X[train, :]
+    for f_idx, (train, test) in enumerate(folds):
+        if getattr(clf, 'kernel', None) == 'precomputed':
+            # A fold trains on its own Gram matrix and predicts with query
+            # rows against training columns, as sklearn's pairwise CV does.
+            X_train = X[train, :][:, train]
+            X_test = X[test, :][:, train]
+        else:
+            X_train = X[train, :]
+            X_test = X[test, :]
         y_train = y[train]
-        X_test = X[test, :]
         y_test = y[test]
 
         # clone(clf) is critical to send a copy! otherwise clf gets modified
@@ -96,7 +102,7 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
         # refit classifier on full training data with best parameters
         best_clf = clone(clf)
         best_clf = best_clf.set_params(**best_params)
-        best_clf = clf.fit(X, y)
+        best_clf = best_clf.fit(X, y)
     else:
         best_clf = None
 
@@ -106,20 +112,26 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
 def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params):
 
     # initalize classifier before cross validation
-    start_time = time()
-    clf.cv_init(X_train)
-    init_runtime = time() - start_time
-
     cv_results = {'params': [],
                   'train_score': [],
                   'test_score': [],
                   'runtime': [],
-                  'init_time': init_runtime}
+                  'init_time': 0.0}
 
     # fit and score classifier for each parameter setting
     # TODO: parallelize here
     for param_setting in DoL2LoD(params):
         clf.set_params(**param_setting)
+
+        # KernGDWD's cache depends on both this training fold and the kernel
+        # parameters. Lambda and q changes can reuse the same eigensystem.
+        needs_init = not cv_results['params']
+        if hasattr(clf, '_cv_cache_matches'):
+            needs_init = not clf._cv_cache_matches(X_train)
+        if needs_init:
+            start_time = time()
+            clf.cv_init(X_train)
+            cv_results['init_time'] += time() - start_time
 
         start_time = time()
         clf.fit(X_train, y_train)
@@ -140,7 +152,7 @@ def listify(x):
     """
     Returns a list
     """
-    if not hasattr(x, '__len__'):
+    if isinstance(x, (str, dict)) or not hasattr(x, '__len__'):
         return [x]
     else:
         return x
@@ -148,10 +160,10 @@ def listify(x):
 
 def DoL2LoD(DL):
     """
-    Converts a dict of lists to a list of dices
+    Convert a dict of value lists to its full Cartesian parameter grid.
     """
     dl = deepcopy(DL)
     for k in dl.keys():
         dl[k] = listify(dl[k])
 
-    return [dict(zip(dl, t)) for t in zip(*dl.values())]
+    return list(ParameterGrid(dl))
