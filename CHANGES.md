@@ -1,5 +1,20 @@
 # Updates
 
+## 1.0.5+audit1 (release candidate)
+
+- Add opt-in `solver_mode='schur'` corrections for linear and kernel generalized
+  DWD; retain the explicitly documented legacy default for reproducibility.
+- Accelerate loss/gradient evaluation and repeated matrix operations; expose
+  iteration, initialization, stopping and convergence diagnostics.
+- Correct built-in cross-validation, kernel mean-difference and binary-label
+  handling; vectorize equivalent SOCP constraints and validate solver outcomes.
+- Promote corrected-mode features to float64 before forming Gram matrices;
+  normalize array-like kernels, invalidate incompatible caches and reject
+  nonfinite objectives. No kernel ridge or eigenvalue truncation is introduced.
+- Ship self-contained attributed regression fixtures, independent numerical
+  tests and updated packaging metadata. See [AUDIT_CHANGES.md](AUDIT_CHANGES.md)
+  for result-changing corrections and numerical limitations.
+
 ## 1.0.5+compat2
 
 - Replace the removed `np.int` alias with Python's `int` for prediction indices.

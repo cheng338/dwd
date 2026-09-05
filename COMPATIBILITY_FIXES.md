@@ -1,5 +1,9 @@
 # DWD 1.0.5 compatibility fork
 
+Historical record for `1.0.5+compat2`. The newer `1.0.5+audit1` candidate also
+contains result-changing solver corrections and optimizations; see
+[AUDIT_CHANGES.md](AUDIT_CHANGES.md). Statements below describe compat2 only.
+
 This repository is a compatibility-focused fork of
 [`slicersalt/dwd`](https://github.com/slicersalt/dwd), based on upstream commit
 `b564db19193674d967a9dc9327709869d5b67078` and the DWD 1.0.5 release.
@@ -45,5 +49,4 @@ The compatibility tests verify that:
 - estimator mixins precede `BaseEstimator` in the affected class MROs; and
 - package metadata reports `1.0.5+compat2`.
 
-The fixes were also exercised in the associated Python 3.11 experiment
-environments with current NumPy and scikit-learn releases.
+The fixes were also exercised with Python 3.11, NumPy and scikit-learn.
