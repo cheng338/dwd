@@ -3,7 +3,7 @@ from sklearn.metrics.pairwise import pairwise_kernels
 
 from sklearn.utils.extmath import safe_sparse_dot
 from sklearn.base import ClassifierMixin
-from sklearn.utils.validation import FLOAT_DTYPES
+from sklearn.utils.validation import FLOAT_DTYPES, check_is_fitted
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils import check_array
 
@@ -12,6 +12,11 @@ class KernelClfMixin(ClassifierMixin):
     """
     Mixin for kernel classifiers.
     """
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.input_tags.pairwise = getattr(self, 'kernel', None) == 'precomputed'
+        return tags
+
     # def __init__(self, kernel, kernel_kws={}):
     #     # TODO: kernel centering
     #     self.kernel = kernel
@@ -40,18 +45,28 @@ class KernelClfMixin(ClassifierMixin):
         """
 
         if self.kernel == 'precomputed':
-            return X
+            # Public sklearn convention: queries by training observations.
+            # Internally this mixin multiplies K.T by training coefficients.
+            X = check_array(X, dtype='numeric', accept_sparse='csr')
+            if X.shape[1] != self._Xfit.shape[0]:
+                raise ValueError('A precomputed query kernel must have one column per training observation.')
+            return X.T
 
         elif callable(self.kernel):
-            return self.kernel(X=self._Xfit,
-                               Y=X,
-                               kernel=self.kerel)
+            # Matrix-level callable(X_train, X_query, **kernel_kws), matching
+            # KernGDWD's documented callback contract.
+            K = self.kernel(self._Xfit, X, **(self.kernel_kws or {}))
+            K = check_array(K, dtype='numeric', accept_sparse='csr')
+            if K.shape != (self._Xfit.shape[0], X.shape[0]):
+                raise ValueError('A callable kernel must return training-by-query values.')
+            return K
 
         elif isinstance(self.kernel, str):
             return pairwise_kernels(X=self._Xfit,
                                     Y=X,
                                     metric=self.kernel,
-                                    **self.kernel_kws)
+                                    **(self.kernel_kws or {}))
+        raise ValueError('kernel must be a named kernel, matrix callable, or precomputed.')
 
     def decision_function(self, X):
         """Predict confidence scores for samples.
@@ -69,6 +84,10 @@ class KernelClfMixin(ClassifierMixin):
             class would be predicted.
         """
 
+        check_is_fitted(self, ['dual_coef_', 'intercept_', 'classes_', '_Xfit'])
+        X = check_array(X, dtype='numeric', accept_sparse='csr')
+        if self.kernel != 'precomputed' and X.shape[1] != self._Xfit.shape[1]:
+            raise ValueError('Feature count differs from training data.')
         K = self._compute_kernel(X)
 
         scores = safe_sparse_dot(K.T, self.dual_coef_.T,
@@ -94,14 +113,12 @@ class KernelClfMixin(ClassifierMixin):
         return self.classes_[indices]
 
 
-class KernelScaler(BaseEstimator, TransformerMixin):
-    """Center a kernel matrix
-    Let K(x, z) be a kernel defined by phi(x)^T phi(z), where phi is a
-    function mapping x to a Hilbert space. KernelScaler scales (i.e.,
-    normalized to have zero norm) the data without explicitly computing phi(x).
-    It is equivalent to centering phi(x) with
-    sklearn.preprocessing.StandardScaler(with_mean=False).
-    Read more in the :ref:`User Guide <kernel_centering>`.
+class KernelScaler(TransformerMixin, BaseEstimator):
+    """Legacy diagonal scaling of a square training kernel.
+
+    Scales K_ij by n / sqrt(K_ii K_jj), so the resulting diagonal equals n.
+    This operation neither centers features nor performs featurewise variance
+    standardization. The historical normalization factor n is preserved.
     """
 
     def __init__(self):
@@ -119,7 +136,12 @@ class KernelScaler(BaseEstimator, TransformerMixin):
         self : returns an instance of self.
         """
         K = check_array(K, dtype=FLOAT_DTYPES)
-        self.K_diag_ = np.diag(K)
+        if K.shape[0] != K.shape[1]:
+            raise ValueError('KernelScaler requires a square training kernel.')
+        self.K_diag_ = np.diag(K).copy()
+        if np.any(self.K_diag_ <= 0):
+            raise ValueError('KernelScaler requires a strictly positive diagonal.')
+        self.n_features_in_ = K.shape[1]
         return self
 
     def transform(self, K, copy=True):
@@ -134,14 +156,18 @@ class KernelScaler(BaseEstimator, TransformerMixin):
         -------
         K_new : numpy array of shape [n_samples1, n_samples2]
         """
-        # check_is_fitted(self, 'K_diag_')
+        check_is_fitted(self, 'K_diag_')
 
         K = check_array(K, copy=copy, dtype=FLOAT_DTYPES)
 
         n = len(self.K_diag_)
+        if K.shape != (n, n):
+            raise ValueError('KernelScaler only supports kernels with the fitted square shape.')
         s = 1.0 / np.sqrt(self.K_diag_ / n)
 
-        return np.multiply(np.multiply(s, K), s)
+        K *= s[None, :]
+        K *= s[:, None]
+        return K
 
     @property
     def _pairwise(self):

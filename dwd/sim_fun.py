@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 
 def tuning_curve(X_train, y_train, X_test, y_test,
-                 tuning_params, algo, solver_kws={}):
+                 tuning_params, algo, solver_kws=None):
     """
     Plots tuning curve for a provided set of tuning parameters.
     """
@@ -14,7 +14,10 @@ def tuning_curve(X_train, y_train, X_test, y_test,
     test_error = np.zeros(n_tune_values)
 
     for i, param in enumerate(tuning_params):
-        beta, offset, problem = algo(X_train, y_train, param, solver_kws)
+        # Passing this positionally was interpreted as sample_weight by the
+        # package's solvers and raised NotImplementedError.
+        solution = algo(X_train, y_train, param, solver_kws=solver_kws)
+        beta, offset = solution[:2]
 
         tr_pred = lin_clf_predict(X_train, beta, offset)
         test_pred = lin_clf_predict(X_test, beta, offset)

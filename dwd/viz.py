@@ -66,9 +66,16 @@ def clf2D_slope_intercept(coef=None, intercept=None, clf=None):
 
     if clf is not None:
         coef = clf.coef_.reshape(-1)
-        intercept = float(clf.intercept_)
+        intercept = np.asarray(clf.intercept_).item()
     else:
-        assert coef is not None and intercept is not None
+        if coef is None or intercept is None:
+            raise ValueError('Provide a fitted classifier or both coef and intercept.')
+        coef = np.asarray(coef).reshape(-1)
+        intercept = np.asarray(intercept).item()
+    if len(coef) != 2 or not np.isfinite(coef).all() or not np.isfinite(intercept):
+        raise ValueError('A finite two-dimensional separating hyperplane is required.')
+    if coef[1] == 0:
+        raise ValueError('A vertical separating line has no finite slope/intercept representation.')
 
     slope = - coef[0] / coef[1]
     intercept = - intercept / coef[1]
