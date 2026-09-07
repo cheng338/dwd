@@ -52,7 +52,7 @@ class DWDPerformanceTests(unittest.TestCase):
                         alpha_init=self.alpha, offset_init=.04,
                         obj_tol=0., max_iter=45, K_eig=self.eig)
             before = old.solve_gen_kern_dwd(**args)
-            after = solve_gen_kern_dwd(**args)
+            after = solve_gen_kern_dwd(**args, solver_mode='legacy')
             for a, b in zip(before, after):
                 assert_allclose(a, b, rtol=1e-11, atol=1e-12)
             assert_array_equal(self.K @ before[0] + before[1] > 0,
@@ -106,9 +106,16 @@ class DWDPerformanceTests(unittest.TestCase):
             model.cv_init(self.X)
             model.fit(self.X, self.y)
             model.set_params(lambd=.2).fit(self.X, self.y)
-            self.assertEqual(eig.call_count, 1)
+            self.assertEqual(eig.call_count, 0)
             model.set_params(kernel_kws={'gamma': .6}).fit(self.X, self.y)
-            self.assertEqual(eig.call_count, 2)
+            # Auto now uses Cholesky after invalidating the old gamma cache.
+            # A fresh fit must agree; requiring a new eigendecomposition here
+            # would force the implementation to discard the faster backend.
+            self.assertEqual(eig.call_count, 0)
+            self.assertEqual(model.backend_, 'cholesky')
+            fresh = clone(model).fit(self.X, self.y)
+            assert_allclose(model.decision_function(self.X),
+                            fresh.decision_function(self.X), rtol=1e-12, atol=1e-12)
         with self.assertRaises(ValueError):
             model.fit(self.X, self.y, K=np.eye(2))
 
