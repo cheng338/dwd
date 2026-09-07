@@ -2,7 +2,7 @@
 
 This record describes the revised publication snapshot. The earlier local 1.3.2
 snapshot passed 324 tests under MKL, but initial GitHub checks subsequently
-exposed two test portability problems and a real spectral rounding failure
+exposed test portability problems and a real spectral rounding failure
 under OpenBLAS. Those earlier passes are not evidence that the original snapshot
 passed other runtimes. The original local archives and receipts are preserved.
 
@@ -49,6 +49,16 @@ the scalar intercept correction that one natural-case test assumed. That test
 now permits zero corrections while retaining its Decimal accuracy thresholds
 and bounded refinement checks. A separate injected case still requires exactly
 one correct scalar adjustment.
+
+Another test required one raw spectral auxiliary inverse action to certify an
+accurate state for a matrix with roughly 2^60 diagonal scale variation. Such an
+action can produce a conservative error bound even when the state is accurate.
+This was reproduced under a different OpenBLAS CPU kernel; the full production
+spectral solver passed using its existing equilibrated recovery. The revised
+test checks the one-action bound using an independent structured auxiliary
+solution, and separately requires both native production solvers to satisfy the
+original Decimal accuracy checks. It does not weaken any acceptance threshold
+or add hidden recovery to the measurement function.
 
 An extreme n=120 synthetic kernel exposed a real float64 readout problem under
 OpenBLAS: multiple checked eigenbasis representations converged to the same
