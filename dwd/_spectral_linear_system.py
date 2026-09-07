@@ -200,6 +200,10 @@ class SpectralLinearSystem(KernelLinearSystem):
         self._raise_recovery_exhausted()
 
     def _run_with_recovery(self, operation, *args):
+        # A readout-work allowance belongs to the complete action, not each
+        # of its at most five inverse representations. Healthy actions never
+        # import or allocate the optional refinement helper.
+        self._readout_budget = None
         for _ in range(5):
             if self.vectors is None:
                 self._prepare_next_recovery('No usable spectral inverse remains.')
@@ -227,6 +231,40 @@ class SpectralLinearSystem(KernelLinearSystem):
         w = self._inverse_action(rhs)
         s = (_sum(w) - target_sum) / self.denominator
         return w - self.v * s, float(s)
+
+    def _try_readout_refinement(self, rhs, target_sum, x, s):
+        from ._readout_refinement import ReadoutBudget, polish_readout
+        if getattr(self, '_readout_budget', None) is None:
+            self._readout_budget = ReadoutBudget()
+        started = perf_counter()
+        try:
+            result, details = polish_readout(
+                self.K, self.shift, rhs, x, s, target_sum,
+                self._compensated_measure, self._readout_budget)
+        except (FloatingPointError, LinAlgError, OverflowError) as exc:
+            result, details = None, {'status': 'numerical_failure', 'accepted': False,
+                                     'error': f'{type(exc).__name__}: {exc}'}
+        self.info['readout_refinement_attempts'] = self.info.get('readout_refinement_attempts', 0) + 1
+        self.info['readout_refinement_seconds'] = self.info.get('readout_refinement_seconds', 0.) + perf_counter()-started
+        self.info['readout_last_attempt'] = details
+        self.info['readout_action_moves'] = self._readout_budget.moves
+        self.info['readout_action_matrix_entry_work'] = self._readout_budget.matrix_entry_work
+        if result is not None:
+            self.info['readout_refinement_acceptances'] = self.info.get('readout_refinement_acceptances', 0) + 1
+        return result
+
+    def _record_checked_result(self, x, s, measured, candidate=False):
+        _, _, constraint, product, maximum, error = measured
+        if candidate:
+            self.info['max_candidate_residual'] = max(self.info.get('max_candidate_residual', 0.), maximum)
+            self.info['max_estimated_rkhs_candidate_error'] = max(
+                self.info.get('max_estimated_rkhs_candidate_error', 0.), error)
+            return x, s, product
+        self.last_product = product
+        self.info['max_linear_residual'] = max(self.info['max_linear_residual'], maximum)
+        self.info['max_constraint_residual'] = max(self.info['max_constraint_residual'], abs(constraint))
+        self.info['max_estimated_rkhs_solve_error'] = max(self.info['max_estimated_rkhs_solve_error'], error)
+        return x, s
 
     def _refinement_budget(self, iteration, budget, initial_residual, measured):
         # Three corrections remain the ordinary bound. A demonstrably
@@ -276,15 +314,20 @@ class SpectralLinearSystem(KernelLinearSystem):
                         self.info['extended_refinement_steps'] = self.info.get('extended_refinement_steps', 0) + 1
             good, residual, constraint, product, maximum, error = measured
             if good:
-                self.last_product = product
-                self.info['max_linear_residual'] = max(self.info['max_linear_residual'], maximum)
-                self.info['max_constraint_residual'] = max(self.info['max_constraint_residual'], abs(constraint))
-                self.info['max_estimated_rkhs_solve_error'] = max(self.info['max_estimated_rkhs_solve_error'], error)
-                return x, s
+                return self._record_checked_result(x, s, measured)
             if refinement == budget:
+                polished = self._try_readout_refinement(rhs, target_sum, x, s)
+                if polished is not None:
+                    return self._record_checked_result(*polished)
                 raise FloatingPointError('The coefficient/eigenbasis reference failed residual accuracy '
                                          'after bounded refinement; no Cholesky substitution was made.')
-            x, s = self._refine_step(x, s, residual, constraint, refinement >= 3)
+            try:
+                x, s = self._refine_step(x, s, residual, constraint, refinement >= 3)
+            except FloatingPointError:
+                polished = self._try_readout_refinement(rhs, target_sum, x, s)
+                if polished is not None:
+                    return self._record_checked_result(*polished)
+                raise
 
     def refine_candidate(self, rhs, x, s, scores):
         """Check the NEW MM state after coefficient subtraction, in model units.
@@ -332,12 +375,18 @@ class SpectralLinearSystem(KernelLinearSystem):
                         self.info['extended_refinement_steps'] = self.info.get('extended_refinement_steps', 0) + 1
             good, residual, constraint, product, maximum, error = measured
             if good:
-                self.info['max_candidate_residual'] = max(self.info.get('max_candidate_residual', 0.), maximum)
-                self.info['max_estimated_rkhs_candidate_error'] = max(
-                    self.info.get('max_estimated_rkhs_candidate_error', 0.), error)
-                return x, s, product
+                return self._record_checked_result(x, s, measured, candidate=True)
             if refinement == budget:
+                polished = self._try_readout_refinement(rhs, 0., x, s)
+                if polished is not None:
+                    return self._record_checked_result(*polished, candidate=True)
                 raise FloatingPointError('The coefficient-reference MM candidate failed original-system '
                                          'accuracy after bounded spectral refinement.')
-            x, s = self._refine_step(x, s, residual, constraint, refinement >= 3)
+            try:
+                x, s = self._refine_step(x, s, residual, constraint, refinement >= 3)
+            except FloatingPointError:
+                polished = self._try_readout_refinement(rhs, 0., x, s)
+                if polished is not None:
+                    return self._record_checked_result(*polished, candidate=True)
+                raise
             scores = None
