@@ -20,8 +20,12 @@ are retained.
 Generic internal CV now rejects nonfinite or invalid scalar scorer results before
 selection/refitting, with candidate, fold and train/test context. Compensated
 prediction preserves the same float64 terms and summation order while reducing
-Python scalar-conversion work. Solver mathematics, defaults and classification
-thresholds are unchanged. Current validation status is in [VALIDATION.md](VALIDATION.md).
+Python scalar-conversion work. Publication checks also exposed a spectral solve
+that could stagnate at float64 rounding limits under OpenBLAS. A bounded final
+refinement now checks neighboring float64 coefficients against the original
+equations and unchanged accuracy gates. The DWD objective, defaults and
+classification thresholds are unchanged. Current validation status is in
+[VALIDATION.md](VALIDATION.md).
 
 ## Install from this release checkout
 
@@ -87,7 +91,10 @@ remain available for optimized fits. None is a low-rank approximation.
 Difficult reference inverse actions have bounded alternative eigenbasis
 representations, including power-of-two equilibration. Every accepted correction
 is checked against the original equations; no Cholesky substitution, added ridge
-or positive-mode truncation occurs.
+or positive-mode truncation occurs. If ordinary spectral refinement stagnates,
+a bounded adjacent-float correction can refine the stored coefficients and free
+intercept. It runs only on a failed solve and cannot bypass the residual,
+coefficient-sum or RKHS accuracy checks. See the guide for its work limits.
 
 If an ordinary MM update still fails numerically, a small exact-rank recovery
 can try the same MM function in selected kernel-column coordinates. It first
@@ -96,7 +103,8 @@ is never accepted. This matters for singular kernels, where the intended functio
 can be representable even when an additional coefficient-sum convention is not.
 The loss, regularization, free intercept and current update remain unchanged.
 Exact work has fixed entry/rank/arithmetic budgets and stays lazy on healthy fits.
-Nine known extreme nearly constant synthetic RBF fits remain unresolved; this is
+An earlier characterization rejected nine extreme nearly constant synthetic
+RBF fits; see [validation](VALIDATION.md) for the current replay outcome. This is
 not a guarantee that every valid kernel will fit. See the numerical boundaries
 in [the guide](docs/kernel_dwd.md) and [validation](VALIDATION.md).
 

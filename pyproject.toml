@@ -61,6 +61,7 @@ Issues = 'https://github.com/cheng338/dwd/issues'
 
 [tool.flit.sdist]
 include = [
+    ".gitattributes",
     ".github/",
     "tests/",
     "doc/",
