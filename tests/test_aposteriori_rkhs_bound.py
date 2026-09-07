@@ -72,7 +72,7 @@ class AposterioriRKHSTests(unittest.TestCase):
         s += math.fsum(residual)/len(x)
         return x, s, ideal
 
-    def test_two_accurate_states_use_one_action_without_overwriting_original_scores(self):
+    def test_accurate_single_action_bounds_states_without_overwriting_original_scores(self):
         values, vectors = eigh(self.K, driver='evd')
         for shift in (1e-14, 1e-6):
             x, s, ideal = self.accurate_state(shift)
@@ -82,9 +82,15 @@ class AposterioriRKHSTests(unittest.TestCase):
                     original_x = x.copy()
                     sentinel = np.arange(len(x), dtype=float)
                     system.last_product = sentinel
-                    candidate = system._candidate
+                    # This test isolates the one-action bound algebra. A raw
+                    # normwise-accurate EVD need not give an accurate inverse
+                    # for tiny modes of this ill-scaled matrix on every BLAS.
+                    # Native inverse/recovery behavior is tested separately.
+                    def accurate_action(rhs, target):
+                        correction, scalar = structured_solution(self.K, shift, rhs, target)
+                        return np.array(list(map(float, correction))), float(scalar)
                     with patch.object(system, 'solve_constrained', side_effect=AssertionError('Recursive solve')), \
-                            patch.object(system, '_candidate', wraps=candidate) as action:
+                            patch.object(system, '_candidate', side_effect=accurate_action) as action:
                         good, _, _, scores, _, estimate = system._measure(self.rhs, 0., x, s)
                     self.assertTrue(good)
                     self.assertEqual(action.call_count, 1)
@@ -99,19 +105,31 @@ class AposterioriRKHSTests(unittest.TestCase):
                     self.assertLessEqual(estimate, details['tolerance'])
 
     def test_actual_production_solver_returns_both_original_ill_scaled_cases(self):
+        values, vectors = eigh(self.K, driver='evd')
         for shift in (1e-14, 1e-6):
-            with self.subTest(shift=shift):
-                system = KernelLinearSystem(self.K, shift)
-                x, s = system.solve_constrained(self.rhs)
-                ideal, _ = structured_solution(self.K, shift, self.rhs)
-                residual, constraint, scores, _, _ = compensated_residual(self.K, shift, self.rhs, x, s, 0.)
-                self.assertLessEqual(np.max(abs(residual)), 1e-10*max(1., np.max(abs(self.rhs))))
-                self.assertLessEqual(abs(constraint), 64*np.finfo(float).eps*max(1., math.fsum(abs(x))))
-                tolerance = 5e-7*max(1., np.sqrt(abs(float(x@scores))))
-                self.assertLessEqual(actual_error(self.K, x, ideal), tolerance)
-                self.assertGreater(system.info['aposteriori_rkhs_acceptances'], 0)
-                self.assertGreater(system.info['intercept_refinement_steps'], 0)
-                assert_array_equal(system.last_product, scores)
+            for system in (KernelLinearSystem(self.K, shift),
+                           SpectralLinearSystem(self.K, shift, vectors, np.maximum(values, 0.))):
+                with self.subTest(shift=shift, action=type(system).__name__):
+                    original_rhs, original_K = self.rhs.copy(), self.K.copy()
+                    x, s = system.solve_constrained(self.rhs)
+                    ideal, _ = structured_solution(self.K, shift, self.rhs)
+                    residual, constraint, scores, _, _ = compensated_residual(self.K, shift, self.rhs, x, s, 0.)
+                    detail = {'shift': shift, 'action': type(system).__name__,
+                              'representation': system.info['factor_representation'],
+                              'linear_residual': float(np.max(abs(residual))),
+                              'last_bound': system.info.get('last_aposteriori_rkhs_check')}
+                    self.assertLessEqual(np.max(abs(residual)), 1e-10*max(1., np.max(abs(self.rhs))), msg=detail)
+                    self.assertLessEqual(abs(constraint), 64*np.finfo(float).eps*max(1., math.fsum(abs(x))), msg=detail)
+                    tolerance = 5e-7*max(1., np.sqrt(abs(float(x@scores))))
+                    self.assertLessEqual(actual_error(self.K, x, ideal), tolerance, msg=detail)
+                    # Required behavior is an accurate native solve, regardless
+                    # of whether its provider needs scalar/bound refinements.
+                    self.assertEqual(system.info['linear_solves'], 1)
+                    self.assertEqual(system.info['added_objective_regularization'], 0.)
+                    self.assertEqual(system.info['positive_eigenvalues_discarded'], 0)
+                    assert_array_equal(system.last_product, scores)
+                    assert_array_equal(self.rhs, original_rhs)
+                    assert_array_equal(self.K, original_K)
 
     def test_normal_public_dwd_fit_uses_bound_and_matches_independent_mm_path(self):
         n, shift = 30, 1e-14
