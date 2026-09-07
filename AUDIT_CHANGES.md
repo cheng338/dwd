@@ -1,5 +1,11 @@
 # Local audit candidate: 1.0.5+audit1
 
+> Historical record, superseded by [release 1.1.0](RELEASE_NOTES.md).
+> The legacy defaults and opt-in corrected-mode advice below describe audit1,
+> not the current release. Version 1.1.0 defaults to corrected Schur algebra and
+> zero initialization, while retaining objective-change stopping. See the
+> [current kernel API](docs/kernel_dwd.md) before reproducing older experiments.
+
 This is a development/release candidate, not the upstream PyPI release.
 It retains the upstream MIT license and original author credit. Original implementation:
 Iain Carmichael; upstream maintenance: David Allemang / Kitware; upstream repository:

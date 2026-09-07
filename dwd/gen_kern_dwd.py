@@ -1,17 +1,20 @@
 import numpy as np
+from scipy.linalg import eigh
 from copy import deepcopy
+from numbers import Integral, Real
 
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_X_y, check_array, check_random_state
 
-from dwd.utils import pm1
+from dwd.utils import pm1, parameters_equal
 from dwd.gen_dwd import V, V_grad
 from dwd.kernel_utils import KernelClfMixin
 from dwd.cv import run_cv
+from dwd._eigen import validated_eigh
 
 
 class KernGDWD(KernelClfMixin, BaseEstimator):
-    """
+    r"""
     Kernel Generalized Distance Weighted Discrimination
 
     Solves the kernel gDWD problem using the MM algorithm derived in Wang and Zou, 2017.
@@ -28,7 +31,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
     q: float
         Tuning parameter for generalized DWD (the exponent on the margin terms). When q = 1, gDWD is equivalent to DWD.
 
-    kernel: str, callable(X, Y, \*\*kwargs)
+    kernel: str, callable(X, Y, **kwargs)
         The kernel to use.
 
     kernel_kws: dict
@@ -47,11 +50,62 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
     max_iter, obj_tol, random_state:
         Maximum MM steps, absolute successive-objective stopping tolerance,
         and initialization seed. Objective tolerance is not a stationarity proof.
+
+    backend : {'auto', 'spectral', 'cholesky', 'lbfgs'}, default='auto'
+        Optimized auto uses a supplied eigenbasis, or a Cholesky factor of the
+        shifted kernel. Each solve is checked against the original MM equations;
+        bounded refinement and a centered factor can recover inaccurate solves.
+        Recovery does not change the objective. Reference accepts only auto or
+        spectral and always uses a checked eigenbasis, with spectral refinement.
+        Invalid supplied eigenpairs are rejected. Unresolved numerical failures
+        raise rather than return an unchecked model.
+
+    implementation : {'optimized', 'reference'}, default='optimized'
+        Reference retains upstream's coefficient-subtraction MM and Gaussian
+        unit-vector initialization, with correctness and numerical repairs.
+        Optimized solves directly for the next state, avoiding cancellation and
+        normally avoiding eigendecomposition. Both use the same DWD objective
+        and an unregularized intercept.
+
+    stopping : {'objective', 'fixed', 'optimality', 'validation'}, default='objective'
+        The default retains the absolute successive-objective rule, obj_tol=1e-5
+        and max_iter=100. Validation stopping requires explicit validation_data.
+
+    initialization : {'auto', 'zero', 'random'}, default='auto'
+        Auto starts optimized fits at zero and reference or explicit legacy fits
+        at a Gaussian unit vector, controlled by random_state. Explicit fit-time
+        alpha_init overrides this setting.
+
+    tol, patience, min_delta, check_interval:
+        Numerical optimality tolerance and explicit validation-stopping controls.
+
+    callback : callable or None
+        Receives an iteration snapshot. Returning True or raising StopIteration
+        requests a stop; snapshot arrays cannot modify the solver's state.
+        Spectral-coordinate and L-BFGS checkpoints are checked against the
+        original kernel before callbacks or validation observe them. These
+        numerical checks add work only when such observations are requested.
+
+    prediction_batch_size : positive int or None
+        Bound the number of query rows used in each prediction kernel allocation.
+
+    acceleration : {None, 'restart'}, default=None
+        Optional score-space momentum with objective-based restart for optimized
+        MM. It preserves the objective and free intercept but changes the
+        finite-iteration estimator. Objective-change stopping need not give the
+        same solution quality as ordinary MM. Reference, legacy and L-BFGS modes
+        do not support this option. Spectral backend requests remain spectral.
     """
 
     def __init__(self, lambd=1.0, q=1.0, kernel='linear',
                  kernel_kws=None, implicit_P=True, max_iter=100,
-                 obj_tol=1e-5, random_state=None, solver_mode='legacy'):
+                 obj_tol=1e-5, random_state=None, solver_mode='schur',
+                 backend='auto', stopping='objective', initialization='auto',
+                 tol=1e-6, patience=3, min_delta=0., check_interval=1,
+                 callback=None, prediction_batch_size=None, implementation='optimized',
+                 acceleration=None):
+        self.implementation = implementation
+        self.acceleration = acceleration
         self.lambd = lambd
         self.q = q
 
@@ -63,9 +117,18 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         self.obj_tol = obj_tol
         self.random_state = random_state
         self.solver_mode = solver_mode
+        self.backend = backend
+        self.stopping = stopping
+        self.initialization = initialization
+        self.tol = tol
+        self.patience = patience
+        self.min_delta = min_delta
+        self.check_interval = check_interval
+        self.callback = callback
+        self.prediction_batch_size = prediction_batch_size
 
     def fit(self, X, y, sample_weight=None, *, K=None, K_eig=None,
-            alpha_init=None, offset_init=None):
+            alpha_init=None, offset_init=None, validation_data=None):
         """Fit the model according to the given training data.
 
         Parameters
@@ -77,24 +140,42 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         y : array-like, shape = [n_samples]
             Target vector relative to X
 
-        sample_weight : array-like, shape = [n_samples], optional
-            Array of weights that are assigned to individual
-            samples. If not provided,
-            then each sample is given unit weight.
+        sample_weight : None
+            Sample weights are not implemented. Every non-None value raises.
+
+        validation_data : (X_validation, y_validation) or None
+            Explicit monitoring data, used only with stopping='validation'.
+            For a precomputed kernel, X_validation is query-by-training.
+            The labels must belong to the fitted training classes; a validation
+            set containing only one of those classes is allowed.
 
         Returns
         -------
         self : object
         """
-        # Explicit precomputation belongs to this exact training fold and
-        # kernel. Reusing a decomposition from a full dataset leaks information.
+        # A failed refit must not combine old coefficients with new training rows.
+        for name in ('dual_coef_', 'intercept_', 'objective_history_', 'obj_vals_',
+                     'n_iter_', 'returned_iteration_', 'final_objective_', 'C_', 'C_conversion_finite_',
+                     'converged_', 'criterion_reached_', 'termination_reason_',
+                     'gradient_inf_norm_', 'rkhs_gradient_norm_', 'dual_gap_',
+                     'backend_', 'diagnostics_', 'validation_history_',
+                     'objective_tolerance_met_', 'optimality_met_',
+                     'stationarity_residual_', 'stationarity_checked_',
+                     'dual_equality_residual_', 'prediction_precision_'):
+            self.__dict__.pop(name, None)
+        self._validate_options(validation_data)
+        if sample_weight is not None:
+            raise NotImplementedError('Sample weights are not implemented for KernGDWD.')
+        # Callers own K's correspondence to X. Supplied eigenpairs are also
+        # checked numerically against K before any corrected MM iterations.
         X, y = check_X_y(X, y, accept_sparse='csr',
                          dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
         self.classes_ = np.unique(y)
         if len(self.classes_) != 2:
             raise ValueError('KernGDWD requires exactly two classes.')
         self.n_features_in_ = X.shape[1]
-        self._Xfit = X  # Store K so we can compute predictions
+        self._Xfit = X
+        internally_constructed = K is None
 
         if K is None:
             if self._cv_cache_matches(X):
@@ -109,42 +190,150 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         K = check_array(K, accept_sparse=False,
                         dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
 
-        # fit DWD
-        alpha, offset, obj_vals, c = \
-            solve_gen_kern_dwd(K=K,
-                               y=y,
-                               lambd=self.lambd,
-                               q=self.q,
-                               alpha_init=alpha_init,
-                               offset_init=offset_init,
-                               sample_weight=sample_weight,
-                               implicit_P=self.implicit_P,
-                               obj_tol=self.obj_tol, max_iter=self.max_iter,
-                               K_eig=K_eig, random_state=self.random_state,
-                               solver_mode=self.solver_mode)
-
-        self.intercept_ = np.asarray(offset).reshape(-1)
-        self.dual_coef_ = alpha.reshape(1, -1)
-        self.obj_vals_ = obj_vals
-        self.objective_history_ = np.asarray(obj_vals)
-        self.n_iter_ = len(obj_vals) - 1
-        self.final_objective_ = float(obj_vals[-1])
-        self.converged_ = bool(len(obj_vals) > 1 and
-                               np.isfinite(obj_vals[-1]) and
-                               abs(obj_vals[-1] - obj_vals[-2]) < self.obj_tol)
-        self.termination_reason_ = ('objective_tolerance' if self.converged_
-                                    else 'max_iter')
-        if not np.all(np.isfinite(obj_vals)):
-            self.termination_reason_ = 'nonfinite_objective'
-        self.C_ = c
-        signed_y = pm1(y)
-        K_alpha = K.dot(alpha)
-        z = signed_y * V_grad(signed_y * (K_alpha + offset), q=self.q) / len(y)
-        gradient_alpha = K.dot(z) + 2 * self.lambd * K_alpha
-        self.gradient_inf_norm_ = float(max(abs(z.sum()),
-                                            np.max(np.abs(gradient_alpha))))
-
+        initial = self.initialization
+        if initial == 'auto':
+            initial = ('random' if self.implementation == 'reference' or self.solver_mode == 'legacy' else 'zero')
+        if alpha_init is None and initial == 'zero':
+            alpha_init = np.zeros(len(y))
+        elif alpha_init is None and self.solver_mode != 'legacy':
+            alpha_init = check_random_state(self.random_state).normal(size=len(y))
+            alpha_init /= np.linalg.norm(alpha_init)
+        # Leave the legacy random initialization inside the preserved function.
+        if self.solver_mode == 'legacy':
+            alpha, offset, obj_vals, c = solve_gen_kern_dwd(
+                K, y, self.lambd, q=self.q, alpha_init=alpha_init,
+                offset_init=offset_init, implicit_P=self.implicit_P,
+                obj_tol=self.obj_tol if self.stopping == 'objective' else 0.,
+                max_iter=self.max_iter, K_eig=K_eig,
+                random_state=self.random_state, solver_mode='legacy')
+            reached = bool(self.stopping == 'objective' and len(obj_vals) > 1 and
+                           abs(obj_vals[-1] - obj_vals[-2]) < self.obj_tol)
+            signed_y = pm1(y)
+            K_alpha = K.dot(alpha)
+            z = signed_y * V_grad(signed_y * (K_alpha + offset), q=self.q) / len(y)
+            gradient_alpha = K.dot(z) + 2 * self.lambd * K_alpha
+            result = dict(alpha=alpha, offset=offset, objective_history=obj_vals,
+                          n_iter=len(obj_vals)-1, returned_iteration=len(obj_vals)-1,
+                          termination_reason='objective_tolerance' if reached else 'max_iter',
+                          converged=False, criterion_reached=reached,
+                          gradient_inf_norm=float(max(abs(z.sum()), np.max(np.abs(gradient_alpha)))),
+                          rkhs_gradient_norm=None, dual_gap=None, C=c,
+                          backend='legacy', diagnostics={'legacy_algebra': True})
+        else:
+            from dwd._kernel_solver import solve_kernel
+            validation = self._prepare_validation(validation_data)
+            result = solve_kernel(
+                K, pm1(y), self.lambd, q=self.q, K_eig=K_eig,
+                alpha_init=alpha_init, offset_init=offset_init,
+                max_iter=self.max_iter, obj_tol=self.obj_tol,
+                stopping=self.stopping, tol=self.tol, backend=self.backend,
+                psd_known=internally_constructed and self._known_psd_kernel(),
+                callback=self.callback, validation=validation,
+                patience=self.patience, min_delta=self.min_delta,
+                check_interval=self.check_interval, implementation=self.implementation,
+                acceleration=self.acceleration)
+        self._set_fit_result(result)
         return self
+
+    def _validate_options(self, validation_data=None):
+        if self.implementation not in ('optimized', 'reference'):
+            raise ValueError("implementation must be 'optimized' or 'reference'.")
+        if self.implementation == 'reference' and self.solver_mode == 'legacy':
+            raise ValueError('The repaired reference requires solver_mode=schur.')
+        if self.acceleration is not None and (not isinstance(self.acceleration, str) or self.acceleration != 'restart'):
+            raise ValueError("acceleration must be None or 'restart'.")
+        if self.acceleration is not None and (self.implementation != 'optimized'
+                or self.solver_mode == 'legacy' or self.backend == 'lbfgs'):
+            raise ValueError('Acceleration is supported only for optimized MM, not reference, legacy or L-BFGS.')
+        if self.solver_mode not in ('legacy', 'schur'):
+            raise ValueError("solver_mode must be 'legacy' or 'schur'.")
+        if not self.implicit_P:
+            raise NotImplementedError('Kernel DWD supports only implicit_P=True.')
+        if self.backend not in ('auto', 'spectral', 'cholesky', 'lbfgs'):
+            raise ValueError("backend must be 'auto', 'spectral', 'cholesky', or 'lbfgs'.")
+        if self.stopping not in ('objective', 'fixed', 'optimality', 'validation'):
+            raise ValueError('Unknown stopping policy.')
+        if self.initialization not in ('auto', 'zero', 'random'):
+            raise ValueError("initialization must be 'auto', 'zero', or 'random'.")
+        if self.callback is not None and not callable(self.callback):
+            raise TypeError('callback must be callable or None.')
+        batch = self.prediction_batch_size
+        if batch is not None and (isinstance(batch, (bool, np.bool_)) or
+                                 not isinstance(batch, Integral) or batch <= 0):
+            raise ValueError('prediction_batch_size must be a positive integer or None.')
+        if self.stopping == 'validation' and validation_data is None:
+            raise ValueError("stopping='validation' requires explicit validation_data.")
+        if self.stopping != 'validation' and validation_data is not None:
+            raise ValueError("validation_data is used only with stopping='validation'.")
+        if self.solver_mode == 'legacy' and (self.backend not in ('auto', 'spectral') or
+                self.stopping not in ('objective', 'fixed') or self.callback is not None):
+            raise ValueError('Legacy mode supports only the spectral backend, objective/fixed stopping, and no callback.')
+
+    def _known_psd_kernel(self):
+        """Only internally constructed kernels with known PSD parameters qualify."""
+        if not isinstance(self.kernel, str):
+            return False
+        if self.kernel == 'linear':
+            return True
+        kws = self.kernel_kws or {}
+        gamma = kws.get('gamma', None)
+        gamma_ok = gamma is None or (isinstance(gamma, Real) and np.isfinite(gamma) and gamma >= 0)
+        if self.kernel == 'rbf':
+            return gamma_ok
+        if self.kernel in ('poly', 'polynomial'):
+            degree, coef0 = kws.get('degree', 3), kws.get('coef0', 1)
+            return bool(gamma_ok and isinstance(degree, Integral) and degree >= 0 and
+                        isinstance(coef0, Real) and np.isfinite(coef0) and coef0 >= 0)
+        return False
+
+    def _prepare_validation(self, validation_data):
+        if validation_data is None:
+            return None
+        if not isinstance(validation_data, (tuple, list)) or len(validation_data) != 2:
+            raise ValueError('validation_data must be an (X_validation, y_validation) pair.')
+        X_val, y_val = check_X_y(*validation_data, accept_sparse='csr', dtype=np.float64)
+        if not np.isin(y_val, self.classes_).all():
+            raise ValueError('Validation labels must belong to the training classes.')
+        if self.kernel != 'precomputed' and X_val.shape[1] != self.n_features_in_:
+            raise ValueError('Validation feature count differs from training data.')
+        K_val = self._compute_kernel(X_val).T
+        if hasattr(K_val, 'toarray'):
+            K_val = K_val.toarray()
+        return (np.asarray(K_val), np.where(y_val == self.classes_[1], 1., -1.))
+
+    def _set_fit_result(self, result):
+        precision = result.get('prediction_precision', 'ordinary')
+        if precision not in ('ordinary', 'compensated', 'adaptive'):
+            raise ValueError('Invalid fitted kernel prediction precision.')
+        self.prediction_precision_ = precision
+        self.intercept_ = np.asarray(result['offset']).reshape(-1)
+        self.dual_coef_ = np.asarray(result['alpha']).reshape(1, -1)
+        self.objective_history_ = np.asarray(result['objective_history'])
+        self.obj_vals_ = self.objective_history_.tolist()
+        self.n_iter_ = int(result['n_iter'])
+        self.returned_iteration_ = int(result['returned_iteration'])
+        self.final_objective_ = float(result.get('final_objective',
+                                     self.objective_history_[self.returned_iteration_]))
+        self.converged_ = bool(result['converged'])
+        self.termination_reason_ = result['termination_reason']
+        self.criterion_reached_ = bool(result.get('criterion_reached', self.converged_ or
+                                      self.termination_reason_ == 'objective_tolerance'))
+        self.C_ = result['C']
+        self.C_conversion_finite_ = bool(np.isfinite(self.C_))
+        self.gradient_inf_norm_ = result['gradient_inf_norm']
+        self.rkhs_gradient_norm_ = result['rkhs_gradient_norm']
+        self.dual_gap_ = result['dual_gap']
+        self.dual_equality_residual_ = result.get('dual_equality_residual')
+        self.stationarity_residual_ = self.rkhs_gradient_norm_
+        self.stationarity_checked_ = self.rkhs_gradient_norm_ is not None
+        self.optimality_met_ = self.converged_
+        self.objective_tolerance_met_ = bool(result.get('objective_tolerance_met',
+                    self.n_iter_ > 0 and abs(self.objective_history_[-1] -
+                                            self.objective_history_[-2]) < self.obj_tol))
+        self.backend_ = result['backend']
+        self.diagnostics_ = result['diagnostics']
+        self.validation_history_ = result.get('validation_history',
+                                               self.diagnostics_.get('validation_history', []))
 
     def cv_init(self, X):
         """
@@ -155,24 +344,37 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                         dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
         self._Xfit = X
 
-        # Warning: we compute the kernel twice -- any way around this
-        # without messing up the SKlearn API too badly?
         K = self._compute_kernel(X)
-        self._set_K_eig(K)
+        if (self.backend in ('auto', 'cholesky') and self.solver_mode == 'schur'
+                and self.implementation == 'optimized'):
+            self._K_eig = None
+        else:
+            # Explicit path initialization opts into eigenvalue reuse across
+            # lambd/q candidates. A normal single fit need not do this work.
+            self._set_K_eig(K)
         self._cv_K = K
         self._cv_X = X.copy()
         self._cv_kernel = self.kernel
         self._cv_kernel_kws = deepcopy(self.kernel_kws)
         self._cv_solver_mode = self.solver_mode
+        self._cv_backend = self.backend
+        self._cv_implementation = self.implementation
         return self
 
     def _cv_cache_matches(self, X):
         """Invalidate hidden precomputation whenever data or kernel changes."""
         if not hasattr(self, '_cv_X'):
             return False
-        if (self.kernel != self._cv_kernel or
-                self.kernel_kws != self._cv_kernel_kws or
+        # Corrected fits and cv_init construct K from float64 features. Compare
+        # that same representation before deciding whether a CV candidate needs
+        # new preparation; float32 inputs otherwise miss every lambda-path cache.
+        if self.solver_mode == 'schur' and X.dtype != np.dtype(np.float64):
+            X = X.astype(np.float64, copy=False)
+        if (not parameters_equal(self.kernel, self._cv_kernel) or
+                not parameters_equal(self.kernel_kws, self._cv_kernel_kws) or
                 self.solver_mode != self._cv_solver_mode or
+                self.backend != self._cv_backend or
+                self.implementation != self._cv_implementation or
                 X.dtype != self._cv_X.dtype or
                 X.shape != self._cv_X.shape):
             return False
@@ -187,7 +389,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         Precomputes eigen decomposition of K matrix which makes
         cross-validation much faster.
         """
-        self._K_eig = get_K_eig(X)
+        self._K_eig = get_K_eig(X, reference=self.implementation == 'reference')
 
     def _get_K_eig(self):
         if hasattr(self, '_K_eig'):
@@ -221,6 +423,11 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
     scoring:
         What metric to use to score cross-validation. See documetnation in sklearn.model_selection.GridSearchCV.
 
+    acceleration : {None, 'restart'}, default=None
+        Forwarded unchanged to every candidate and the final KernGDWD refit.
+        The option changes finite-iteration behavior; ordinary MM remains the
+        default. Only optimized MM supports acceleration.
+
     """
     def __init__(self,
                  lambd_vals=np.logspace(-2, 2, 10),
@@ -228,9 +435,14 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
                  kernel='linear',
                  kernel_kws_vals=None,
                  cv=5, scoring='accuracy', max_iter=100, obj_tol=1e-5,
-                 random_state=None, solver_mode='legacy'):
+                 random_state=None, solver_mode='schur', backend='auto',
+                 stopping='objective', initialization='auto', tol=1e-6,
+                 patience=3, min_delta=0., check_interval=1, callback=None,
+                 prediction_batch_size=None, implementation='optimized', acceleration=None):
 
         self.lambd_vals = lambd_vals
+        self.implementation = implementation
+        self.acceleration = acceleration
         self.q_vals = q_vals
         self.kernel = kernel
         self.kernel_kws_vals = kernel_kws_vals
@@ -241,6 +453,15 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         self.obj_tol = obj_tol
         self.random_state = random_state
         self.solver_mode = solver_mode
+        self.backend = backend
+        self.stopping = stopping
+        self.initialization = initialization
+        self.tol = tol
+        self.patience = patience
+        self.min_delta = min_delta
+        self.check_interval = check_interval
+        self.callback = callback
+        self.prediction_batch_size = prediction_batch_size
 
     def fit(self, X, y, sample_weight=None):
         """Fit the model according to the given training data.
@@ -254,16 +475,18 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         y : array-like, shape = [n_samples]
             Target vector relative to X
 
-        sample_weight : array-like, shape = [n_samples], optional
-            Array of weights that are assigned to individual
-            samples. If not provided,
-            then each sample is given unit weight.
+        sample_weight : None
+            Sample weights are not implemented. Every non-None value raises.
         Returns
         -------
         self : object
         """
         if sample_weight is not None:
             raise NotImplementedError('Sample weights are not implemented for KernGDWDCV.')
+        if self.stopping == 'validation':
+            raise ValueError('KernGDWDCV does not create monitoring splits. Use a plain '
+                             'KernGDWD with explicit validation_data inside an explicitly '
+                             'constructed training/monitoring/CV procedure.')
         X, y = check_X_y(X, y, accept_sparse='csr',
                          dtype='numeric')
 
@@ -279,7 +502,12 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         best_params, best_score, best_clf, agg_results, all_cv_results = \
             run_cv(clf=KernGDWD(kernel=self.kernel, max_iter=self.max_iter,
                                obj_tol=self.obj_tol, random_state=self.random_state,
-                               solver_mode=self.solver_mode),
+                               solver_mode=self.solver_mode, backend=self.backend,
+                               stopping=self.stopping, initialization=self.initialization,
+                               tol=self.tol, patience=self.patience, min_delta=self.min_delta,
+                               check_interval=self.check_interval, callback=self.callback,
+                               prediction_batch_size=self.prediction_batch_size,
+                               implementation=self.implementation, acceleration=self.acceleration),
                    X=X, y=y,
                    params=params,
                    scoring=self.scoring,
@@ -296,10 +524,14 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         self._Xfit = self.best_estimator_._Xfit
         self.intercept_ = self.best_estimator_.intercept_
         self.dual_coef_ = self.best_estimator_.dual_coef_
-
-        self.decision_function = self.best_estimator_.decision_function
+        self.prediction_precision_ = getattr(self.best_estimator_, 'prediction_precision_', 'ordinary')
 
         return self
+
+    def decision_function(self, X):
+        from sklearn.utils.validation import check_is_fitted
+        check_is_fitted(self, 'best_estimator_')
+        return self.best_estimator_.decision_function(X)
 
 
 def solve_gen_kern_dwd(K, y, lambd, q=1,
@@ -307,7 +539,7 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
                        sample_weight=None,
                        implicit_P=True,
                        obj_tol=1e-5, max_iter=100,
-                       K_eig=None, random_state=None, solver_mode='legacy'):
+                       K_eig=None, random_state=None, solver_mode='schur'):
 
     """
     Solves the kernel gDWD problem using the MM algorithm derived in Wang and Zou, 2017.
@@ -343,10 +575,12 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
         Maximum number of iterations to perform.
 
     K_eig: None or (U, D)
-        Optional. Trusted precomputed eigendecomposition of this exact K.
-        Shapes and finiteness are checked; callers are responsible for matching
-        K and an orthonormal basis. A full O(n^3) reconstruction check is not
-        repeated for each regularization candidate.
+        Optional precomputed eigendecomposition of this exact K. Supplied
+        pairs are validated against K for finite values, vector norms,
+        orthogonality and eigen-equation consistency. Large matrices use
+        bounded numerical probes rather than a full cubic reconstruction;
+        these checks are numerical screening, not a formal certificate.
+        Invalid supplied pairs are rejected without silently recomputing them.
     """
 
     # argument checking and formatting
@@ -367,7 +601,7 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
 
     # TODO: add sample weights
     if sample_weight is not None:
-        raise NotImplementedError
+        raise NotImplementedError('Sample weights are not implemented for kernel DWD.')
 
     K, y = check_X_y(K, y, accept_sparse=False,
                      dtype=np.float64 if solver_mode == 'schur' else 'numeric')
@@ -383,6 +617,15 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
     # convert y to +/- 1
     y = pm1(y)  # convert y to  y +/- 1
 
+    if solver_mode == 'schur':
+        if not implicit_P:
+            raise NotImplementedError('Kernel DWD supports only implicit_P=True.')
+        from dwd._kernel_solver import solve_kernel
+        result = solve_kernel(K, y, lambd, q=q, K_eig=K_eig,
+                              alpha_init=alpha_init, offset_init=offset_init,
+                              max_iter=max_iter, obj_tol=obj_tol)
+        return result['alpha'], result['offset'], result['objective_history'].tolist(), result['C']
+
     n_samples = K.shape[0]
     M = (q + 1) ** 2 / q
 
@@ -391,12 +634,7 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
 
         # precompute data needed to do implicit P^{-1} gamma
         if K_eig is not None:
-            U, Lam = K_eig
-            U, Lam = np.asarray(U), np.asarray(Lam).ravel()
-            if U.shape != (n_samples, n_samples) or len(Lam) != n_samples:
-                raise ValueError('K_eig dimensions must match K.')
-            if not np.isfinite(U).all() or not np.isfinite(Lam).all():
-                raise ValueError('K_eig must contain finite values.')
+            Lam, U = validated_eigh(K, supplied=K_eig)
         else:
             U, Lam = get_K_eig(K)
 
@@ -443,8 +681,11 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
 
     # initialize variables
     if alpha_init is None:
-        alpha = check_random_state(random_state).normal(size=n_samples)
-        alpha /= np.linalg.norm(alpha)
+        if solver_mode == 'schur':
+            alpha = np.zeros(n_samples)
+        else:
+            alpha = check_random_state(random_state).normal(size=n_samples)
+            alpha /= np.linalg.norm(alpha)
     else:
         alpha = np.asarray(alpha_init, dtype=float).copy()
         if alpha.shape != (n_samples,) or not np.isfinite(alpha).all():
@@ -494,13 +735,13 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
 
     # tuning paramter for SOCP formulation
     c = c_from_lambd(K, lambd, q, alpha, K_alpha=K_alpha)
-    if not np.isfinite(c):
+    if np.isnan(c):
         raise FloatingPointError('Kernel DWD produced a nonfinite SOCP-parameter conversion.')
 
     return alpha, offset, obj_vals, c
 
 
-def get_K_eig(K):
+def get_K_eig(K, *, reference=False):
     """
     Computes the eigendecomposition of K.
 
@@ -520,7 +761,7 @@ def get_K_eig(K):
         Eigenvalues of K in decending order.
     """
 
-    Lam, U = np.linalg.eigh(K)
+    Lam, U = validated_eigh(K, drivers=('evd', 'evr', 'evx'))
     Lam = Lam[::-1]  # sort evals in decending order
     # A reversed-column view has negative strides. BLAS would copy that entire
     # O(n^2) array at every matrix-vector product; materialize it once here.
@@ -530,7 +771,7 @@ def get_K_eig(K):
 
 
 def get_step_implicit_P(K, y, q, lambd, alpha, offset, U, Lam, pi, v, g,
-                        ULP=None, K_alpha=None, solver_mode='legacy'):
+                        ULP=None, K_alpha=None, solver_mode='schur'):
     """
     Computes the step size for one step of the MM algorithm.
     See Wang and Zou, 2017 for details.
@@ -610,10 +851,22 @@ def kern_dwd_obj(K, y, q, lambd, alpha, offset, K_alpha=None):
 
 def c_from_lambd(K, lambd, q, alpha, K_alpha=None):
     """
-    Gets the tuning paramter, C, for the SOCP formulation of DWD
+    Return the descriptive SOCP C conversion, evaluated in log space.
+
+    It can be zero for a zero fitted norm or infinity when the conversion is
+    outside floating-point range. Neither changes the supplied lambd or fit.
     from lambda.
     """
     if K_alpha is None:
         K_alpha = K.dot(alpha)
-    beta_norm = np.sqrt(alpha.T.dot(K_alpha))
-    return ((q + 1) ** (q + 1) / q ** q) * beta_norm ** (q + 1)
+    if not np.isfinite(q) or q <= 0:
+        raise ValueError('q must be finite and positive.')
+    norm_squared = float(alpha.T.dot(K_alpha))
+    if not np.isfinite(norm_squared) or norm_squared < 0:
+        raise FloatingPointError('Kernel DWD has a nonfinite or negative fitted RKHS norm squared.')
+    if norm_squared == 0:
+        return 0.
+    with np.errstate(over='ignore', under='ignore'):
+        log_c = (np.log1p(q) + q * np.log1p(1. / q)
+                 + .5 * (q + 1.) * np.log(norm_squared))
+        return float(np.exp(log_c))

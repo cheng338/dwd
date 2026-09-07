@@ -21,7 +21,7 @@ else:
 
 class CompatibilityTests(unittest.TestCase):
     def test_compatibility_version(self):
-        self.assertEqual(dwd.__version__, "1.0.5+audit1")
+        self.assertEqual(dwd.__version__, "1.3.2")
 
     def test_vectorized_gradient_preserves_fractional_values(self):
         margins = np.array([0, 2], dtype=np.int64)

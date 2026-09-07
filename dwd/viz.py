@@ -45,7 +45,7 @@ class ABLine2D(plt.Line2D):
 
 def clf2D_slope_intercept(coef=None, intercept=None, clf=None):
     """
-    Gets the slop an intercept for the separating hyperplane of a linear
+    Gets the slope and intercept for the separating hyperplane of a linear
     classifier fit on a two dimensional dataset.
 
     Parameters
@@ -56,12 +56,15 @@ def clf2D_slope_intercept(coef=None, intercept=None, clf=None):
     intercept:
         The classifier intercept.
 
-    clf: subclass of sklearn.linear_model.base.LinearClassifierMixin
+    clf: fitted linear classifier
         A sklearn classifier with attributes coef_ and intercept_
 
     Output
     ------
     slope, intercept
+
+    A vertical separating line has no finite slope/intercept pair and raises
+    ValueError. Use an explicit vertical-line plotting primitive for that case.
     """
 
     if clf is not None:

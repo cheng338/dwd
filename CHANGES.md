@@ -1,5 +1,84 @@
 # Updates
 
+## 1.3.2
+
+- Reject invalid/nonfinite generic-CV scalar scores before candidate selection or
+  refitting; preserve valid-score aggregation and first-tie selection.
+- Reduce scalar-boxing work in compensated prediction while retaining identical
+  float64 product values, ordering and `math.fsum` arithmetic.
+- Correct supplied-eigenpair and functional-score documentation. Solver defaults,
+  objective, labels and numerical thresholds remain unchanged.
+- Current source/wheel validation remains separately documented; older release
+  evidence is preserved as historical.
+
+## 1.3.1
+
+- Recover difficult reference inverse actions through a bounded sequence of
+  validated full eigenbasis representations while retaining original-equation
+  checks and avoiding a Cholesky substitution.
+- Add lazy, bounded exact certification of the entire stored kernel and recovery
+  of the same MM function after a numerical update failure. Singular-kernel
+  coefficients may use equivalent selected-column coordinates; no positive mode
+  is discarded and no kernel approximation or extra regularization is introduced.
+- Preserve transactional updates, callback exceptions, stopping/validation and
+  acceleration counts; report recovery actions separately from accepted updates
+  and the returned model's actual coefficient representation.
+- Carry adaptive/compensated prediction precision through original-kernel checks,
+  validation restoration, batching and serialization. Retry objective-only
+  evaluation mismatches accurately and invalidate KernGDWD state before refit.
+- Performance changes reuse an accepted state's objective and cap
+  an optional dense query screening shortcut to one unsuccessful block per call.
+  A 24-fit paired development check preserves every saved model-state byte;
+  prediction medians improve modestly and fitting times remain similar.
+- Retain parameter notation, native initialization policies, objective 1e-5 / cap
+  100 defaults, optional acceleration and linear SOCP dependency boundaries.
+- Preserve 1.3.0 artifacts and historical experiments. Nine known extreme
+  synthetic nearly constant RBF fits remain unresolved; see VALIDATION.md.
+
+## 1.3.0
+
+- Reassess difficult original-system residuals with compensated float64
+  arithmetic, checked free-intercept refinement and a bounded a-posteriori
+  RKHS estimate, preserving the equations and tolerances.
+- Retain reference coefficient/eigenbasis MM and optimized Cholesky; use checked
+  EVD-first native preparation and remove MKL-specific subprocess recovery.
+- Check exposed spectral/L-BFGS states before callbacks or validation stopping.
+- Add optional restarted optimized MM, keeping ordinary MM and the original
+  objective-change/cap defaults; acceleration need not improve accuracy.
+- Reuse corrected linear/kernel CV preparation for identical float32 input.
+- Preserve earlier repairs, source credits and optional linear CVXPY support;
+  see [release notes](RELEASE_NOTES.md) and [validation](VALIDATION.md).
+
+## 1.2.1
+
+- Refine an overconservative initial quadratic-form check with compensated
+  float64 accumulation and an error bound for the actual observed initial state.
+- Reuse the checked initial scores and quadratic without changing coefficients,
+  free intercept, objective, parameter notation or the 1e-5 / 100-update defaults.
+- Preserve rejection of unsafe cancellation, overflow and unsupported arithmetic;
+  expose the check method, bounds, discrepancy and cost. Add focused regressions.
+- Keep earlier distributions and numerical-runtime measurements separate; see
+  [VALIDATION.md](VALIDATION.md) for current verification status.
+
+## 1.2.0
+
+- Provide repaired reference and optimized kernel implementations in one package.
+  Reference retains checked eigendecomposition, coefficient-MM and native Gaussian
+  initialization; optimized uses original-system Cholesky/refinement and zero init.
+- Validate full eigenpairs and original constrained solves, with bounded isolated
+  numerical recovery and unchanged full-kernel objective/free intercept.
+- Preserve original objective-change stopping defaults, optional SOCP and earlier
+  compatibility repairs. Historical release-specific evidence remains separate.
+
+## 1.1.1
+
+- Recheck actual eigenvalues after auto Cholesky conditioning rejection; retain
+  Cholesky under a conservative two-norm bound or use guarded spectral fallback.
+- Preserve explicit Cholesky rejection and all spectral/input/final safeguards.
+- Use explicit SciPy EVR for computed solver and kernel/linear helper spectra.
+- Report requested/effective backends, condition checks, fallback and setup times.
+- Preserve all 1.1.0 defaults and objective/parameter notation; add 16 regressions.
+
 ## 1.0.5+audit1 (release candidate)
 
 - Add opt-in `solver_mode='schur'` corrections for linear and kernel generalized

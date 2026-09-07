@@ -9,6 +9,26 @@ import numpy as np
 # TODO: make this use parallelism
 
 
+def _validate_score(value, candidate, context, fold_index=None):
+    """Reject invalid scorer output without changing valid scalar arithmetic."""
+    try:
+        scalar = np.asarray(value)
+        valid = (scalar.ndim == 0 and scalar.dtype.kind in 'biuf'
+                 and bool(np.isfinite(scalar)))
+    except (TypeError, ValueError, OverflowError):
+        valid = False
+    if not valid:
+        location = '' if fold_index is None else f', fold {fold_index}'
+        display = repr(value)
+        if len(display) > 160:
+            display = display[:157] + '...'
+        raise ValueError(
+            'Cross-validation requires a finite real scalar score; '
+            f'candidate {candidate!r}{location}, {context}: got {display}.')
+    # Keep NumPy/Python scalar types and the existing finite aggregation order.
+    return value
+
+
 def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     """
     Runs cross-validation on a classifier.
@@ -35,8 +55,15 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     Output
     ------
     best_params, best_scores, best_clf, agg_results, all_cv_results
+
+    Nonfinite, non-real or nonscalar train/test scorer outputs raise with
+    candidate and fold context before selection or refitting. Invalid
+    candidates are not silently excluded. Folds are numbered from zero.
     """
 
+    if getattr(clf, 'stopping', None) == 'validation':
+        raise ValueError('run_cv does not create validation-stopping splits. Use explicit '
+                         'training/monitoring splits within each CV training fold.')
     X, y = check_X_y(X, y,
                      accept_sparse='csr',
                      dtype='numeric')
@@ -50,6 +77,8 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
 
     all_param_settings = DoL2LoD(params)
     n_settings = len(all_param_settings)
+    if not n_settings:
+        raise ValueError('The parameter grid must contain at least one candidate.')
 
     # get tuning path for each fold
     all_cv_results = []
@@ -72,7 +101,8 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
                                        X_test=X_test,
                                        y_test=y_test,
                                        scorer=scorer,
-                                       params=params)
+                                       params=params,
+                                       fold_index=f_idx)
 
         all_cv_results.append(fold_results)
 
@@ -90,7 +120,11 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
             # all folds
             vals = [all_cv_results[f][metric][s] for f in range(n_folds)]
 
-            agg_results['mean_' + metric].append(np.mean(vals))
+            mean = np.mean(vals)
+            if metric in ('test_score', 'train_score'):
+                _validate_score(mean, all_param_settings[s],
+                                'mean ' + metric + ' across folds')
+            agg_results['mean_' + metric].append(mean)
             agg_results['std_' + metric].append(np.std(vals))
 
     # get the best tuning parameter setting
@@ -109,7 +143,8 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     return best_params, best_score, best_clf, agg_results, all_cv_results
 
 
-def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params):
+def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
+                    *, fold_index=None):
 
     # initalize classifier before cross validation
     cv_results = {'params': [],
@@ -137,8 +172,10 @@ def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params):
         clf.fit(X_train, y_train)
         runtime = time() - start_time
 
-        tr_score = scorer(clf, X_train, y_train)
-        tst_score = scorer(clf, X_test, y_test)
+        tr_score = _validate_score(scorer(clf, X_train, y_train),
+                                   param_setting, 'train score', fold_index)
+        tst_score = _validate_score(scorer(clf, X_test, y_test),
+                                    param_setting, 'test score', fold_index)
 
         cv_results['params'].append(param_setting)
         cv_results['runtime'].append(runtime)

@@ -28,8 +28,8 @@ def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
     C: float
         Strictly positive tuning parameter.
 
-    sample_weight: None, (n_samples, )
-        Weights for samples.
+    sample_weight: None
+        Sample weights are unsupported and rejected explicitly.
 
     solver_kws: dict
         Keyword arguments to cp.solve
@@ -49,7 +49,7 @@ def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
     y_hat = np.sign(x.dot(beta) + intercept)
     """
     if sample_weight is not None:
-        raise NotImplementedError
+        raise NotImplementedError('Sample weights are not implemented for SVM.')
     if not isinstance(C, Real) or not np.isfinite(C) or C <= 0:
         raise ValueError('C must be finite and strictly positive.')
     X, y = check_X_y(X, y, accept_sparse='csr', dtype='numeric')
@@ -64,7 +64,6 @@ def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
     intercept = cp.Variable()
     C = cp.Parameter(value=C, nonneg=True)
 
-    # TODO: should we make this + intercept
     loss = cp.sum(cp.pos(1 - cp.multiply(y, X @ beta + intercept)))
     reg = cp.norm(beta, 1)
     objective = loss / n_samples + C * reg
@@ -81,6 +80,12 @@ def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
 
 
 class SVM(LinearClassifierMixin, BaseEstimator):
+    """Binary CVXPY model minimizing mean hinge loss plus C * ||coef||_1.
+
+    The intercept is free. C is a penalty multiplier, with a different
+    convention from sklearn.svm.SVC. Requires the optional ``socp`` extra.
+    ``solver_status_`` distinguishes optimal from optimal_inaccurate outcomes.
+    """
 
     def __init__(self, C=1.0, solver_kws=None):
         self.C = C
@@ -97,5 +102,6 @@ class SVM(LinearClassifierMixin, BaseEstimator):
 
         self.coef_ = self.coef_.reshape(1, -1)
         self.intercept_ = np.atleast_1d(self.intercept_)
+        self.solver_status_ = self.problem_.status
 
         return self

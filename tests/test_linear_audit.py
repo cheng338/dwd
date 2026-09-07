@@ -30,7 +30,7 @@ class LinearDWDAuditTests(unittest.TestCase):
             args = dict(X=self.X, y=self.y, lambd=.03, q=2.,
                         beta_init=self.beta, offset_init=.1, obj_tol=0,
                         max_iter=40, implicit_P=implicit, P0_eig=self.eig)
-            before, after = old.solve_gen_dwd(**args), solve_gen_dwd(**args)
+            before, after = old.solve_gen_dwd(**args), solve_gen_dwd(**args, solver_mode='legacy')
             for a, b in zip(before, after):
                 assert_allclose(a, b, rtol=2e-11, atol=1e-12)
 

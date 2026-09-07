@@ -1,0 +1,15 @@
+{
+  "synthetic_only": true,
+  "n": 120,
+  "shift": 1e-10,
+  "target_sum": 0.37,
+  "preparation_threads": 2,
+  "preparation_driver": "evd",
+  "generation": "RandomState(91420); discard randint(-3,4,(120,5)); rbf_kernel(normal((120,4)),gamma=1e-5); rhs=normal(120)+.23",
+  "K_sha256": "c26de784b73b3bb3e7a884e2afa9fd4dbbf4f4e9f96acabe667ae0f6432d1392",
+  "rhs_sha256": "e651c383c40f8d6f3b992842e31ab4b26a3f622e0cfa905d21c3eb595532cc69",
+  "values_sha256": "c1054a1eae9d2231121c87b4c8521ce0de89c96ab25db11f1b6146f2049e825f",
+  "vectors_sha256": "6e5d738ba9952b959164c6c226aa412e09741e45e9bb1bcfd0a0cf16571dc7c7",
+  "fixture_sha256": "3cc44a64e2d8117747d38280afc9d5ed922d6a3bb462eda8d519c0139d7d49ad",
+  "purpose": "Fixed two-thread basis that ordinary inverse refinement rejects with either two or four solve threads on the tested updated runtime."
+}

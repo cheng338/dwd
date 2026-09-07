@@ -1,6 +1,3 @@
-from abc import ABCMeta
-import typing
-
 from sklearn.base import ClassifierMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
@@ -19,6 +16,7 @@ class LinearClassifierMixin(ClassifierMixin):
     the private sklearn.linear_model API.
 
     Expects instance variables `coef_`, `intercept_`, and `classes_` to be present on the object.
+    Positive scores select classes_[1]; zero scores select classes_[0].
     """
 
     def decision_function(self, X):

@@ -1,0 +1,8 @@
+{
+  "description": "Frozen pre-performance source oracle, never imported by package runtime.",
+  "source": "dwd-range-mm-candidate before the two performance-only changes",
+  "files": {
+    "_kernel_scores.py": "9cca28beb4f416378798d98a8a184d14068caee08a6c11f36ad942bbe5f892d5",
+    "_kernel_solver.py": "acedbf52c442c39f911815b1edb2bcd0908cd969b0ae91adb239482eb242a70d"
+  }
+}

@@ -70,8 +70,8 @@ class KernelClfMixin(ClassifierMixin):
 
     def decision_function(self, X):
         """Predict confidence scores for samples.
-        The confidence score for a sample is the signed distance of that
-        sample to the hyperplane.
+        Return the functional decision value K(query, training) @ alpha + b.
+        It is not divided by the RKHS norm to obtain a geometric distance.
         Parameters
         ----------
         X : array_like or sparse matrix, shape (n_samples, n_features)
@@ -85,14 +85,47 @@ class KernelClfMixin(ClassifierMixin):
         """
 
         check_is_fitted(self, ['dual_coef_', 'intercept_', 'classes_', '_Xfit'])
-        X = check_array(X, dtype='numeric', accept_sparse='csr')
+        X = check_array(X, dtype=np.float64 if getattr(self, 'solver_mode', None) == 'schur'
+                        else 'numeric', accept_sparse='csr')
         if self.kernel != 'precomputed' and X.shape[1] != self._Xfit.shape[1]:
             raise ValueError('Feature count differs from training data.')
-        K = self._compute_kernel(X)
-
-        scores = safe_sparse_dot(K.T, self.dual_coef_.T,
-                                 dense_output=True) + self.intercept_
+        batch_size = getattr(self, 'prediction_batch_size', None)
+        if batch_size is not None and (isinstance(batch_size, (bool, np.bool_)) or
+                not isinstance(batch_size, (int, np.integer)) or batch_size <= 0):
+            raise ValueError('prediction_batch_size must be a positive integer or None.')
+        if batch_size is None or batch_size >= X.shape[0]:
+            K = self._compute_kernel(X)
+            scores = self._kernel_decision_product(K)
+        else:
+            # Bound the query kernel allocation; training coefficients stay fixed.
+            scores = np.empty((X.shape[0], self.dual_coef_.shape[0]), dtype=float)
+            for start in range(0, X.shape[0], batch_size):
+                stop = min(start + batch_size, X.shape[0])
+                K = self._compute_kernel(X[start:stop])
+                scores[start:stop] = self._kernel_decision_product(K)
         return scores.ravel() if scores.shape[1] == 1 else scores
+
+    def _kernel_decision_product(self, K):
+        """Evaluate the training-by-query kernel using the fitted precision mode."""
+        precision = getattr(self, 'prediction_precision_', 'ordinary')
+        if precision not in ('compensated', 'adaptive'):
+            return safe_sparse_dot(K.T, self.dual_coef_.T,
+                                   dense_output=True) + self.intercept_
+        from scipy.sparse import issparse
+        from ._kernel_scores import compensated_kernel_matvec, adaptive_kernel_matvec
+        matvec = compensated_kernel_matvec if precision == 'compensated' else adaptive_kernel_matvec
+        query = K.T
+        if issparse(query) and query.format != 'csr':
+            # A callable may return training-by-query CSR. Conversion stays
+            # within the current query batch and is outside the row evaluator.
+            query = query.tocsr()
+        values = np.column_stack([matvec(query, alpha)
+                                  for alpha in self.dual_coef_])
+        with np.errstate(over='ignore', invalid='ignore'):
+            values += self.intercept_
+        if not np.isfinite(values).all():
+            raise FloatingPointError('Nonfinite accurate kernel decision values.')
+        return values
 
     def predict(self, X):
         """Predict class labels for samples in X.
