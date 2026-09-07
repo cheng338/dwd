@@ -438,6 +438,30 @@ original-equation residual can extend that private refinement budget to eight.
 These are corrections within an MM update, not extra MM iterations or a change
 to `max_iter`.
 
+If spectral refinement exhausts its allowance or stagnates at the same stored
+float64 coefficients, a final bounded correction can examine adjacent floats.
+It proposes one `nextafter` step for one coefficient and adjusts the free
+intercept to reduce the original-equation residual. Candidate selection is
+deterministic; each accepted private move must strictly improve a freshly
+computed compensated residual. The returned coefficients and intercept must
+still pass the existing residual, coefficient-sum and RKHS accuracy checks.
+Unsuccessful private changes are discarded. The kernel, shift, target
+constraint, full eigenbasis and MM update count are unchanged.
+
+This correction is lazy on healthy solves and shares at most eight accepted
+coefficient moves across all five inverse representations of one solve action.
+It also shares a budget of 1,048,576 normalized dense-work units. Each charged
+dense action costs `n * n` units; these units bound the number of scans and
+checks, not actual floating-point operations, bytes accessed or wall-clock time.
+Problems too large for the remaining budget skip this optional correction.
+Additional arrays have length `n`; no dense matrix copy is created. Exhausting
+these limits does not authorize an inaccurate result. Diagnostics include
+`readout_refinement_attempts`, `readout_refinement_acceptances`,
+`readout_refinement_seconds`, `readout_last_attempt`, `readout_action_moves`,
+and `readout_action_matrix_entry_work` when the correction is attempted. The
+two `readout_action_*` fields describe the last solve action that attempted
+this correction; later healthy actions leave those diagnostic values intact.
+
 Once the original equations and coefficient-sum constraint pass, an overly
 conservative RKHS error estimate can be reconsidered using one auxiliary inverse
 action through the existing factor or basis. The new estimate combines an upper
