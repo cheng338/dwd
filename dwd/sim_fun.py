@@ -5,7 +5,11 @@ import matplotlib.pyplot as plt
 def tuning_curve(X_train, y_train, X_test, y_test,
                  tuning_params, algo, solver_kws=None):
     """
-    Plots tuning curve for a provided set of tuning parameters.
+    Plot errors for signed (-1, +1) labels and a low-level conic solver.
+
+    The solver must accept solver_kws and return coefficients and intercept
+    as its first two outputs. This plotting helper does not fit an estimator
+    or infer arbitrary class labels.
     """
 
     n_tune_values = len(tuning_params)
@@ -117,7 +121,8 @@ def cv_tuning(gscv, param_name, kind='test', log=True, std=True, color='red'):
     """
     param_vals = [p[param_name] for p in gscv.cv_results_['params']]
 
-    assert kind in ['train', 'test']
+    if kind not in ('train', 'test'):
+        raise ValueError("kind must be 'train' or 'test'.")
     st = '_{}_score'.format(kind)
     plt.plot(param_vals, gscv.cv_results_['mean' + st],
              color=color, label='cv {}'.format(kind))

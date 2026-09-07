@@ -1,12 +1,17 @@
 import numpy as np
 from sklearn.base import BaseEstimator
-from sklearn.preprocessing import KernelCenterer
 from sklearn.utils import check_array, check_X_y
 
-from dwd.kernel_utils import KernelClfMixin, KernelScaler
+from dwd.kernel_utils import KernelClfMixin
 
 
 class KernMD(KernelClfMixin, BaseEstimator):
+    """Binary RKHS mean-difference classifier with a midpoint intercept.
+
+    ``naive_bayes=True`` is unsupported until a consistent transformation for
+    both training and query kernels is specified. ``kernel_kws`` applies to
+    named kernels or matrix-level callable kernels.
+    """
     def __init__(self, kernel='linear', kernel_kws=None, naive_bayes=False):
         self.kernel = kernel
         self.kernel_kws = kernel_kws
@@ -59,8 +64,7 @@ def kern_md(K, y, naive_bayes=False):
     if len(labels) != 2:
         raise ValueError('Kernel mean difference requires exactly two classes.')
 
-    # center and scale K to compute Naive Bayes
-    # TODO: check intercept
+    # Training-only normalization would give inconsistent query scores.
     if naive_bayes:
         raise NotImplementedError(
             'naive_bayes=True previously transformed only the training kernel '

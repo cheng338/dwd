@@ -6,6 +6,7 @@ import numpy as np
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_X_y
 from sklearn.metrics.pairwise import euclidean_distances
+from sklearn.utils.validation import check_is_fitted
 
 from dwd.utils import pm1
 from dwd.linear_model import LinearClassifierMixin
@@ -13,12 +14,19 @@ from dwd.linear_model import LinearClassifierMixin
 try:
     import cvxpy as cp
 except ImportError:
-    logging.warn(
+    logging.warning(
         'cvxpy is not installed, but is required for the conic solver.'
     )
     raise
 
 class DWD(LinearClassifierMixin, BaseEstimator):
+    """Binary distance-weighted discrimination using optional CVXPY SOCP.
+
+    C remains the conic slack-penalty parameter. For C='auto', the constructor
+    value stays unchanged and the fitted value is C_. solver_status_ preserves
+    the solver's distinction between optimal and optimal_inaccurate; acceptance
+    of the latter is not a claim of an exact numerical certificate.
+    """
     def __init__(self, C=1.0, solver_kws=None):
         """
         Parameters
@@ -42,10 +50,8 @@ class DWD(LinearClassifierMixin, BaseEstimator):
         y : array-like, shape = [n_samples]
             Target vector relative to X
 
-        sample_weight : array-like, shape = [n_samples], optional
-            Array of weights that are assigned to individual
-            samples. If not provided,
-            then each sample is given unit weight.
+        sample_weight : None
+            Sample weights are unsupported and rejected explicitly.
 
         Returns
         -------
@@ -67,6 +73,7 @@ class DWD(LinearClassifierMixin, BaseEstimator):
 
         self.coef_ = self.coef_.reshape(1, -1)
         self.intercept_ = np.atleast_1d(self.intercept_)
+        self.solver_status_ = self.problem_.status
 
         return self
 
@@ -90,6 +97,7 @@ class DWD(LinearClassifierMixin, BaseEstimator):
         0. If 'p.d > d.i', then 'p' is label 1.
         """
 
+        check_is_fitted(self, ['coef_', 'intercept_', 'classes_'])
         direction = self.coef_.reshape(-1)
         intercept = -self.intercept_.item()
         return direction, intercept
@@ -110,8 +118,8 @@ def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
     C: float
         Strictly positive tuning parameter.
 
-    sample_weight: None, (n_samples, )
-        Weights for samples.
+    sample_weight: None
+        Sample weights are unsupported and rejected explicitly.
 
     solver_kws: dict
         Keyword arguments to cp.solve
@@ -162,13 +170,8 @@ def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
     rho = cp.Variable(shape=n_samples)
     sigma = cp.Variable(shape=n_samples)
 
-    # objective funtion
-    # TODO: check this is correct way to do sample weighting
-    if sample_weight is None:
-        v = np.ones(n_samples)
-    else:
-        v = np.array(sample_weight).reshape(-1)
-        assert len(v) == n_samples
+    # Unweighted objective; non-None sample weights were rejected above.
+    v = np.ones(n_samples)
     objective = v.T @ (rho + sigma + C * eta)
 
     # setup constraints
