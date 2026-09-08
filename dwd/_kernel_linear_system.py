@@ -11,7 +11,8 @@ import numpy as np
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 from scipy.linalg.lapack import dpocon
 from ._compensated_residual import compensated_residual
-from ._quadratic_bounds import _compensated_quadratic, _upward_nonnegative
+from ._native_residual import native_compensated_residual
+from ._quadratic_bounds import _compensated_dot, _compensated_quadratic, _upward_nonnegative
 
 
 def _sum(x):
@@ -228,10 +229,15 @@ class KernelLinearSystem:
 
     def _compensated_measure(self, rhs, target_sum, x, s, ordinary_maximum=None):
         started = perf_counter()
-        residual, constraint, product, bounds, constraint_bound = compensated_residual(
-            self.K, self.shift, rhs, x, s, target_sum)
-        acceptable, maximum, feature_error = self._assess(
-            rhs, target_sum, x, product, residual, constraint, bounds, constraint_bound)
+        measured = self._bounded_native_measure(rhs, target_sum, x, s)
+        if measured is None:
+            residual, constraint, product, bounds, constraint_bound = compensated_residual(
+                self.K, self.shift, rhs, x, s, target_sum)
+            acceptable, maximum, feature_error = self._assess(
+                rhs, target_sum, x, product, residual, constraint, bounds, constraint_bound)
+        else:
+            (acceptable, residual, constraint, product, maximum, feature_error,
+             bounds, constraint_bound) = measured
         self.info['compensated_residual_checks'] = self.info.get('compensated_residual_checks', 0) + 1
         self.info['compensated_residual_seconds'] = self.info.get('compensated_residual_seconds', 0.) + perf_counter() - started
         self.info['max_compensated_residual_allowance'] = max(self.info.get('max_compensated_residual_allowance', 0.), float(np.max(bounds)))
@@ -259,6 +265,55 @@ class KernelLinearSystem:
             self.info['last_aposteriori_rkhs_check'] = details
             self.info['aposteriori_rkhs_seconds'] = self.info.get('aposteriori_rkhs_seconds', 0.) + perf_counter() - check_started
         return acceptable, residual, constraint, product, maximum, feature_error
+
+    def _bounded_native_measure(self, rhs, target_sum, x, s):
+        """Use a bounded native dot only when its decision is unambiguous.
+
+        An accepted state passes the existing equation, constraint and RKHS
+        gates, with a conservative lower bound for the relative RKHS scale.
+        A residual lower bound can also prove the original equations fail:
+        refinement is then necessary regardless of the accumulation method.
+        Uncertain decisions use the expanded calculation on the untouched state.
+        """
+        started = perf_counter()
+        native = native_compensated_residual(self.K, self.shift, rhs, x, s, target_sum)
+        self.info['native_residual_attempts'] = self.info.get('native_residual_attempts', 0) + 1
+        if native is None:
+            self.info['native_residual_declines'] = self.info.get('native_residual_declines', 0) + 1
+            self.info['native_residual_seconds'] = self.info.get('native_residual_seconds', 0.) + perf_counter() - started
+            return None
+        self.info['native_residual_checks'] = self.info.get('native_residual_checks', 0) + 1
+        residual, constraint, product, bounds, constraint_bound, score_bounds = native
+        acceptable, maximum, feature_error = self._assess(
+            rhs, target_sum, x, product, residual, constraint, bounds, constraint_bound)
+        if acceptable:
+            # Score uncertainty must not enlarge the intended relative RKHS
+            # tolerance. Bound x.T K x below using the native uncertainties.
+            try:
+                quadratic, dot_error = _compensated_dot(x, product)
+                propagation, propagation_error = _compensated_dot(np.abs(x), score_bounds)
+                error = _upward_nonnegative(dot_error + _upward_nonnegative(
+                    propagation + propagation_error))
+                with np.errstate(under='ignore'):
+                    lower = float(np.nextafter(quadratic - error, -np.inf))
+                    scale = max(1., float(np.nextafter(np.sqrt(max(0., lower)), 0.)))
+                    threshold = float(np.nextafter(5e-7 * scale, 0.))
+                acceptable = feature_error <= threshold
+            except FloatingPointError:
+                acceptable = False
+        with np.errstate(under='ignore'):
+            lower_residual = float(np.max(np.nextafter(np.abs(residual) - bounds, -np.inf)))
+        equation_failure = lower_residual > 1e-10 * max(1., float(np.max(np.abs(rhs))))
+        self.info['native_residual_seconds'] = self.info.get('native_residual_seconds', 0.) + perf_counter() - started
+        if acceptable:
+            self.info['native_residual_acceptances'] = self.info.get('native_residual_acceptances', 0) + 1
+        elif equation_failure:
+            self.info['native_residual_equation_failures'] = self.info.get('native_residual_equation_failures', 0) + 1
+        else:
+            self.info['native_residual_fallbacks'] = self.info.get('native_residual_fallbacks', 0) + 1
+            return None
+        return (acceptable, residual, constraint, product, maximum, feature_error,
+                bounds, constraint_bound)
 
     def _try_intercept_refinement(self, rhs, target_sum, x, s, measurement):
         """Correct a constant residual without sub-ULP coefficient updates.
