@@ -1,6 +1,6 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "dwd"
@@ -15,6 +15,7 @@ dependencies = [
     "numpy",
     "scipy",
     "scikit-learn>=1.6",
+    "threadpoolctl>=3.1",
 ]
 requires-python=">=3.11"
 readme = 'README.md'
@@ -36,7 +37,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
-dynamic = ['version', 'description']
+description = "Distance Weighted Discrimination for Python"
+dynamic = ['version']
 
 [project.optional-dependencies]
 socp = [
@@ -59,21 +61,14 @@ Source = 'https://github.com/cheng338/dwd'
 Upstream = 'https://github.com/slicersalt/dwd'
 Issues = 'https://github.com/cheng338/dwd/issues'
 
-[tool.flit.sdist]
-include = [
-    ".gitattributes",
-    ".github/",
-    "tests/",
-    "doc/",
-    "docs/",
-    "*.md",
-    "LICENSE.txt",
-    "MANIFEST.in",
-]
-exclude = [
-    "**/__pycache__/**",
-    "**/*.pyc",
-    "**/*.pyo",
-    "build/",
-    "dist/",
-]
+[tool.setuptools.dynamic]
+version = {attr = "dwd.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["dwd*"]
+
+[tool.setuptools.package-data]
+dwd = ["*.c", "CPYTHON-LICENSE.txt"]
+
+[tool.setuptools]
+license-files = ["LICENSE.txt", "dwd/CPYTHON-LICENSE.txt"]

@@ -1,5 +1,31 @@
 # Updates
 
+## 1.3.4
+
+- Add an optional strict-arithmetic C extension for compensated residual rows,
+  preserving the existing bounds, guarded domain and Python fallback.
+- Parallelize independent rows within the caller's active BLAS thread budget;
+  use shared read-only inputs and O(n) extra output storage.
+- Preserve MM iterations, objective, unregularized intercept, recovery decisions,
+  classifier API and optional linear CVXPY/SOCP support.
+- Build platform-tagged CPython stable-ABI wheels with setuptools; include the
+  adapted CPython arithmetic source and its complete PSF license.
+
+## 1.3.3
+
+- Reduce Python scalar conversion overhead in compensated residuals and reuse
+  the exact coefficient-vector split within each residual evaluation.
+- Add guarded native compensated residual evaluation on audited CPython 3.12
+  builds. Outward error estimates cover scores and the original equation;
+  uncertain checks fall back to the portable expanded calculation. A residual
+  lower bound can confirm that refinement is necessary without a duplicate pass.
+- Preserve equation, coefficient-sum and RKHS thresholds, including conservative
+  propagation of native score uncertainty into the relative RKHS scale.
+- Retain the full kernel, unregularized intercept, parameter notation, ordinary
+  MM, 100-update cap, objective tolerance and optional CVXPY dependency boundary.
+- Report native attempts, accepted checks, equation failures, portable declines
+  and fallback time separately. Historical release evidence is preserved.
+
 ## 1.3.2
 
 - Reject invalid/nonfinite generic-CV scalar scores before candidate selection or

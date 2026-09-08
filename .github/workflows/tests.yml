@@ -32,9 +32,20 @@ jobs:
         run: python -m pip install '.[test-base]'
       - name: Confirm optional solver is absent
         if: matrix.dependencies == 'base'
-        run: python -c "import importlib.util; assert importlib.util.find_spec('cvxpy') is None"
+        run: python -I -c "import importlib.util; assert importlib.util.find_spec('cvxpy') is None"
       - name: Install package and optional conic tests
         if: matrix.dependencies == 'socp'
         run: python -m pip install '.[test]'
+      - name: Require the installed package and compiled extension
+        run: >-
+          python -I -B -c "import importlib.metadata as metadata,json,pathlib,sys,dwd;
+          from dwd import _residual_accel, _compiled_residual;
+          prefix=pathlib.Path(sys.prefix).resolve(); package=pathlib.Path(dwd.__file__).resolve();
+          extension=pathlib.Path(_residual_accel.__file__).resolve();
+          assert package.is_relative_to(prefix), package;
+          assert extension.parent == package.parent and extension.is_relative_to(prefix), extension;
+          assert _compiled_residual._ACCEL is _residual_accel;
+          assert dwd.__version__ == metadata.version('dwd');
+          print(json.dumps({'python':sys.executable,'package':str(package),'extension':str(extension),'version':dwd.__version__}))"
       - name: Run the complete bundled test suite
-        run: python -m unittest discover -s tests -v
+        run: python -I -B -m unittest discover -s tests -v

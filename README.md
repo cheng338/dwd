@@ -1,4 +1,4 @@
-# Distance Weighted Discrimination 1.3.2
+# Distance Weighted Discrimination 1.3.4
 
 `dwd` provides linear and kernel Distance Weighted Discrimination classifiers
 with sklearn-style fitting, prediction, and cross-validation. One package now
@@ -15,17 +15,26 @@ on [slicersalt/dwd](https://github.com/slicersalt/dwd). Audit and implementation
 work was prepared with Codex. Original credits and the [MIT license](LICENSE.txt)
 are retained.
 
-## Changes in 1.3.2
+## Changes in 1.3.4
 
-Generic internal CV now rejects nonfinite or invalid scalar scorer results before
-selection/refitting, with candidate, fold and train/test context. Compensated
-prediction preserves the same float64 terms and summation order while reducing
-Python scalar-conversion work. Publication checks also exposed a spectral solve
-that could stagnate at float64 rounding limits under OpenBLAS. A bounded final
-refinement now checks neighboring float64 coefficients against the original
-equations and unchanged accuracy gates. The DWD objective, defaults and
-classification thresholds are unchanged. Current validation status is in
-[VALIDATION.md](VALIDATION.md).
+An optional compiled residual checker avoids repeated Python list conversion
+and evaluates independent kernel rows in parallel. It preserves the existing
+compensated arithmetic, numerical acceptance bounds, objective, free intercept,
+and stopping settings. It respects the active BLAS thread limit, including
+one-thread GridSearchCV workers, without copying the dense kernel per worker.
+
+On the saved 12,089-row MNIST 2-versus-3 configuration, a fresh 100-update fit
+took 47.12 seconds, compared with the previous 377.39-second median. Its fitted
+coefficients, intercept, objective history, preprocessing and prediction probes
+were bitwise identical to the saved model. This is a scoped workload result;
+ordinary fits that do not need compensated checks may see little change.
+
+The accelerated wheel contains a small optional C extension with no NumPy C API.
+Source builds use a local compiler when available; the existing Python checker
+remains available when compilation or loading is unavailable. The current native
+screen remains guarded to audited CPython 3.12 arithmetic. See
+[build and runtime details](docs/compiled_residual.md), [release notes](RELEASE_NOTES.md),
+and [validation](VALIDATION.md). The previous 1.3.3 repair remains intact.
 
 ## Install from this release checkout
 
