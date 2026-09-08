@@ -8,12 +8,16 @@ computation and default initialization, so finite-budget fitted models can diffe
 Read [release notes](RELEASE_NOTES.md) when upgrading from upstream 1.0.5,
 the audit1 fork, or the 1.1.x releases.
 
-The original implementation is by [Iain Carmichael](https://idc9.github.io/),
-with upstream maintenance by David Allemang / [Kitware](https://kitware.com/).
-This fork is maintained at [cheng338/dwd](https://github.com/cheng338/dwd), based
-on [slicersalt/dwd](https://github.com/slicersalt/dwd). Audit and implementation
-work was prepared with Codex. Original credits and the [MIT license](LICENSE.txt)
-are retained.
+This fork is led and maintained by [Chang Cheng](https://github.com/cheng338)
+at [cheng338/dwd](https://github.com/cheng338/dwd), building on his earlier
+development of the fork. His contributions include the research direction,
+methodological requirements, package design, and experimental design and review.
+Codex assisted with code auditing, implementation, and testing under his direction.
+
+The project builds on [slicersalt/dwd](https://github.com/slicersalt/dwd), originally
+implemented by [Iain Carmichael](https://idc9.github.io/), with upstream maintenance
+by David Allemang and [Kitware](https://kitware.com/). Original credits and the
+[MIT license](LICENSE.txt) are retained.
 
 ## Changes in 1.3.4
 
