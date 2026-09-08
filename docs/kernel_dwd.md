@@ -1,6 +1,15 @@
-# Kernel DWD 1.3.2 API and numerical controls
+# Kernel DWD 1.3.4 API and numerical controls
 
 For current artifact acceptance, see [VALIDATION.md](../VALIDATION.md).
+
+Release 1.3.4 adds optional compiled and parallel row evaluation to the
+1.3.3 compensated residual checker, accelerating its evaluation without changing the
+optimization or stopping policy. Audited CPython 3.12 uses bounded native
+`math.sumprod` arithmetic when its precision and magnitude conditions hold.
+Original-equation accuracy gates still decide acceptance; uncertain checks use
+the portable expanded calculation. Other runtimes use the portable path, which
+also benefits from reduced conversion work. No new parameter or dependency is
+needed. Native-path diagnostics count numerical checks, not MM updates.
 
 `dwd.gen_kern_dwd.KernGDWD` fits one binary classifier. It does not search for
 parameters or create hidden validation splits. `KernGDWDCV` is an explicitly
