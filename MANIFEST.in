@@ -3,7 +3,11 @@ include README.md
 include CHANGES.md
 include COMPATIBILITY_FIXES.md
 include AUDIT_CHANGES.md
-recursive-include tests *.py *.md *.txt
+include *.md
+include .gitattributes
+recursive-include .github *.yml
+recursive-include dwd *.c CPYTHON-LICENSE.txt
+recursive-include tests *.py *.md *.txt *.json *.npy *.npz
 recursive-include doc *.py *.rst *.md
 recursive-include docs *.py *.rst *.md
 global-exclude *.py[cod]
