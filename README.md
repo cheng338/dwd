@@ -1,4 +1,4 @@
-# Distance Weighted Discrimination 1.3.4
+# Distance Weighted Discrimination 1.3.5
 
 `dwd` provides linear and kernel Distance Weighted Discrimination classifiers
 with sklearn-style fitting, prediction, and cross-validation. One package now
@@ -18,6 +18,22 @@ The project builds on [slicersalt/dwd](https://github.com/slicersalt/dwd), origi
 implemented by [Iain Carmichael](https://idc9.github.io/), with upstream maintenance
 by David Allemang and [Kitware](https://kitware.com/). Original credits and the
 [MIT license](LICENSE.txt) are retained.
+
+## Changes in 1.3.5
+
+Failed fits now clear learned coefficients, class labels and other fitted state,
+including failures during a refit. Calling prediction after a failed fit raises
+`NotFittedError`; fitting valid data again restores normal use. This applies to
+linear and kernel DWD, their CV wrappers, the optional SOCP classifiers and
+kernel mean difference. Validated private precomputation caches remain reusable.
+See [the fitted-state contract](docs/failed_refit_state.md).
+
+A bounded intercept refinement and lazy anchor-coordinate LU recovery resolve
+reproduced MNIST ensemble fit failures at very small regularization and RBF
+coefficients. The original equation, coefficient-sum and RKHS acceptance checks
+remain unchanged. See the [intercept explanation](docs/intercept_midpoint_refinement.md),
+[anchor recovery equations](docs/anchor_linear_system.md), and
+[release notes](RELEASE_NOTES.md) for the validation scope and remaining limits.
 
 ## Changes in 1.3.4
 

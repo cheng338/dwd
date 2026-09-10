@@ -1,5 +1,37 @@
 # Updates
 
+## 1.3.5
+
+- Clear learned state before fitting and after any failed fit across the public
+  classifier interfaces. Failed refits cannot combine previous coefficients
+  with replacement labels or retain an old best estimator. Keep fit signatures,
+  constructor parameters and validated private precomputation caches intact.
+- Add early- and late-failure regressions, changed-label refits, successful
+  recovery and cache-reuse checks. No objective, solver equation or stopping
+  default changes are introduced by this estimator-state repair.
+- Add lazy anchor-coordinate LU recovery after original and centered Cholesky
+  recovery is exhausted. It solves the same stored-kernel equations without
+  jitter, symmetrization, kernel approximation or positive-mode truncation.
+  Every candidate must pass the unchanged original-equation, coefficient-sum
+  and RKHS checks. Healthy Cholesky fits do not construct the LU factor.
+- Add a bounded midpoint residual correction when the usual intercept mean
+  correction cannot satisfy the existing maximum original-equation residual.
+  Each proposal still requires a fresh compensated equation, coefficient-sum
+  and RKHS check. The kernel, regularization and acceptance thresholds stay
+  unchanged, and the intercept remains unregularized.
+- Repair a reproduced MNIST 3-versus-8 ensemble base failure at lambd=1e-12
+  and gamma=1e-5/784. The exact base and all six fits in its ensemble complete
+  100 MM updates without changing the sampled rows or parameters.
+- Add regression coverage for midpoint rescue, unchanged mean behavior,
+  constraint and RKHS rejection, fresh-check failures and floating-point limits.
+  The historical 30-fit replay still returns 21 valid models and retains the
+  same nine documented extreme synthetic numerical rejections.
+- The preceding numerical repair passed all 390 source tests. A first-fold,
+  45-pair MNIST validity screen
+  at 10% base sampling completes all 270 learner fits; five use anchor recovery.
+  The earlier 20% screen also completes all 270 learner fits. These extreme
+  parameter checks are separate from the tuned multiclass comparison.
+
 ## 1.3.4
 
 - Add an optional strict-arithmetic C extension for compensated residual rows,

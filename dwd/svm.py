@@ -5,6 +5,7 @@ from numbers import Real
 from sklearn.base import BaseEstimator  # , TransformerMixin, ClassifierMixin
 
 from dwd.linear_model import LinearClassifierMixin
+from dwd._fit_state import fit_with_cleanup
 from dwd.utils import pm1
 from sklearn.utils import check_X_y
 
@@ -91,6 +92,7 @@ class SVM(LinearClassifierMixin, BaseEstimator):
         self.C = C
         self.solver_kws = solver_kws
 
+    @fit_with_cleanup
     def fit(self, X, y, sample_weight=None):
         X, y = check_X_y(X, y, accept_sparse='csr', dtype='numeric')
         self.classes_ = np.unique(y)

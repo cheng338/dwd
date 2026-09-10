@@ -1,5 +1,6 @@
 import numpy as np
 from dwd._eigen import validated_eigh
+from dwd._fit_state import fit_with_cleanup
 from numbers import Real
 
 from sklearn.base import BaseEstimator
@@ -83,6 +84,7 @@ class GenDWD(LinearClassifierMixin, BaseEstimator):
         self.stopping = stopping
         self.tol = tol
 
+    @fit_with_cleanup
     def fit(self, X, y, sample_weight=None, *, P0_eig=None,
             beta_init=None, offset_init=None):
         """Fit the model according to the given training data.
@@ -256,6 +258,7 @@ class GenDWDCV(LinearClassifierMixin, BaseEstimator):
         self.stopping = stopping
         self.tol = tol
 
+    @fit_with_cleanup
     def fit(self, X, y, sample_weight=None):
         """Fit the model according to the given training data.
 

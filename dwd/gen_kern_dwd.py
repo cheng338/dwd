@@ -11,6 +11,7 @@ from dwd.gen_dwd import V, V_grad
 from dwd.kernel_utils import KernelClfMixin
 from dwd.cv import run_cv
 from dwd._eigen import validated_eigh
+from dwd._fit_state import fit_with_cleanup
 
 
 class KernGDWD(KernelClfMixin, BaseEstimator):
@@ -127,6 +128,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         self.callback = callback
         self.prediction_batch_size = prediction_batch_size
 
+    @fit_with_cleanup
     def fit(self, X, y, sample_weight=None, *, K=None, K_eig=None,
             alpha_init=None, offset_init=None, validation_data=None):
         """Fit the model according to the given training data.
@@ -153,16 +155,6 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         -------
         self : object
         """
-        # A failed refit must not combine old coefficients with new training rows.
-        for name in ('dual_coef_', 'intercept_', 'objective_history_', 'obj_vals_',
-                     'n_iter_', 'returned_iteration_', 'final_objective_', 'C_', 'C_conversion_finite_',
-                     'converged_', 'criterion_reached_', 'termination_reason_',
-                     'gradient_inf_norm_', 'rkhs_gradient_norm_', 'dual_gap_',
-                     'backend_', 'diagnostics_', 'validation_history_',
-                     'objective_tolerance_met_', 'optimality_met_',
-                     'stationarity_residual_', 'stationarity_checked_',
-                     'dual_equality_residual_', 'prediction_precision_'):
-            self.__dict__.pop(name, None)
         self._validate_options(validation_data)
         if sample_weight is not None:
             raise NotImplementedError('Sample weights are not implemented for KernGDWD.')
@@ -463,6 +455,7 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         self.callback = callback
         self.prediction_batch_size = prediction_batch_size
 
+    @fit_with_cleanup
     def fit(self, X, y, sample_weight=None):
         """Fit the model according to the given training data.
 
