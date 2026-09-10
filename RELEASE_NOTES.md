@@ -1,43 +1,48 @@
-# Release 1.3.4
+# Release 1.3.5
 
-An optional strict-arithmetic C extension accelerates the compensated residual
-checks that still dominated some large kernel DWD fits after 1.3.3. It evaluates
-the same ordered score and original-equation residual sums without repeated
-Python-list conversions. Independent rows run within the caller's active BLAS
-thread budget and share the same kernel matrix.
+Failed refits now invalidate learned state consistently across the classifier
+interfaces. Previously, several classes could retain old coefficients while
+overwriting their labels, or retain an earlier best estimator after CV failed.
+After a failed fit, prediction now raises `NotFittedError` until a later fit
+succeeds. Validated private precomputation caches remain available. This repair
+does not change successful-fit objectives, numerical updates or stopping rules.
+See [the fitted-state contract](docs/failed_refit_state.md).
 
-The Python layer retains the existing numerical bounds, acceptance gates and
-fallbacks. The objective, full kernel, unregularized intercept, MM updates,
-initialization and stopping controls are unchanged. Defaults remain ordinary
-MM, q=1, obj_tol=1e-5, max_iter=100 and no acceleration. Both repaired reference
-and optimized implementations remain available. The ensemble API and optional
-linear CVXPY/SOCP solver are unchanged.
+Lazy anchor-coordinate LU recovery resolves a second reproduced MNIST failure
+when the original and centered Cholesky representations cannot meet the existing
+accuracy checks. The anchor representation solves the same stored-kernel
+constrained linear system. It does not symmetrize the kernel, add jitter, remove
+positive modes or change regularization. Its returned coefficients and intercept
+must pass the original equation, coefficient-sum and RKHS checks.
 
-On the saved 12,089-training-image MNIST 2-versus-3 configuration, gamma=1e-4
-and package lambd=2^-31, a fresh eight-thread 100-update fit took **47.12 seconds**.
-The previous study recorded a **377.39-second median** and 379.00-second primary
-fit. Coefficients, intercept, the entire objective history, preprocessing values
-and fixed training prediction probes were bitwise identical to the saved model.
-The same 105 compensated checks and five numerical refinements occurred.
-Checking took 20.03 seconds versus 352.11 seconds in the saved primary fit.
+A numerical intercept refinement resolves a reproduced MNIST 3-versus-8
+ensemble base failure at `lambd=1e-12` and `gamma=1e-5/784`. The usual mean
+residual correction remains first. When needed, a bounded midpoint proposal
+must pass fresh, unchanged original-equation, coefficient-sum and RKHS checks.
+No kernel approximation, added regularization or change to the unregularized
+intercept is introduced. MM defaults and the optional linear SOCP API remain.
 
-A fresh matched three-update comparison took 24.23 seconds with 1.3.3 and
-15.40 seconds with the candidate; residual checking fell from 9.64 to 0.56 seconds,
-with all compared states and probes bitwise identical. Short prefixes include
-setup/readout costs and are not full-fit speed ratios. The historical median and
-a fresh single fit are different summaries; these are scoped measurements,
-not universal performance guarantees.
+The preceding numerical repair passed 390 source tests. At the weakest
+regularization and RBF coefficient,
+all 45 first-fold MNIST pair ensembles complete all 270 learner fits at 10% base
+sampling; five learners use anchor recovery. This is a fit-validity screen, not
+an accuracy measurement. The preceding midpoint repair also completes all 270
+learner fits at 20% sampling. Those repair checks did not access the official
+test set. Final release validation is summarized in [VALIDATION.md](VALIDATION.md).
 
-The platform wheel uses the CPython stable ABI and has no NumPy C API dependency.
-A compiler is a build-time requirement for accelerated source builds; the Python
-checker remains available if the extension is absent. The numerical native-screen
-runtime gate remains audited CPython 3.12. There is no runtime compiler download.
-See [build and runtime details](docs/compiled_residual.md).
+The exact failed 1,917-row base and the full five-base ensemble with its final
+2,875-row refit complete all 100 updates. The full pair ensemble takes 74.406
+seconds in a one-thread validation replay and reaches 95.8698% validation
+accuracy on 2,397 held-out fold images. These are diagnostic results for one
+extreme parameter setting, not the final multiclass comparison or a speedup
+claim. All fits correctly report reaching the iteration cap without convergence.
 
-The adapted accumulation helpers retain CPython attribution and its complete PSF
-license. Original DWD credits and MIT licensing remain intact. The frozen public
-synthetic replay returns the same 21 models and retains the same nine documented
-extreme numerical rejections; this performance repair does not resolve those
-separate cases.
+All 21 successful models in the frozen 30-fit historical replay pass independent
+score, objective and serialization checks, with unchanged predictions. Twenty
+states are bitwise unchanged; one extreme valid fit has decision differences
+below 7.6e-10. The same nine extreme synthetic numerical rejections remain.
 
-See [validation](VALIDATION.md) and [1.3.3 history](docs/history/RELEASE_NOTES-1.3.3.md).
+See [the intercept explanation](docs/intercept_midpoint_refinement.md),
+[anchor recovery equations](docs/anchor_linear_system.md),
+[change history](CHANGES.md), and the preserved
+[1.3.4 performance release](docs/history/RELEASE_NOTES-1.3.4.md).
