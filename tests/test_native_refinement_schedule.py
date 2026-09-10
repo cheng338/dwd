@@ -122,18 +122,22 @@ class NativeRefinementScheduleTests(unittest.TestCase):
                     patch.object(system, '_candidate', side_effect=wrong_action) as action:
                 with self.assertRaises(FloatingPointError):
                     system.solve_constrained(rhs)
-            # Each representation has its unchanged initial action, one
-            # discarded preflight and three committed corrections.
-            attempts = 5 if isinstance(system, SpectralLinearSystem) else 2
+            # Existing representations retain their native trial. The final
+            # optimized anchor action uses direct checks and no native trial.
+            trials = 5 if isinstance(system, SpectralLinearSystem) else 2
+            attempts = 5 if isinstance(system, SpectralLinearSystem) else 3
             expected_modes = ({'validated_eigenbasis', 'power_of_two_equilibrated_eigenbasis',
                                'original_kernel_evd_eigenbasis', 'original_kernel_evr_eigenbasis',
                                'original_kernel_evx_eigenbasis'}
                               if isinstance(system, SpectralLinearSystem) else {'original', 'centered'})
-            self.assertEqual(Counter(representations), {mode: 5 for mode in expected_modes})
-            self.assertEqual(system.info['native_refinement_trials'], attempts)
-            self.assertEqual(system.info['native_refinement_discarded'], attempts)
+            expected_counts = {mode: 5 for mode in expected_modes}
+            if not isinstance(system, SpectralLinearSystem):
+                expected_counts['anchor_lu'] = 4
+            self.assertEqual(Counter(representations), expected_counts)
+            self.assertEqual(system.info['native_refinement_trials'], trials)
+            self.assertEqual(system.info['native_refinement_discarded'], trials)
             self.assertEqual(system.info['refinement_steps'], 3*attempts)
-            self.assertEqual(action.call_count, 5*attempts)
+            self.assertEqual(action.call_count, sum(expected_counts.values()))
             self.assertEqual(system.info['linear_solves'], 1)
             self.assertEqual(system.info['linear_recoveries'], attempts - 1)
             self.assertNotIn('refinement_budget_extensions', system.info)
@@ -143,7 +147,7 @@ class NativeRefinementScheduleTests(unittest.TestCase):
                                  ['equilibrated', 'evd', 'evr', 'evx'])
                 self.assertTrue(all(not r['accepted'] for r in system.info['spectral_recovery_attempts']))
             else:
-                self.assertEqual(len(system.info['factorization_attempts']), 2)
+                self.assertEqual(len(system.info['factorization_attempts']), 3)
             self.assertIsNone(system.last_product)
 
     def test_ordinary_success_is_bitwise_unchanged_and_needs_no_inverse_trial(self):

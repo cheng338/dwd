@@ -187,19 +187,21 @@ class KernelAutoFallbackTests(unittest.TestCase):
                 solve_kernel(np.eye(4), self.y, .1, psd_known=True,
                              callback=lambda s: seen.append(s['iteration']))
         self.assertEqual(seen, [0])
-        # Two representations: initial action, one discarded native trial,
-        # and the unchanged three committed-correction budget for each.
-        self.assertEqual(bad.call_count, 10)
+        # Two Cholesky representations have five actions each. The final
+        # anchor representation has an initial action plus three corrections.
+        self.assertEqual(bad.call_count, 14)
 
     def test_invalid_condition_diagnostics_cannot_escape_as_success(self):
         for rcond, status in ((1e-12, -1), (np.nan, 0), (-1e-12, 0)):
             seen = []
             with self.subTest(rcond=rcond, status=status), \
-                    patch.object(linear_system, 'dpocon', return_value=(rcond, status)) as checks:
-                with self.assertRaisesRegex(FloatingPointError, 'Invalid Cholesky'):
+                    patch.object(linear_system, 'dpocon', return_value=(rcond, status)) as checks, \
+                    patch('dwd._anchor_linear_system.dgecon', return_value=(rcond, status)) as anchor_checks:
+                with self.assertRaisesRegex(FloatingPointError, 'Invalid anchor'):
                     self.solve(callback=lambda s: seen.append(s['iteration']))
             self.assertEqual(seen, [])
             self.assertLessEqual(checks.call_count, 2)
+            self.assertEqual(anchor_checks.call_count, 1)
 
     def test_initial_stop_and_max_iter_zero_preserve_original_state(self):
         initial = np.array([.1, -.15, .25, -.05])

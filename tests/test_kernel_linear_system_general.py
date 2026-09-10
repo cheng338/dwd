@@ -167,11 +167,11 @@ class KernelLinearSystemGeneralTests(unittest.TestCase):
             with self.assertRaisesRegex(FloatingPointError, 'Unable to solve.*accurately'):
                 system.solve_constrained(self.rhs)
         self.assertGreaterEqual(bad.call_count, 2)
-        # Two factor representations, each with one initial action, one
-        # discarded native trial, and the unchanged three-correction budget.
-        self.assertLessEqual(bad.call_count, 10)
+        # Two Cholesky representations plus a final anchor representation;
+        # each has at most three coefficient corrections. Anchor has no trial.
+        self.assertEqual(bad.call_count, 14)
         self.assertEqual(system.info['native_refinement_discarded'], 2)
-        self.assertEqual(system.info['refinement_steps'], 6)
+        self.assertEqual(system.info['refinement_steps'], 9)
         self.assertIsNone(system.last_product)
         self.assertEqual(system.info['linear_solves'], 1)
 
