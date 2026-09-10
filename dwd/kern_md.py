@@ -3,6 +3,7 @@ from sklearn.base import BaseEstimator
 from sklearn.utils import check_array, check_X_y
 
 from dwd.kernel_utils import KernelClfMixin
+from dwd._fit_state import fit_with_cleanup
 
 
 class KernMD(KernelClfMixin, BaseEstimator):
@@ -18,6 +19,7 @@ class KernMD(KernelClfMixin, BaseEstimator):
 
         self.naive_bayes = naive_bayes
 
+    @fit_with_cleanup
     def fit(self, X, y):
         X, y = check_X_y(X, y, dtype='numeric')
         self.classes_ = np.unique(y)

@@ -30,6 +30,9 @@ class KernelLinearSystem:
 
     The second factorization acts on the centered kernel and a lifted constant
     direction. It is only a means of solving the SAME original equations.
+    If those float64 candidates fail, a lazy anchor-coordinate LU factor solves
+    the same constrained system after eliminating one coefficient. No kernel
+    direction is removed from the fitted function by that coordinate change.
     Every candidate is checked against those original equations before return.
     """
     def __init__(self, K, shift):
@@ -37,6 +40,7 @@ class KernelLinearSystem:
         self.shift = float(shift)
         self.n = len(K)
         self.factor = None
+        self.anchor_action = None
         self.mode = None
         self.v = None
         self.mean = self.K.mean(axis=0)
@@ -61,11 +65,29 @@ class KernelLinearSystem:
             # Leave the except block first: its traceback can retain the old
             # dense array even after references on self are cleared.
             self.factor = self.v = None
-            self._prepare('centered')
+            try:
+                self._prepare('centered')
+            except (LinAlgError, FloatingPointError) as exc:
+                self.info['centered_factorization_error'] = str(exc)
+            if self.mode != 'centered':
+                self.factor = self.v = None
+                self._prepare('anchor')
             self.info['linear_recoveries'] += 1
 
     def _prepare(self, mode):
         started = perf_counter()
+        if mode == 'anchor':
+            # Eliminate the coefficient-sum constraint exactly in real
+            # arithmetic. LU retains stored nonsymmetric rounding rather than
+            # silently symmetrizing a nearly constant kernel.
+            from ._anchor_linear_system import AnchorLinearSystem
+            self.anchor_action = AnchorLinearSystem(self.K, self.shift)
+            self.mode = mode
+            self.info['factorization_attempts'].append({**self.anchor_action.info,
+                'seconds': self.anchor_action.info['factorization_seconds']})
+            self.info.update(factor_representation='anchor_lu', anchor_index=0,
+                             anchor_accepted_actions=0)
+            return
         n = self.n
         a = np.array(self.K, dtype=float, order='F', copy=True)
         if mode == 'centered':
@@ -99,6 +121,8 @@ class KernelLinearSystem:
         self.info['factor_representation'] = mode
 
     def _candidate(self, rhs, target_sum):
+        if self.mode == 'anchor':
+            return self.anchor_action.candidate(rhs, target_sum)
         if self.mode == 'original':
             w = cho_solve(self.factor, rhs, check_finite=False)
             s = (_sum(w) - target_sum) / self.denominator
@@ -161,6 +185,7 @@ class KernelLinearSystem:
         representation for each solve or reference candidate check (at most
         two Cholesky or five spectral representations), outside the existing
         correction budget.
+        The anchor recovery uses direct accurate assessment without this trial.
         Only a committed trial counts as a refinement step; attempted/discarded
         inverse actions and their elapsed time are reported separately.
         """
@@ -325,23 +350,32 @@ class KernelLinearSystem:
         A successful correction consumes one of the existing refinement steps.
         """
         _, residual, constraint, product, _, _ = measurement
-        updated = float(s + _sum(residual) / self.n)
-        if not np.isfinite(updated) or updated == s:
-            return None
-        difference = updated - s
-        if not np.isfinite(difference):
-            return None
-        # Do not let a conservative norm estimate suppress a potentially valid
-        # scalar proposal. Its fresh check can use the a-posteriori estimate.
-        if not self._equations_acceptable(rhs, target_sum, x, residual - difference, constraint):
-            return None
-        self.info['intercept_refinement_attempts'] = self.info.get('intercept_refinement_attempts', 0) + 1
-        checked = self._compensated_measure(rhs, target_sum, x, updated)
-        if not checked[0]:
-            return None
-        self.info['refinement_steps'] += 1
-        self.info['intercept_refinement_steps'] = self.info.get('intercept_refinement_steps', 0) + 1
-        return updated, checked
+        # Preserve the usual mean correction. If its maximum residual is too
+        # large, the midpoint of the residual range minimizes that same norm
+        # over scalar corrections. Halving first avoids an overflowing sum.
+        corrections = (_sum(residual) / self.n,
+                       .5 * float(np.min(residual)) + .5 * float(np.max(residual)))
+        previous = None
+        for correction in corrections:
+            updated = float(s + correction)
+            if not np.isfinite(updated) or updated == s or updated == previous:
+                continue
+            previous = updated
+            difference = updated - s
+            if not np.isfinite(difference):
+                continue
+            # Do not let a conservative norm estimate suppress a potentially
+            # valid scalar proposal. The fresh check includes the RKHS gate.
+            if not self._equations_acceptable(rhs, target_sum, x, residual - difference, constraint):
+                continue
+            self.info['intercept_refinement_attempts'] = self.info.get('intercept_refinement_attempts', 0) + 1
+            checked = self._compensated_measure(rhs, target_sum, x, updated)
+            if not checked[0]:
+                continue
+            self.info['refinement_steps'] += 1
+            self.info['intercept_refinement_steps'] = self.info.get('intercept_refinement_steps', 0) + 1
+            return updated, checked
+        return None
 
     def solve_constrained(self, rhs, target_sum=0.):
         rhs = np.asarray(rhs, dtype=float)
@@ -350,10 +384,13 @@ class KernelLinearSystem:
             raise FloatingPointError('Invalid constrained linear-system right-hand side.')
         self.info['linear_solves'] += 1
         last_error = None
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 x, s = self._candidate(rhs, target_sum)
-                x, s, initial = self._measure_with_native_trial(rhs, target_sum, x, s)
+                if self.mode == 'anchor':
+                    initial = self._measure(rhs, target_sum, x, s)
+                else:
+                    x, s, initial = self._measure_with_native_trial(rhs, target_sum, x, s)
                 for refinement in range(4):
                     measured = initial if refinement == 0 else self._measure(rhs, target_sum, x, s)
                     if not measured[0] and refinement < 3:
@@ -366,26 +403,39 @@ class KernelLinearSystem:
                         self.info['max_linear_residual'] = max(self.info['max_linear_residual'], maximum)
                         self.info['max_constraint_residual'] = max(self.info['max_constraint_residual'], abs(constraint))
                         self.info['max_estimated_rkhs_solve_error'] = max(self.info['max_estimated_rkhs_solve_error'], error)
+                        if self.mode == 'anchor':
+                            self.info['anchor_accepted_actions'] += 1
                         return x, s
                     if refinement == 3:
                         raise FloatingPointError('Constrained kernel solve did not meet residual accuracy '
                                                  f'(max residual={maximum:.3g}, estimated RKHS error={error:.3g}).')
                     dx, ds = self._candidate(residual, constraint)
                     x += dx
+                    if self.mode == 'anchor':
+                        x[0] = target_sum - _sum(x[1:])
                     s += ds
                     self.info['refinement_steps'] += 1
             except (LinAlgError, FloatingPointError) as exc:
                 last_error = str(exc)
-            if self.mode == 'centered':
+            if self.mode == 'anchor':
                 break
             # Discard the old factor before allocating the alternative.
             self.factor = self.v = None
+            next_mode = 'centered' if self.mode == 'original' else 'anchor'
             try:
-                self._prepare('centered')
+                self._prepare(next_mode)
             except (LinAlgError, FloatingPointError) as exc:
                 last_error = str(exc)
-                break
+                if next_mode != 'centered':
+                    break
+            if next_mode == 'centered' and self.mode != 'centered':
+                self.factor = self.v = None
+                try:
+                    self._prepare('anchor')
+                except (LinAlgError, FloatingPointError) as exc:
+                    last_error = str(exc)
+                    break
             self.info['linear_recoveries'] += 1
         raise FloatingPointError('Unable to solve the original kernel MM system accurately '
-                                 'with bounded Cholesky refinement and centered recovery. '
+                                 'with bounded Cholesky, centered and anchor-coordinate recovery. '
                                  'The kernel and regularization were not changed.') from FloatingPointError(last_error)
