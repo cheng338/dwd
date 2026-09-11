@@ -1,5 +1,15 @@
 # Updates
 
+## 1.3.7
+
+- Vectorize compensated-residual error bounds with the same outward rounding
+  points and numerical acceptance checks.
+- Use the optional compiled row evaluator from eight rows and avoid repeated
+  thread-pool inspection below 2,048 rows, where the worker budget is one.
+- Add regression coverage for dispatch, fallback, input immutability, bitwise
+  arithmetic agreement and conservative error bounds. Solver equations,
+  unregularized intercept, stopping defaults and SOCP support are unchanged.
+
 ## 1.3.5
 
 - Clear learned state before fitting and after any failed fit across the public

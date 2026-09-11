@@ -86,6 +86,19 @@ def _error_bound(computed, absolute_sum_upper, constants):
     return _up(numerator / denominator)
 
 
+
+def _array_error_bound(computed, absolute_sum_upper, constants):
+    """Apply the scalar bound to float64 rows with identical rounding points."""
+    a, gamma_cube, underflow, denominator = constants
+    # Keep each product/addition separate: reassociation would change the
+    # outward allowance used by the existing acceptance checks.
+    first = np.nextafter(a * np.abs(computed), np.inf)
+    second = np.nextafter(gamma_cube * absolute_sum_upper, np.inf)
+    numerator = np.nextafter(first + second, np.inf)
+    numerator = np.nextafter(numerator + underflow, np.inf)
+    return np.nextafter(numerator / denominator, np.inf)
+
+
 def native_compensated_residual(K, shift, rhs, x, s, target_sum):
     """Return residual, constraint, scores, and their three error allowances.
 
@@ -121,47 +134,65 @@ def native_compensated_residual(K, shift, rhs, x, s, target_sum):
                 and _safe_operand(np.array([shift, s, target_sum]))):
             return None
 
-        positive_x = x.tolist()
-        negative_x = (-x).tolist()
-        augmented_x = negative_x + [1., 1., 0.]
         # The faithful fsum contract already used by the portable routine gives
         # an upper sum after two outward representable steps.
         absolute_x = _up(_up(_fsum(np.abs(x).tolist())))
         score_constants = _bound_constants(n, eta)
         residual_constants = _bound_constants(n + 3, eta)
-        residual, scores = np.empty(n), np.empty(n)
-        residual_bounds, score_bounds = np.empty(n), np.empty(n)
         compiled = compiled_values(K, x, rhs, shift, s)
-        for i, row in enumerate(K):
-            if compiled is None:
+        if compiled is None:
+            # Retain the scalar sumprod fallback, including its original product
+            # order and per-row acceptance checks.
+            positive_x = x.tolist()
+            negative_x = (-x).tolist()
+            augmented_x = negative_x + [1., 1., 0.]
+            residual, scores = np.empty(n), np.empty(n)
+            residual_bounds, score_bounds = np.empty(n), np.empty(n)
+            for i, row in enumerate(K):
                 if not _safe_operand(row):
                     return None
                 row_terms = row.tolist()
                 score = math.sumprod(row_terms, positive_x)
                 row_maximum = float(np.max(np.abs(row)))
-            else:
-                score = float(compiled[0][i])
-                row_maximum = float(compiled[2][i])
-            score_sum_upper = _mul(row_maximum, absolute_x)
-            score_error = _error_bound(score, score_sum_upper, score_constants)
-            # Native scores may feed later solver arithmetic. Require at least
-            # the portable routine's enlarged faithful-sum precision budget.
-            faithful_budget = _up(4 * _EPS * abs(score) + (2 * n + 6) * eta)
-            if not math.isfinite(score) or not math.isfinite(score_error) or score_error > faithful_budget:
-                return None
-            if compiled is None:
+                score_sum_upper = _mul(row_maximum, absolute_x)
+                score_error = _error_bound(score, score_sum_upper, score_constants)
+                # Native scores may feed later solver arithmetic. Require at
+                # least the portable enlarged faithful-sum precision budget.
+                faithful_budget = _up(4 * _EPS * abs(score) + (2 * n + 6) * eta)
+                if not math.isfinite(score) or not math.isfinite(score_error) or score_error > faithful_budget:
+                    return None
                 row_terms.extend([float(rhs[i]), -s, -shift])
                 augmented_x[-1] = float(x[i])
                 value = math.sumprod(row_terms, augmented_x)
-            else:
-                value = float(compiled[1][i])
-            total_upper = _add(_add(_add(score_sum_upper, abs(float(rhs[i]))), abs(s)),
-                               _mul(abs(shift), abs(float(x[i]))))
-            allowance = _error_bound(value, total_upper, residual_constants)
-            if not math.isfinite(value) or not math.isfinite(allowance):
-                return None
-            scores[i], score_bounds[i] = score, score_error
-            residual[i], residual_bounds[i] = value, allowance
+                total_upper = _add(_add(_add(score_sum_upper, abs(float(rhs[i]))), abs(s)),
+                                   _mul(abs(shift), abs(float(x[i]))))
+                allowance = _error_bound(value, total_upper, residual_constants)
+                if not math.isfinite(value) or not math.isfinite(allowance):
+                    return None
+                scores[i], score_bounds[i] = score, score_error
+                residual[i], residual_bounds[i] = value, allowance
+        else:
+            # These are fresh, disjoint arrays from the compiled call. Reuse
+            # them instead of copying the same scores/residuals row by row.
+            scores, residual, row_maxima = compiled
+            with np.errstate(over='ignore', invalid='ignore', under='ignore', divide='ignore'):
+                score_sum_upper = np.nextafter(row_maxima * absolute_x, np.inf)
+                score_bounds = _array_error_bound(scores, score_sum_upper, score_constants)
+                faithful_budget = np.nextafter(
+                    4 * _EPS * np.abs(scores) + (2 * n + 6) * eta, np.inf)
+                if (not np.isfinite(scores).all() or not np.isfinite(score_bounds).all()
+                        or np.any(score_bounds > faithful_budget)):
+                    return None
+                # Preserve the three outward additions and the separately
+                # rounded shifted-coefficient product from the scalar formula.
+                total_upper = np.nextafter(score_sum_upper + np.abs(rhs), np.inf)
+                total_upper = np.nextafter(total_upper + abs(s), np.inf)
+                shifted_upper = np.nextafter(abs(shift) * np.abs(x), np.inf)
+                total_upper = np.nextafter(total_upper + shifted_upper, np.inf)
+                residual_bounds = _array_error_bound(residual, total_upper, residual_constants)
+                if not np.isfinite(residual).all() or not np.isfinite(residual_bounds).all():
+                    return None
+            negative_x = (-x).tolist()
 
         constraint = _fsum([target_sum] + negative_x)
         constraint_bound = _up(4 * _EPS * abs(constraint) + 2 * eta)
