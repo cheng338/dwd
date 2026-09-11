@@ -1,4 +1,4 @@
-# Distance Weighted Discrimination 1.3.6
+# Distance Weighted Discrimination 1.3.7
 
 `dwd` provides linear and kernel Distance Weighted Discrimination classifiers
 with sklearn-style fitting, prediction, and cross-validation. One package now
@@ -14,6 +14,15 @@ The project builds on [slicersalt/dwd](https://github.com/slicersalt/dwd), origi
 implemented by [Iain Carmichael](https://idc9.github.io/), with upstream maintenance
 by David Allemang and [Kitware](https://kitware.com/). Original credits and the
 [MIT license](LICENSE.txt) are retained.
+
+## Changes in 1.3.7
+
+Compensated residual checks reduce Python overhead by vectorizing the existing
+outward-rounded error bounds and using the optional compiled row evaluator for
+kernels with at least eight rows. Kernels below 2,048 rows use one worker without
+repeated thread-pool inspection. The arithmetic guards, acceptance thresholds,
+objective, unregularized intercept and stopping settings remain unchanged.
+See the [release notes](RELEASE_NOTES.md).
 
 ## Changes in 1.3.6
 
