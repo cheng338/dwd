@@ -122,7 +122,8 @@ class NativeResidualTests(unittest.TestCase):
                 self.assertIsNone(native.native_compensated_residual(*self.args))
 
     def test_native_sumprod_failures_and_nonfinite_returns_fall_back(self):
-        with patch.object(native, '_native_supported', return_value=True):
+        with patch.object(native, '_native_supported', return_value=True), patch.object(
+                native, 'compiled_values', return_value=None):
             for failure in (OverflowError, ValueError, FloatingPointError, TypeError):
                 with patch.object(native.math, 'sumprod', side_effect=failure, create=True):
                     self.assertIsNone(native.native_compensated_residual(*self.args))
@@ -141,6 +142,7 @@ class NativeResidualTests(unittest.TestCase):
             return exact_sumprod(a, b)
 
         with patch.object(native, '_native_supported', return_value=True), patch.object(
+                native, 'compiled_values', return_value=None), patch.object(
                 native.math, 'sumprod', side_effect=record_sumprod, create=True):
             result = native.native_compensated_residual(*self.args)
         self.assertIsNotNone(result)

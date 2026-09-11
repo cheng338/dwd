@@ -90,6 +90,18 @@ class CompiledAllocationTests(unittest.TestCase):
                     compiled.os, 'cpu_count', return_value=cpus):
                 self.assertEqual(compiled._worker_count(n), expected)
 
+    def test_single_worker_sizes_do_not_inspect_thread_pools(self):
+        with patch('threadpoolctl.threadpool_info', side_effect=AssertionError('unnecessary inspection')), patch.object(
+                compiled.os, 'cpu_count', side_effect=AssertionError('unnecessary CPU query')):
+            for n in (0, 1, 255, 256, 1023, 1024, 2047):
+                with self.subTest(n=n):
+                    self.assertEqual(compiled._worker_count(n), 1)
+        with patch('threadpoolctl.threadpool_info', return_value=[
+                {'user_api': 'blas', 'num_threads': 8}]) as pools, patch.object(
+                compiled.os, 'cpu_count', return_value=16):
+            self.assertEqual(compiled._worker_count(2048), 2)
+            pools.assert_called_once_with()
+
     def test_compiled_values_partitions_rows_with_budget_without_dense_copy(self):
         n = 4097
         K = np.broadcast_to(np.array(1.), (n, n))
@@ -119,15 +131,20 @@ class CompiledAllocationTests(unittest.TestCase):
         np.testing.assert_array_equal(result[1], -np.arange(n))
         np.testing.assert_array_equal(result[2], np.ones(n))
 
-    def test_missing_extension_small_input_and_status_failure_decline(self):
+    def test_missing_extension_tiny_input_and_status_failure_decline(self):
         K, x, rhs = np.ones((256, 256)), np.ones(256), np.zeros(256)
         with patch.object(compiled, '_ACCEL', None):
             self.assertIsNone(compiled.compiled_values(K, x, rhs, .5, .25))
         accelerator = types.SimpleNamespace(evaluate=lambda *args: 2)
         with patch.object(compiled, '_ACCEL', accelerator):
-            self.assertIsNone(compiled.compiled_values(K, x, rhs, .5, .25))
-        with patch.object(compiled, '_ACCEL') as accelerator:
-            self.assertIsNone(compiled.compiled_values(K[:2, :2], x[:2], rhs[:2], .5, .25))
+            for n in (8, 256):
+                with self.subTest(n=n):
+                    self.assertIsNone(compiled.compiled_values(K[:n, :n], x[:n], rhs[:n], .5, .25))
+        with patch.object(compiled, '_ACCEL') as accelerator, patch.object(
+                compiled, '_worker_count', side_effect=AssertionError('tiny input inspected workers')):
+            for n in range(8):
+                with self.subTest(n=n):
+                    self.assertIsNone(compiled.compiled_values(K[:n, :n], x[:n], rhs[:n], .5, .25))
             accelerator.evaluate.assert_not_called()
 
 
@@ -183,6 +200,44 @@ class CompiledArithmeticTests(unittest.TestCase):
                     self.assertFalse(value.flags.writeable)
                 count += 1
         self.assertEqual(count, 48)
+
+    def test_small_dispatch_matches_scalar_screen_and_preserves_inputs(self):
+        rng = np.random.default_rng(917632)
+        for n in (8, 144, 255):
+            K = rng.uniform(.25, 1., size=(n, n))
+            x, rhs = rng.uniform(.5, 1., size=n), rng.normal(size=n)
+            if n == 144:
+                K = np.asfortranarray(K)
+            elif n == 255:
+                K, x, rhs = K[::-1, ::-1], x[::-1], rhs[::-1]
+            snapshots = [value.copy() for value in (K, x, rhs)]
+            for value in (K, x, rhs):
+                value.flags.writeable = False
+            with self.subTest(n=n):
+                with patch('threadpoolctl.threadpool_info', side_effect=AssertionError('small dispatch inspected pools')):
+                    result = compiled.compiled_values(K, x, rhs, .125, .3)
+                self.assertIsNotNone(result)
+                status, *direct = _rows(K, x, rhs, .125, .3)
+                self.assertEqual(status, 0)
+                for actual, expected in zip(result, direct):
+                    self.assert_bits_equal(actual, expected)
+                    self.assertFalse(any(np.shares_memory(actual, value) for value in (K, x, rhs)))
+                if native._native_supported():
+                    args = (K, .125, rhs, x, .3, -.25)
+                    with patch.object(compiled, '_ACCEL', None):
+                        scalar = native.native_compensated_residual(*args)
+                    accelerated = native.native_compensated_residual(*args)
+                    self.assertIsNotNone(scalar)
+                    self.assertIsNotNone(accelerated)
+                    for actual, expected in zip(accelerated, scalar):
+                        self.assert_bits_equal(actual, expected)
+                else:
+                    self.assertIsNone(native.native_compensated_residual(K, .125, rhs, x, .3, -.25))
+                    if n <= 31:
+                        self.assert_core_reference(K, x, rhs, .125, .3, result)
+                for value, before in zip((K, x, rhs), snapshots):
+                    self.assert_bits_equal(value, before)
+                    self.assertFalse(value.flags.writeable)
 
     def test_disjoint_thread_chunks_match_single_call(self):
         with ThreadPoolExecutor(max_workers=4) as executor:
