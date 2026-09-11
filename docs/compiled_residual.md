@@ -62,5 +62,7 @@ a compiler or silently produces a purported accelerated wheel.
 The performance improvement is workload dependent. It targets models requiring
 compensated residual checks, particularly large ill-conditioned kernel systems.
 It is not a claim that every DWD fit, reference eigendecomposition or CV search
-becomes faster by the same factor. The default remains 100 MM updates, with
-objective-change stopping and convergence reported separately.
+becomes faster by the same factor. The default allows at most 100 MM updates per attempt and can stop earlier on
+objective change; numerical convergence is reported separately. An eligible
+[automatic numerical restart](kernel_dwd.md#automatic-numerical-restart) may add
+discarded work, which is included in its timing diagnostics.
