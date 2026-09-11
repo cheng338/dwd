@@ -12,6 +12,10 @@ except (ImportError, OSError):
 
 def _worker_count(n):
     """Respect the caller's active native-library thread budget."""
+    # Fewer than 2048 rows cannot use two workers under the row budget.
+    # Avoid enumerating loaded BLAS libraries for every small residual check.
+    if n < 2048:
+        return 1
     from threadpoolctl import threadpool_info
     budgets = [int(pool['num_threads']) for pool in threadpool_info()
                if pool.get('user_api') == 'blas' and pool.get('num_threads', 0) > 0]
@@ -26,7 +30,8 @@ def compiled_values(K, x, rhs, shift, intercept):
     write disjoint output ranges; no extra Gram matrix or process is created.
     Its arithmetic guards are additional to the unchanged caller's checks.
     """
-    if _ACCEL is None or len(x) < 256:
+    # The scalar route has less setup overhead for tiny vectors.
+    if _ACCEL is None or len(x) < 8:
         return None
     n = len(x)
     scores, residual, maxima = np.empty(n), np.empty(n), np.empty(n)
