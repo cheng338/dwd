@@ -10,7 +10,7 @@ This is a development/release candidate, not the upstream PyPI release.
 It retains the upstream MIT license and original author credit. Original implementation:
 Iain Carmichael; upstream maintenance: David Allemang / Kitware; upstream repository:
 https://github.com/slicersalt/dwd . User-maintained compatibility fork:
-https://github.com/cheng338/dwd . Audit/optimization work was prepared with Codex.
+https://github.com/cheng338/dwd . 
 
 ## Changes that can change scientific results
 
