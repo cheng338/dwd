@@ -1,6 +1,6 @@
 # Compiled residual arithmetic
 
-Version 1.3.4 optionally builds a small C extension that accelerates the existing
+The package optionally builds a small C extension that accelerates the existing
 compensated kernel residual check. It changes how arithmetic is executed, not
 the kernel DWD model, MM equations, free intercept, loss, regularization,
 initialization, stopping tolerances, or iteration budget.
@@ -15,7 +15,9 @@ shift product; it is never formed by subtracting an already-rounded score.
 
 The Python layer retains the previous outward error bounds, score precision
 screen, equation checks, coefficient-sum check and RKHS accuracy requirement.
-The C core additionally checks its arithmetic domain and rounding behavior.
+When compiled values are available, the Python layer evaluates those bounds
+on arrays with the same outward rounding points. The C core additionally checks
+its arithmetic domain and rounding behavior.
 Uncertain or unsupported evaluations retain the prior Python/native or portable
 fallback. No numerical tolerance is relaxed. The current native-screen runtime
 gate remains CPython 3.12; other supported Python versions retain the portable
@@ -30,7 +32,9 @@ remain intact.
 Independent row ranges can execute concurrently because the extension releases
 the GIL. The worker count does not exceed the smallest active BLAS thread limit,
 the logical CPU count, or one worker per 1,024 rows. If no BLAS budget is visible,
-it uses one worker. Small matrices use the existing Python path.
+it uses one worker. Kernels with fewer than eight rows use the existing Python
+path. Compiled checks below 2,048 rows use one worker without inspecting loaded
+BLAS libraries; larger checks inspect the caller's active budget.
 
 Thus an external `threadpool_limits(8)` context permits up to eight arithmetic
 workers. GridSearchCV processes configured with one BLAS thread remain single
