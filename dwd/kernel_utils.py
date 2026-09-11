@@ -62,6 +62,12 @@ class KernelClfMixin(ClassifierMixin):
             return K
 
         elif isinstance(self.kernel, str):
+            if (self.kernel == 'rbf' and
+                    getattr(self, 'kernel_computation_', None) == 'norm_sum'):
+                from ._rbf import norm_sum_rbf
+                return norm_sum_rbf(
+                    self._Xfit, X, gamma=(self.kernel_kws or {}).get('gamma'),
+                    self_kernel=X is self._Xfit)
             return pairwise_kernels(X=self._Xfit,
                                     Y=X,
                                     metric=self.kernel,
@@ -159,7 +165,7 @@ class KernelScaler(TransformerMixin, BaseEstimator):
         pass
 
     def fit(self, K, y=None):
-        """Fit KernelCenterer
+        """Record the positive diagonal of a square training kernel.
         Parameters
         ----------
         K : numpy array of shape [n_samples, n_samples]
@@ -178,16 +184,16 @@ class KernelScaler(TransformerMixin, BaseEstimator):
         return self
 
     def transform(self, K, copy=True):
-        """Center kernel matrix.
+        """Apply the fitted diagonal scaling to a square kernel matrix.
         Parameters
         ----------
-        K : numpy array of shape [n_samples1, n_samples2]
-            Kernel matrix.
+        K : numpy array of shape (n_samples, n_samples)
+            Kernel matrix with the same square shape and training-row order as in fit.
         copy : boolean, optional, default True
             Set to False to perform inplace computation.
         Returns
         -------
-        K_new : numpy array of shape [n_samples1, n_samples2]
+        K_new : numpy array of shape (n_samples, n_samples)
         """
         check_is_fitted(self, 'K_diag_')
 

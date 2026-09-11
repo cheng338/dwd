@@ -22,6 +22,7 @@ from ._quadratic_bounds import _upward_nonnegative, _compensated_dot, _compensat
 from ._accelerated_mm import RestartedMM
 from ._kernel_scores import compensated_kernel_matvec, adaptive_kernel_matvec
 from ._kernel_mm_recovery import KernelMMRecovery
+from ._kernel_recovery import ConstrainedSolveFailure, MMRecoveryExhausted
 
 
 def _scalar(value, name, *, positive=False):
@@ -511,6 +512,25 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     optimizer_details = {}
     mm_recovery = KernelMMRecovery(K, shift)
     last_proximal_uses_certified_columns = False
+    constrained_recovery_origin = None
+
+    def exhausted_constrained_recovery(error):
+        # No arrays, factors, histories or exception objects cross the retry
+        # boundary. The caller may release this attempt before spectral setup.
+        return MMRecoveryExhausted(str(error), {
+            'failed_backend': backend,
+            'failed_iteration': int(iteration),
+            'completed_iterations': int(max(0, iteration - 1)),
+            'setup_seconds': float(setup_seconds),
+            'optimization_seconds': float(max(0., perf_counter() - started - setup_seconds)),
+            'constrained_failure': constrained_recovery_origin,
+            'linear_mode': str(system.mode),
+            'linear_solves': int(system.info['linear_solves']),
+            'linear_recoveries': int(system.info['linear_recoveries']),
+            'mm_function_recovery_attempted': bool(mm_recovery.info['attempted']),
+            'mm_function_recovery_accepted_actions': int(mm_recovery.info['accepted_actions']),
+            'mm_function_certificate_status': str(mm_recovery.info.get('certificate_status')),
+        })
 
     def accelerated_proximal_step(rhs):
         nonlocal last_proximal_uses_certified_columns
@@ -587,7 +607,12 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                     was_recovering = mm_recovery.active
                     try:
                         if was_recovering:
-                            alpha, offset, scores = mm_recovery.step(candidate_rhs, previous_offset)
+                            try:
+                                alpha, offset, scores = mm_recovery.step(candidate_rhs, previous_offset)
+                            except FloatingPointError as recovery_error:
+                                if constrained_recovery_origin is not None:
+                                    raise exhausted_constrained_recovery(recovery_error) from recovery_error
+                                raise
                             c = None
                             state_uses_certified_columns = True
                         elif implementation == 'reference':
@@ -616,8 +641,16 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                         alpha, c, scores, offset, state_uses_certified_columns = previous_state
                         if was_recovering:
                             raise
-                        alpha, offset, scores = mm_recovery.step(
-                            candidate_rhs, previous_offset, str(exc))
+                        if (backend == 'cholesky' and implementation == 'optimized'
+                                and isinstance(exc, ConstrainedSolveFailure)):
+                            constrained_recovery_origin = str(exc)
+                        try:
+                            alpha, offset, scores = mm_recovery.step(
+                                candidate_rhs, previous_offset, str(exc))
+                        except FloatingPointError as recovery_error:
+                            if constrained_recovery_origin is not None:
+                                raise exhausted_constrained_recovery(recovery_error) from recovery_error
+                            raise
                         c = None
                         state_uses_certified_columns = True
                         checked_value = check_mm_descent()

@@ -31,10 +31,9 @@ def _validate_score(value, candidate, context, fold_index=None):
 
 def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     """
-    Runs cross-validation on a classifier.
-    This function is designed for classifiers where we can quickly  compute
-    the whole tuning path if we are allowed to pre-compute some quantities
-    based on X before fitting the model.
+    Run serial cross-validation with fold-specific preparation.
+    Compatible candidates reuse matrix preparation through clf.cv_init(X).
+    Runtime depends on the grid and problem size.
 
     The clf object should be a sklearn compatible classifier
     with an additional clf.cv_init(X) function which does some precomputation
@@ -49,8 +48,12 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     params: dict of lists
 
     scoring:
+        Scorer name or callable accepted by sklearn.metrics.check_scoring.
+        Must return a finite real scalar.
 
     cv:
+        Cross-validation splitter or fold count, interpreted by
+        sklearn.model_selection.check_cv.
 
     Output
     ------

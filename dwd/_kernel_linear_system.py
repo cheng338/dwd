@@ -10,6 +10,7 @@ from time import perf_counter
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 from scipy.linalg.lapack import dpocon
+from ._kernel_recovery import ConstrainedSolveFailure
 from ._compensated_residual import compensated_residual
 from ._native_residual import native_compensated_residual
 from ._quadratic_bounds import _compensated_dot, _compensated_quadratic, _upward_nonnegative
@@ -436,6 +437,6 @@ class KernelLinearSystem:
                     last_error = str(exc)
                     break
             self.info['linear_recoveries'] += 1
-        raise FloatingPointError('Unable to solve the original kernel MM system accurately '
+        raise ConstrainedSolveFailure('Unable to solve the original kernel MM system accurately '
                                  'with bounded Cholesky, centered and anchor-coordinate recovery. '
                                  'The kernel and regularization were not changed.') from FloatingPointError(last_error)
