@@ -1,3 +1,4 @@
+from ._dual_certificate import kernel_dual_lower_bound
 """Exact full-kernel generalized DWD solvers with a free intercept.
 
 The objective is mean(V_q(y * (K @ alpha + b))) + lambd * alpha.T @ K @ alpha.
@@ -14,6 +15,7 @@ from scipy.linalg.lapack import dpocon
 from scipy.optimize import minimize
 
 from .gen_dwd import V, V_grad
+from ._dual_certificate import kernel_dual_lower_bound
 from ._eigen import validated_eigh
 from ._kernel_linear_system import KernelLinearSystem
 from ._reference_mm import reference_update
@@ -165,11 +167,13 @@ def _check_initial_quadratic(K, alpha):
 
 
 def optimality_diagnostics(K, y, alpha, offset, lambd, q, *, scores=None):
-    """Return RKHS/intercept residual and a feasible primal-dual bound.
+    """Return stationarity estimates and a conservative feasible dual endpoint.
 
     The dual loss conjugate is -rho**(q/(q+1)) on 0 <= rho <= 1, with
     y.T @ rho = 0 from the unregularized intercept. Dual slopes are projected
-    onto that equality before computing the bound. K must already be validated.
+    onto that equality and balanced exactly before computing the dual endpoint.
+    The primal objective and gap remain numerical estimates. K must already
+    be validated.
     """
     n = len(y)
     scores = K @ alpha if scores is None else scores
@@ -184,19 +188,8 @@ def optimality_diagnostics(K, y, alpha, offset, lambd, q, *, scores=None):
                                       float(np.sum(np.abs(coefficient_residual * gradient_alpha))),
                                       'RKHS gradient norm squared')
     gradient = float(max(abs(z.sum()), np.sqrt(residual2)))
-    rho = -V_grad(margins, q=q)
-    lo, hi = -1., 1.
-    for _ in range(64):
-        mid = (lo + hi) * .5
-        projected = np.clip(rho - mid * y, 0., 1.)
-        if y @ projected > 0:
-            lo = mid
-        else:
-            hi = mid
-    rho = np.clip(rho - ((lo + hi) * .5) * y, 0., 1.)
-    signed = rho * y
-    dual = float(np.mean(rho ** (q / (q + 1.)))
-                 - signed @ (K @ signed) / (4. * lambd * n * n))
+    dual, dual_info = kernel_dual_lower_bound(
+        K, y, -V_grad(margins, q=q), lambd, q)
     gap = primal - dual
     if not np.isfinite(primal) or not np.isfinite(dual) or not np.isfinite(gradient):
         raise FloatingPointError('Nonfinite objective or optimality diagnostic.')
@@ -216,7 +209,7 @@ def optimality_diagnostics(K, y, alpha, offset, lambd, q, *, scores=None):
             'gradient_inf_norm': float(max(abs(z.sum()), np.max(np.abs(gradient_alpha)))),
             'rkhs_gradient_norm': gradient, 'intercept_gradient': float(z.sum()),
             'dual_objective': dual, 'dual_gap': float(gap),
-            'dual_equality_residual': float(abs(y @ rho)), 'C': C}
+            'dual_equality_residual': 0., 'dual_certificate': dual_info, 'C': C}
 
 
 class _RequestedStop(Exception):
@@ -685,6 +678,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         if state_uses_certified_columns:
             diagnostics['coefficient_representation'] = 'certified_sparse_kernel_columns'
     final = optimality_diagnostics(K, y, alpha, offset, lambd, q, scores=exact_scores)
+    diagnostics['dual_certificate'] = dict(final['dual_certificate'],
+        dual_objective_lower_bound=final['dual_objective'])
     objective_drift = float(final['final_objective'] - history[returned_iteration])
     if abs(objective_drift) > 5e-8 * max(1., abs(final['final_objective'])):
         raise FloatingPointError('Returned coefficients lost RKHS objective accuracy; '

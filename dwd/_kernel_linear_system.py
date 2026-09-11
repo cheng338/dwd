@@ -13,6 +13,7 @@ from scipy.linalg.lapack import dpocon
 from ._kernel_recovery import ConstrainedSolveFailure
 from ._compensated_residual import compensated_residual
 from ._native_residual import native_compensated_residual
+from ._ordinary_residual_bounds import OrdinaryResidualBounds
 from ._quadratic_bounds import _compensated_dot, _compensated_quadratic, _upward_nonnegative
 
 
@@ -159,15 +160,60 @@ class KernelLinearSystem:
         return acceptable, maximum, feature_error
 
     def _ordinary_measure(self, rhs, target_sum, x, s, product=None):
+        # A supplied product is a fresh direct K@x (reference_update) or a
+        # more accurate direct compensated Kx; an eigenvalue approximation is
+        # never a valid product argument for these original-equation checks.
         if not np.isfinite(x).all() or not np.isfinite(s):
             raise FloatingPointError('Nonfinite constrained linear-solve result.')
         if product is None:
             product = self.K @ x
         residual = rhs - product - self.shift * x - s
-        constraint = target_sum - _sum(x)
+        summed = _sum(x)
+        constraint = target_sum - summed
         if not np.isfinite(residual).all() or not np.isfinite(constraint):
             raise FloatingPointError('Nonfinite constrained linear-solve residual.')
-        acceptable, maximum, feature_error = self._assess(rhs, target_sum, x, product, residual, constraint)
+        self.info['ordinary_residual_checks'] = self.info.get('ordinary_residual_checks', 0) + 1
+        maximum = float(np.max(np.abs(residual)))
+        try:
+            # Lazy construction also covers SpectralLinearSystem, whose
+            # constructor deliberately does not prepare a Cholesky factor.
+            cache = getattr(self, '_ordinary_bounds', None)
+            if cache is None:
+                try:
+                    cache = OrdinaryResidualBounds(self.K, self.mean)
+                except FloatingPointError:
+                    self._ordinary_bounds = False
+                    raise
+                self._ordinary_bounds = cache
+            if cache is False:
+                raise FloatingPointError('Ordinary kernel bound is unavailable.')
+            acceptable, maximum, feature_error = cache.measure(
+                rhs, target_sum, x, self.shift, s, product, residual, constraint, summed)
+            if not acceptable and np.max(np.abs(residual)) <= 1e-10 * max(1., float(np.max(np.abs(rhs)))):
+                # The ordinary state looks accurate but its roundoff allowance
+                # is inconclusive. Short BLAS dots tighten that allowance without
+                # assuming the provider's undocumented reduction tree. Obvious
+                # measured failures still proceed straight to the native trial.
+                self.info['blocked_residual_checks'] = self.info.get('blocked_residual_checks', 0) + 1
+                blocked_product, score_bounds = cache.blocked_product(self.K, x)
+                blocked_residual = rhs - blocked_product - self.shift * x - s
+                checked = cache.measure(rhs, target_sum, x, self.shift, s,
+                                        blocked_product, blocked_residual, constraint,
+                                        summed, score_bounds=score_bounds)
+                if checked[0]:
+                    acceptable, maximum, feature_error = checked
+                    product, residual = blocked_product, blocked_residual
+                    self.info['blocked_residual_acceptances'] = self.info.get('blocked_residual_acceptances', 0) + 1
+        except (FloatingPointError, OverflowError) as exc:
+            # Failure of a cheap bound is not failure of the candidate. The
+            # unchanged state remains eligible for compensated measurement.
+            acceptable, feature_error = False, float('inf')
+            self.info['ordinary_residual_declines'] = self.info.get('ordinary_residual_declines', 0) + 1
+            self.info['last_ordinary_residual_decline'] = str(exc)
+        if acceptable:
+            self.info['ordinary_residual_acceptances'] = self.info.get('ordinary_residual_acceptances', 0) + 1
+        else:
+            self.info['ordinary_residual_uncertain'] = self.info.get('ordinary_residual_uncertain', 0) + 1
         return acceptable, residual, constraint, product, maximum, feature_error
 
     def _measure(self, rhs, target_sum, x, s, product=None):
@@ -179,7 +225,7 @@ class KernelLinearSystem:
     def _measure_with_native_trial(self, rhs, target_sum, x, s, product=None):
         """Try one inexpensive correction before compensated O(n^2) work.
 
-        The trial is accepted only by the unchanged ordinary checks on its
+        The trial is accepted only by the bounded ordinary checks on its
         freshly recomputed scores. Otherwise discard it and accurately measure
         the untouched original state: its ordinary failure can be cancellation,
         rather than an inaccurate solution. This preflight runs once per factor
@@ -211,7 +257,10 @@ class KernelLinearSystem:
             self.info['refinement_steps'] += 1
             return trial_x, trial_s, trial
         self.info['native_refinement_discarded'] = self.info.get('native_refinement_discarded', 0) + 1
-        return x, s, self._measure(rhs, target_sum, x, s, product=measured[3])
+        # Both ordinary screens already declined. Repeating the original cheap
+        # check cannot change that decision and may repeat a block matvec.
+        return x, s, self._compensated_measure(rhs, target_sum, x, s,
+                                             ordinary_maximum=measured[4])
 
     def _equations_acceptable(self, rhs, target_sum, x, residual, constraint,
                               residual_bound=0., constraint_bound=0.):
