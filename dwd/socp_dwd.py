@@ -24,7 +24,7 @@ class DWD(LinearClassifierMixin, BaseEstimator):
     """Binary distance-weighted discrimination using optional CVXPY SOCP.
 
     C remains the conic slack-penalty parameter. For C='auto', the constructor
-    value stays unchanged and the fitted value is C_. solver_status_ preserves
+    value stays unchanged and the fitted value is ``C_``. ``solver_status_`` preserves
     the solver's distinction between optimal and optimal_inaccurate; acceptance
     of the latter is not a claim of an exact numerical certificate.
     """
@@ -82,21 +82,18 @@ class DWD(LinearClassifierMixin, BaseEstimator):
     @property
     def direction(self):
         """
-        The separating hyperplane is of the form 'p.d = d.i', where '.' is the dot
-        product. If 'p.d < d.i', then 'p' is classified label 0. If 'p.d > d.i' then it
-        is classified label 1.
+        Return the separating direction and boundary threshold.
+
+        The separating hyperplane satisfies x @ direction = threshold. Values
+        above the threshold predict classes_[1]; values at or below it predict
+        classes_[0]. The returned threshold is the negative of intercept_[0].
 
         Returns
         -------
-        direction: np.ndarray
-            The DWD separating direction; normal to the hyperplane.
-
-        intercept: float
-            The intercept of the separating hyperplane.
-
-        the DWD direction and intercept. The separating hyperplane is of the
-        form 'p.d = d.i', where '.' is the dot product. If 'p.d < d.i', then 'p' is label
-        0. If 'p.d > d.i', then 'p' is label 1.
+        direction : ndarray of shape (n_features,)
+            Normal vector of the separating hyperplane.
+        intercept : float
+            Boundary threshold, equal to -intercept_[0].
         """
 
         check_is_fitted(self, ['coef_', 'intercept_', 'classes_'])
@@ -124,7 +121,7 @@ def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
         Sample weights are unsupported and rejected explicitly.
 
     solver_kws: dict
-        Keyword arguments to cp.solve
+        Keyword arguments passed to cvxpy.Problem.solve.
 
     Returns
     ------

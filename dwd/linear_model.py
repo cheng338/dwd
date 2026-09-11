@@ -10,12 +10,9 @@ __all__ = ['LinearClassifierMixin']
 
 class LinearClassifierMixin(ClassifierMixin):
     """
-    Simplified version of sklearn.linear_model._base.LinearClassifierMixin.
-    It was removed from the public API, so must be implemented here. Because this is only
-    used for DWD and SVM predictors, I do not implement all the extra functionality as in
-    the private sklearn.linear_model API.
-
-    Expects instance variables `coef_`, `intercept_`, and `classes_` to be present on the object.
+    Shared binary prediction methods for the package's linear classifiers.
+    The mixin follows scikit-learn's estimator conventions and requires
+    coef_, intercept_, and classes_.
     Positive scores select classes_[1]; zero scores select classes_[0].
     """
 

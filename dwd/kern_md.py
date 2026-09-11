@@ -50,8 +50,9 @@ def kern_md(K, y, naive_bayes=False):
     y: array-like (n_samples, )
         Vector of binary labels.
 
-    naive_bayes: bool
-        Compute naive bayes direction.
+    naive_bayes : bool, default=False
+        Must be False. A train/query-consistent naive Bayes transformation is
+        not implemented; True raises NotImplementedError.
 
     Output
     ------

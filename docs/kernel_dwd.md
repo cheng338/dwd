@@ -1,15 +1,9 @@
-# Kernel DWD 1.3.4 API and numerical controls
+# Kernel DWD: API and numerical controls
 
-For current artifact acceptance, see [VALIDATION.md](../VALIDATION.md).
-
-Release 1.3.4 adds optional compiled and parallel row evaluation to the
-1.3.3 compensated residual checker, accelerating its evaluation without changing the
-optimization or stopping policy. Audited CPython 3.12 uses bounded native
-`math.sumprod` arithmetic when its precision and magnitude conditions hold.
-Original-equation accuracy gates still decide acceptance; uncertain checks use
-the portable expanded calculation. Other runtimes use the portable path, which
-also benefits from reduced conversion work. No new parameter or dependency is
-needed. Native-path diagnostics count numerical checks, not MM updates.
+This guide describes the kernel estimator, its objective, parameter conventions,
+stopping rules, and numerical diagnostics. For release-specific validation, see
+[VALIDATION.md](../VALIDATION.md). Details of the optional arithmetic accelerator
+are in [compiled residual arithmetic](compiled_residual.md).
 
 `dwd.gen_kern_dwd.KernGDWD` fits one binary classifier. It does not search for
 parameters or create hidden validation splits. `KernGDWDCV` is an explicitly
@@ -62,7 +56,7 @@ updates. The reference never substitutes a Cholesky solve.
 | `solver_mode='schur'` | Default corrected update algebra, with a free intercept. |
 | `implementation='reference'` | Corrected coefficient MM using a checked full eigenbasis. Accepts `backend='auto'` or `'spectral'`. |
 | `implementation='optimized'` | Default implementation, with the backend choices below. |
-| `backend='auto'` | Optimized: Cholesky unless eigenpairs are supplied/cached. Reference: eigen-decomposition and coefficient MM. |
+| `backend='auto'` | Optimized: Cholesky unless eigenpairs are supplied/cached; eligible internal RBF fits may restart once through the spectral backend after constrained/MM recovery is exhausted. Reference: eigen-decomposition and coefficient MM. |
 | `backend='cholesky'` | Optimized only: solve the original constrained shifted-kernel equations with residual checks, bounded refinement, and centered factor recovery. Unknown/precomputed kernels still require PSD validation. |
 | `backend='spectral'` | Use the full checked eigensystem; it can be reused across lambda/q values. The reference retains coefficient updates; optimized mode uses spectral coordinates. |
 | `backend='lbfgs'` | Optimized only: optimize the same generalized objective in full spectral RKHS coordinates with a free intercept. It requires spectral preparation. |
@@ -105,6 +99,55 @@ combining the two is rejected. This preserves the explicit legacy path of the au
 fixed the loss/gradient; legacy therefore does not promise identical behavior to
 every unmodified upstream 1.0.5 input.
 
+## Automatic numerical restart
+
+An unaccelerated optimized fit with `solver_mode='schur'`, `backend='auto'`, and
+`callback=None` can make one fresh spectral attempt when a constrained MM update
+and its existing bounded recovery both fail. The trigger is specific: the
+original/centered/anchor constrained solve must be exhausted, followed by failure
+of its certified MM-function recovery. An unrelated objective-descent rejection,
+callback exception, memory error, or cancellation does not trigger this restart.
+
+This applies only to named RBF kernels built internally by the package's unchanged
+construction methods, with valid known-PSD parameters. A reused CV kernel also
+requires the recorded construction provenance and unchanged preparation methods.
+Caller-supplied `K` or eigenpairs, precomputed and callable kernels, overridden
+construction methods, reference/legacy implementations, explicit backend choices,
+and momentum acceleration do not gain this restart. A successful ordinary fit
+does not compute an additional eigendecomposition.
+
+The failed attempt's temporary solver arrays and factors are released before
+spectral preparation.
+The new attempt reuses the exact original kernel, labels, realized initialization,
+regularization, generalized-loss exponent, and stopping/validation settings. It
+does not draw another initialization or continue from rejected coefficients.
+Both attempts optimize the same kernel DWD objective with an unregularized
+intercept; no ridge is added and no positive eigendirections are discarded.
+
+The existing spectral acceptance checks remain in force: a checked eigenbasis,
+original-kernel scores and RKHS objective for the returned model, and additional
+checks before any validation checkpoint is observed. These differ from the
+Cholesky route's constrained coefficient/gauge residual checks. A successful
+spectral restart does not certify a rejected Cholesky coefficient state. If the
+spectral attempt also fails its checks, the error propagates; there is no second
+restart or unchecked fitted model.
+
+`max_iter` is the accepted-update cap **per attempt**. The default is at most 100
+updates per attempt, with earlier objective-change stopping. After a successful
+restart, `n_iter_`, objective/validation histories, and `returned_iteration_`
+describe only the successful spectral attempt. Previously completed updates are
+reported as discarded work in `diagnostics_['spectral_restart']`; they are not
+added to the returned trajectory. Fixed stopping therefore specifies the successful
+attempt's update budget, not total computational work across both attempts.
+
+The restart receipt records `discarded_completed_updates`,
+`failed_attempted_iteration`, `successful_updates`, `total_completed_updates`, and
+`total_attempted_updates`. The last includes the failed update attempt. It also
+records failed-attempt details and `successful_attempt_timing`. Top-level
+`setup_seconds`, `optimization_seconds`, and `total_seconds` include both attempts.
+`backend_` is `'spectral'`, while the requested backend remains `'auto'` in the
+diagnostics. This numerical restart is separate from `acceleration='restart'`.
+
 ## Optional restarted MM
 
 ```python
@@ -144,7 +187,7 @@ the original objective-change/cap defaults automatically.
 
 | `stopping` | Rule |
 |---|---|
-| `'objective'` | Default: stop when absolute successive-objective difference is below `obj_tol=1e-5`, subject to `max_iter=100`. |
+| `'objective'` | Default: stop when absolute successive-objective difference is below `obj_tol=1e-5`, subject to `max_iter=100` per attempt. |
 | `'fixed'` | Execute the requested MM update budget; callbacks can stop earlier. L-BFGS can terminate earlier if its optimizer cannot continue. |
 | `'optimality'` | Check `max(RKHS gradient L2 norm, absolute intercept gradient) <= tol` against `tol=1e-6`, subject to the budget. |
 | `'validation'` | Monitor explicitly supplied data, then return the best checked model as described below. |
@@ -159,13 +202,13 @@ All corrected fits check the returned model's stationarity, whatever their
 stopping rule. A fixed cap is not by itself a convergence claim. Likewise, an
 objective stop may or may not satisfy the separate numerical check.
 
-- `n_iter_`: number of executed updates. `returned_iteration_`: iteration of the
+- `n_iter_`: accepted updates in the successful attempt. `returned_iteration_`: iteration of the
   returned coefficients, which can be earlier after validation restoration.
 - `termination_reason_`: why execution stopped, such as `objective_tolerance`,
   `optimality_tolerance`, `validation_patience`, `callback_stop`, `max_iter`, or
   an L-BFGS stationary/stagnation status.
 - `objective_history_` / `obj_vals_`: initial objective followed by executed
-  states. `final_objective_`: objective evaluated at the returned model.
+  states of the successful attempt. `final_objective_`: objective evaluated at the returned model.
 - `objective_tolerance_met_`: whether the final two executed objective values
   met `obj_tol`; this can describe a later state than the restored model.
 - `rkhs_gradient_norm_` / `stationarity_residual_`: the maximum RKHS/intercept
@@ -292,6 +335,34 @@ covers linear and nonnegative-gamma RBF kernels, plus polynomial kernels with a
 nonnegative integer degree and nonnegative gamma/coef0. Sigmoid, callable, and
 precomputed kernels do not receive that automatic PSD assumption.
 
+### RBF construction and query consistency
+
+Corrected named RBF fits first use scikit-learn's pairwise kernel. If that internally
+constructed self-kernel exceeds the existing symmetry tolerance
+`100 * eps * max(1, max(abs(K)))`, the package reconstructs it from the validated
+float64 features. It adds the two squared norms before subtracting the dot-product
+term, clips negative squared distances to zero, and applies the RBF exponential.
+One computed triangle is mirrored and the self-diagonal is set to its analytic
+value of one. External or custom kernel matrices retain the strict validator and
+are not averaged.
+
+The fitted `kernel_computation_` is `'sklearn'` on the ordinary path or `'norm_sum'`
+on the reconstructed path. `kernel_symmetry_correction_` records the triggering
+asymmetry. The selected distance formula is also used for prediction and explicit
+validation kernels, including dense/CSR and batched queries. Serialization and
+compatible CV caches preserve the policy. Self-kernel mirroring and BLAS/batch
+rounding mean copied or partitioned queries are not promised bitwise identity;
+the existing original-kernel score and objective checks still apply. The reordered
+construction removes the demonstrated reversed-addition asymmetry, but does not
+eliminate all cancellation for nearly identical large feature vectors.
+
+Healthy scikit-learn RBF results retain their ordinary construction. The fallback
+uses numerical-library matrix products and their configured thread limits; it
+does not forward `kernel_kws['n_jobs']` into pairwise-kernel workers. Gamma,
+regularization, loss, and the free intercept are unchanged. Corrected reference
+and optimized fits share this construction policy; automatic solver restart has
+the narrower optimized-only eligibility described above.
+
 A matrix-level callable receives `(X_train, X_query, **kernel_kws)` and must
 return a training-by-query matrix. `kernel='precomputed'` instead follows the
 public sklearn input convention: square training Gram matrix in `fit`, then
@@ -322,10 +393,12 @@ state cannot be accepted for stopping using one precision policy and exported
 under another. No inconsistent callback state is emitted. These are numerical
 estimates under the stated floating-point model, not universal interval proofs.
 
-`KernGDWD.fit` invalidates its learned fitted attributes before attempting a
-refit, including its precision flag. An unsuccessful refit must not mix an old
-flag with new coefficients. This invalidation is specific to `KernGDWD`; it is
-not a new package-wide transactional-fit contract for linear, SOCP or CV classes.
+Starting a new fit clears learned state, including the kernel prediction-precision
+flag. If fitting or refitting fails, learned state is cleared before the exception
+propagates; prediction then raises `NotFittedError`. This contract applies to the
+package's linear and kernel classifiers, their CV wrappers, optional conic
+classifiers, and `KernMD`. Constructor parameters and validated private
+precomputation caches are preserved. See [fitted-state behavior](failed_refit_state.md).
 
 `cv_init(X)` explicitly caches the exact training kernel and, where needed, its
 eigensystem. `run_cv` sets candidate kernel parameters before preparing that
@@ -339,7 +412,8 @@ Cache equality accounts for kernel parameters (including nested arrays), data
 values/order after the solver's dtype conversion, sparse versus dense representation,
 implementation, mode, and backend. Corrected fits compare the promoted float64
 features they actually use, allowing identical float32 inputs to reuse preparation;
-legacy mode retains its original dtype distinction. A
+legacy mode retains its original dtype distinction. The RBF construction
+policy is cached with K; automatic restart also checks construction provenance. A
 lambda/q change can reuse the same eigensystem. Different subsets or feature
 sets cannot generally share one. Stateful callable kernels must be treated as
 immutable while cached. Updating an opaque callable's captured state is not a
@@ -394,8 +468,8 @@ provider-mode change or global NumPy/SciPy monkeypatch occurs. If all native
 drivers fail validation, the error identifies the failed checks and recommends
 updating or replacing the numerical libraries and BLAS/LAPACK runtime. Memory
 failures and cancellation propagate immediately rather than trigger more attempts.
-Updating this host resolved its measured provider failures; it does not certify
-every other runtime. No blanket vendor-version restriction substitutes for
+The documented runtime update resolved the failures reproduced in that environment;
+other installations still require per-result numerical checks. No blanket vendor-version restriction substitutes for
 checking the actual result.
 
 Native EVD was faster than EVX in bounded tests on the updated host, but it can
@@ -431,8 +505,10 @@ after fresh ordinary checks of the corrected state and scores. If the trial
 fails or produces a numerical error, it is discarded and the original state is
 reassessed using compensated float64 products and summation, with allowances for
 rounding and gradual underflow. This preflight is bounded to one trial per
-factor representation or reference candidate check; Cholesky can try at most two
-representations. The reference has at most five inverse representations:
+factor representation or reference candidate check. The original and centered
+Cholesky forms provide at most two native-trial representations; anchor LU
+recovery uses compensated residual measurement instead. The reference has at
+most five inverse representations:
 its initial checked basis, a power-of-two equilibrated shifted system, and fresh
 validated EVD/EVR/EVX inverse preconditioners for the same original kernel.
 Only eigenvalues within the existing negative-roundoff allowance can be floored
@@ -442,12 +518,14 @@ accepted candidate must pass the original-equation checks. It does not consume
 an MM update. Native-trial counts, accepted
 corrections, discarded trials and their costs are recorded separately. If a representable scalar intercept correction
 can resolve a constant residual, it is committed only after a fresh full check.
-The spectral route normally permits three correction steps; a contracting
+The reference spectral inverse-action route normally permits three correction
+steps; a contracting
 original-equation residual can extend that private refinement budget to eight.
 These are corrections within an MM update, not extra MM iterations or a change
 to `max_iter`.
 
-If spectral refinement exhausts its allowance or stagnates at the same stored
+If reference spectral inverse-action refinement exhausts its allowance or
+stagnates at the same stored
 float64 coefficients, a final bounded correction can examine adjacent floats.
 It proposes one `nextafter` step for one coefficient and adjusts the free
 intercept to reduce the original-equation residual. Candidate selection is

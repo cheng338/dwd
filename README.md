@@ -1,23 +1,31 @@
-# Distance Weighted Discrimination 1.3.5
+# Distance Weighted Discrimination 1.3.6
 
 `dwd` provides linear and kernel Distance Weighted Discrimination classifiers
 with sklearn-style fitting, prediction, and cross-validation. One package now
 offers a repaired reference kernel implementation and an optimized implementation.
 Both use the corrected DWD objective and update algebra. They differ in numerical
 computation and default initialization, so finite-budget fitted models can differ.
-Read [release notes](RELEASE_NOTES.md) when upgrading from upstream 1.0.5,
-the audit1 fork, or the 1.1.x releases.
+See the [release notes](RELEASE_NOTES.md) for compatibility changes.
 
-This fork is led and maintained by [Chang Cheng](https://github.com/cheng338)
-at [cheng338/dwd](https://github.com/cheng338/dwd), building on his earlier
-development of the fork. His contributions include the research direction,
-methodological requirements, package design, and experimental design and review.
-Codex assisted with code auditing, implementation, and testing under his direction.
+This fork is developed and maintained by [Chang Cheng](https://github.com/cheng338)
+at [cheng338/dwd](https://github.com/cheng338/dwd).
 
 The project builds on [slicersalt/dwd](https://github.com/slicersalt/dwd), originally
 implemented by [Iain Carmichael](https://idc9.github.io/), with upstream maintenance
 by David Allemang and [Kitware](https://kitware.com/). Original credits and the
 [MIT license](LICENSE.txt) are retained.
+
+## Changes in 1.3.6
+
+Internally generated RBF kernels recover from roundoff-induced asymmetry using
+consistent training and prediction construction. Supplied kernels and custom
+kernel outputs retain strict symmetry validation.
+
+Eligible optimized automatic MM fits can restart once through the spectral
+backend after constrained numerical recovery is exhausted. The original kernel,
+initialization, objective, unregularized intercept and stopping settings remain;
+the iteration cap applies per attempt, with discarded work reported separately.
+See the [kernel guide](docs/kernel_dwd.md) and [release notes](RELEASE_NOTES.md).
 
 ## Changes in 1.3.5
 
@@ -59,7 +67,7 @@ and [validation](VALIDATION.md). The previous 1.3.3 repair remains intact.
 ## Install from this release checkout
 
 Python 3.11+ and scikit-learn 1.6+ are required. The base package depends on
-NumPy, SciPy, and scikit-learn:
+NumPy, SciPy, scikit-learn, and threadpoolctl:
 
 ```shell
 python -m pip install .
@@ -92,6 +100,10 @@ print(model.objective_tolerance_met_, model.converged_, model.rkhs_gradient_norm
 The defaults are `implementation='optimized'`, `q=1`, `solver_mode='schur'`, `backend='auto'`,
 `acceleration=None`,
 `initialization='auto'`, `stopping='objective'`, `obj_tol=1e-5`, and `max_iter=100`.
+The cap applies per attempt. A narrowly eligible internal-RBF numerical failure
+can trigger one spectral restart with the same initialization and objective;
+discarded work and total time are reported separately. See the
+[restart and stopping rules](docs/kernel_dwd.md#automatic-numerical-restart).
 Auto initialization is zero for optimized fits. The intercept is unregularized.
 The parameter names remain `lambd`, `q`, and `kernel_kws`.
 

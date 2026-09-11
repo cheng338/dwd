@@ -15,19 +15,19 @@ class GenDWD(LinearClassifierMixin, BaseEstimator):
     """
     Generalized Distance Weighted Discrimination
 
-    Solves the gDWD problem using the MM algorithm derived in Wang and Zou, 2017.
-
-    Primary reference: Another look at distance-weighted discrimination by Boxiang Wang and Hui Zou, 2017
-
-    Note the tuning parameter lambd is on a different scale the parameter C which is used in the SOCP formulation.
+    Fits linear generalized DWD with the loss-plus-penalty formulation of
+    Wang and Zou (2018), Another look at distance-weighted discrimination,
+    JRSS B 80(1), 177-198, https://doi.org/10.1111/rssb.12244.
+    The solver uses majorization-minimization (MM).
 
     Parameters
     ----------
-    lambd: float
-        Tuning parameter for DWD.
+    lambd : float, default=1.0
+        Nonnegative coefficient of beta.T @ beta in the objective
+        mean(V_q(y * f)) + lambd * beta.T @ beta; the intercept is unregularized.
 
-    q: float
-        Tuning parameter for generalized DWD (the exponent on the margin terms). When q = 1, gDWD is equivalent to DWD.
+    q : float, default=1.0
+        Positive generalized DWD loss exponent. q=1 gives standard DWD.
 
     implicit_P: bool
         Whether to use the implicit P^{-1} gamma formulation (in the publication) or the explicit computation (in the arxiv version).
@@ -58,16 +58,16 @@ class GenDWD(LinearClassifierMixin, BaseEstimator):
     tol: float, default=1e-6
         Absolute stationarity tolerance: max(abs(intercept gradient),
         Euclidean norm of coefficient gradient). Also checked on the returned
-        model for every stopping policy; converged_ reports this check.
+        model for every stopping policy; ``converged_`` reports this check.
 
     Notes
     -----
     The objective is mean DWD loss plus lambd times the squared coefficient
     norm; the intercept is unregularized. An objective-change stop is not a
-    stationarity certificate. Inspect termination_reason_ and the final
+    stationarity certificate. Inspect ``termination_reason_`` and the final
     stationarity diagnostics separately. The auxiliary norm-to-C conversion
-    can overflow for large q even when the fit is finite; C_ is then inf and
-    C_conversion_finite_ is false. This does not change the fitted classifier.
+    can overflow for large q even when the fit is finite; ``C_`` is then inf and
+    ``C_conversion_finite_`` is false. This does not change the fitted classifier.
 
     """
     def __init__(self, lambd=1.0, q=1, implicit_P=True, max_iter=100,
@@ -220,8 +220,9 @@ class GenDWD(LinearClassifierMixin, BaseEstimator):
 
 class GenDWDCV(LinearClassifierMixin, BaseEstimator):
     """
-    Fits Genralized DWD with cross-validation. gDWD cross-validation
-    can be significnatly faster if certain quantities are precomputed.
+    Fit generalized linear DWD with cross-validation.
+    Reuses fold-specific matrix preparation across compatible candidates.
+    The search loop is serial; runtime depends on the grid and problem size.
 
     Parameters
     ----------
@@ -232,10 +233,12 @@ class GenDWDCV(LinearClassifierMixin, BaseEstimator):
         The q-values to cross validate over.
 
     cv:
-        How to perform cross-valdiation. See documetnation in sklearn.model_selection.GridSearchCV.
+        Cross-validation splitter or fold count, interpreted by
+        sklearn.model_selection.check_cv.
 
     scoring:
-        What metric to use to score cross-validation. See documetnation in sklearn.model_selection.GridSearchCV.
+        Scorer name or callable accepted by sklearn.metrics.check_scoring.
+        Must return a finite real scalar.
 
     """
     def __init__(self,
@@ -325,7 +328,7 @@ def solve_gen_dwd(X, y, lambd, q=1,
                   initialization='auto', stopping='objective', tol=1e-6):
 
     """
-    Solves linear gDWD using the MM algorithm derived in Wang and Zou, 2017.
+    Solves linear gDWD using the MM algorithm derived in Wang and Zou (2018).
 
     Parameters
     ----------
@@ -335,11 +338,12 @@ def solve_gen_dwd(X, y, lambd, q=1,
     y: array-like, (n_samples, )
         The vector of binary class labels.
 
-    lambd: float
-        Tuning parameter for DWD.
+    lambd : float
+        Nonnegative coefficient of beta.T @ beta in the objective
+        mean(V_q(y * f)) + lambd * beta.T @ beta; the intercept is unregularized.
 
-    q: float
-        Tuning parameter for generalized DWD (the exponent on the margin terms). When q = 1, gDWD is equivalent to DWD.
+    q : float, default=1.0
+        Positive generalized DWD loss exponent. q=1 gives standard DWD.
 
     beta_init, offset_init:
         Initial values to start the optimization algorithm from.
@@ -348,8 +352,8 @@ def solve_gen_dwd(X, y, lambd, q=1,
         Sample weights are unsupported and rejected explicitly.
 
     implicit_P: bool
-        Whether to implicitly calculate P^{-1} gamma. If P0_eig is precomputed
-        this is much faster.
+        Whether to apply the inverse through the implicit system.
+        A compatible P0_eig can reuse its eigendecomposition across fits.
 
     obj_tol: float
         Stopping condition for difference between successive objective

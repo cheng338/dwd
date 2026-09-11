@@ -9,7 +9,7 @@ authors = [
     {name = 'David Allemang', email = 'david.allemang@kitware.com'},
 ]
 maintainers = [
-    {name = 'cheng338 (compatibility and audit fork)'}
+    {name = 'Chang Cheng'}
 ]
 dependencies = [
     "numpy",

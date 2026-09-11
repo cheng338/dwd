@@ -18,25 +18,30 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
     r"""
     Kernel Generalized Distance Weighted Discrimination
 
-    Solves the kernel gDWD problem using the MM algorithm derived in Wang and Zou, 2017.
-
-    Primary reference: Another look at distance-weighted discrimination by Boxiang Wang and Hui Zou, 2017
-
-    Note the tuning parameter lambd is on a different scale the parameter C which is used in the SOCP formulation.
+    Fits kernel generalized DWD with the loss-plus-penalty formulation of
+    Wang and Zou (2018), Another look at distance-weighted discrimination,
+    JRSS B 80(1), 177-198, https://doi.org/10.1111/rssb.12244.
+    The default solver uses majorization-minimization (MM); an explicit
+    L-BFGS backend is also available.
 
     Parameters
     ----------
-    lambd: float
-        Tuning parameter for DWD.
+    lambd : float, default=1.0
+        Coefficient of alpha.T @ K @ alpha in the objective
+        mean(V_q(y * f)) + lambd * alpha.T @ K @ alpha. The intercept is
+        unregularized. Must be positive for corrected solver_mode='schur';
+        legacy mode retains its historical nonnegative validation.
+        This parameter is not the SOCP slack penalty C.
 
-    q: float
-        Tuning parameter for generalized DWD (the exponent on the margin terms). When q = 1, gDWD is equivalent to DWD.
+    q : float, default=1.0
+        Positive generalized DWD loss exponent. q=1 gives standard DWD.
 
-    kernel: str, callable(X, Y, **kwargs)
-        The kernel to use.
+    kernel : str or callable, default='linear'
+        Named pairwise kernel, 'precomputed', or a matrix-level callable
+        ``kernel(X_train, X_query, **kernel_kws)`` returning training-by-query values.
 
-    kernel_kws: dict
-        Any key word arguments for the kernel.
+    kernel_kws : dict or None, default=None
+        Kernel keyword arguments, such as {'gamma': 0.1} for the RBF kernel.
 
     implicit_P: bool
         Use the implicit inverse-product solver. False remains unsupported for
@@ -49,17 +54,26 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         identify the mode explicitly; old accuracy is not guaranteed to persist.
 
     max_iter, obj_tol, random_state:
-        Maximum MM steps, absolute successive-objective stopping tolerance,
+        Maximum accepted MM updates per attempt, absolute successive-objective
+        stopping tolerance,
         and initialization seed. Objective tolerance is not a stationarity proof.
 
     backend : {'auto', 'spectral', 'cholesky', 'lbfgs'}, default='auto'
         Optimized auto uses a supplied eigenbasis, or a Cholesky factor of the
-        shifted kernel. Each solve is checked against the original MM equations;
+        shifted kernel. Cholesky solves are checked against the original MM equations;
         bounded refinement and a centered factor can recover inaccurate solves.
         Recovery does not change the objective. Reference accepts only auto or
         spectral and always uses a checked eigenbasis, with spectral refinement.
-        Invalid supplied eigenpairs are rejected. Unresolved numerical failures
-        raise rather than return an unchecked model.
+        Invalid supplied eigenpairs are rejected. For trusted internally
+        generated RBF kernels, unaccelerated optimized auto fits without a
+        callback may restart once through the existing spectral backend after
+        constrained MM recovery is exhausted. The original initialization,
+        kernel and stopping settings are reused. The successful attempt keeps
+        max_iter; discarded work and total time are reported separately, so
+        total work can exceed one attempt. Explicit backends retain their
+        behavior. Unresolved failures raise rather than return an unchecked
+        model. Spectral retry keeps its original-kernel score/objective checks;
+        it does not waive or reuse a rejected Cholesky coefficient state.
 
     implementation : {'optimized', 'reference'}, default='optimized'
         Reference retains upstream's coefficient-subtraction MM and Gaussian
@@ -70,7 +84,9 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
 
     stopping : {'objective', 'fixed', 'optimality', 'validation'}, default='objective'
         The default retains the absolute successive-objective rule, obj_tol=1e-5
-        and max_iter=100. Validation stopping requires explicit validation_data.
+        and max_iter=100 per attempt. Validation stopping requires explicit
+        validation_data. An eligible automatic spectral restart can add discarded
+        work, recorded separately from the successful attempt.
 
     initialization : {'auto', 'zero', 'random'}, default='auto'
         Auto starts optimized fits at zero and reference or explicit legacy fits
@@ -168,14 +184,22 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         self.n_features_in_ = X.shape[1]
         self._Xfit = X
         internally_constructed = K is None
+        used_cv_cache = False
+        self.kernel_computation_ = 'sklearn'
+        self.kernel_symmetry_correction_ = 0.0
 
         if K is None:
             if self._cv_cache_matches(X):
+                used_cv_cache = True
                 K = self._cv_K
+                self.kernel_computation_ = getattr(
+                    self, '_cv_kernel_computation', 'sklearn')
+                self.kernel_symmetry_correction_ = getattr(
+                    self, '_cv_kernel_symmetry_correction', 0.0)
                 if K_eig is None:
                     K_eig = self._K_eig
             else:
-                K = self._compute_kernel(X)
+                K = self._compute_training_kernel(X)
         if np.shape(K) != (X.shape[0], X.shape[0]):
             raise ValueError('K must be the square training kernel for X.')
         # Normalize the public array-like argument for both solve and diagnostics.
@@ -213,9 +237,32 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                           backend='legacy', diagnostics={'legacy_algebra': True})
         else:
             from dwd._kernel_solver import solve_kernel
+            from dwd._kernel_recovery import solve_with_spectral_restart
             validation = self._prepare_validation(validation_data)
-            result = solve_kernel(
-                K, pm1(y), self.lambd, q=self.q, K_eig=K_eig,
+            # A known family name alone does not establish construction
+            # provenance when a subclass or an instance replaces either method.
+            can_restart = (
+                internally_constructed and K_eig is None
+                and self.solver_mode == 'schur'
+                and isinstance(self.kernel, str) and self.kernel == 'rbf'
+                and self.implementation == 'optimized' and self.backend == 'auto'
+                and self.acceleration is None and self.callback is None
+                and getattr(self._compute_kernel, '__func__', None)
+                    is KernelClfMixin._compute_kernel
+                and getattr(self._compute_training_kernel, '__func__', None)
+                    is KernGDWD._compute_training_kernel
+                and getattr(self._known_psd_kernel, '__func__', None)
+                    is KernGDWD._known_psd_kernel
+                and (not used_cv_cache or (
+                    getattr(self, '_cv_trusted_rbf_construction', False)
+                    and getattr(self.cv_init, '__func__', None) is KernGDWD.cv_init
+                    and getattr(self._cv_cache_matches, '__func__', None)
+                        is KernGDWD._cv_cache_matches))
+                and self._known_psd_kernel())
+            result = solve_with_spectral_restart(
+                solve_kernel,
+                K, pm1(y), self.lambd, eligible=can_restart,
+                q=self.q, K_eig=K_eig,
                 alpha_init=alpha_init, offset_init=offset_init,
                 max_iter=self.max_iter, obj_tol=self.obj_tol,
                 stopping=self.stopping, tol=self.tol, backend=self.backend,
@@ -260,6 +307,27 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         if self.solver_mode == 'legacy' and (self.backend not in ('auto', 'spectral') or
                 self.stopping not in ('objective', 'fixed') or self.callback is not None):
             raise ValueError('Legacy mode supports only the spectral backend, objective/fixed stopping, and no callback.')
+
+    def _compute_training_kernel(self, X):
+        """Repair only a trusted named RBF construction that fails symmetry."""
+        self.kernel_computation_ = 'sklearn'
+        self.kernel_symmetry_correction_ = 0.0
+        K = self._compute_kernel(X)
+        if (self.solver_mode == 'schur' and isinstance(self.kernel, str)
+                and self.kernel == 'rbf'
+                and getattr(self._compute_kernel, '__func__', None)
+                    is KernelClfMixin._compute_kernel
+                and self._known_psd_kernel()):
+            from ._rbf import self_kernel_asymmetry
+            asymmetry, tolerance = self_kernel_asymmetry(K)
+            if asymmetry > tolerance:
+                self.kernel_computation_ = 'norm_sum'
+                self.kernel_symmetry_correction_ = asymmetry
+                # Discard the old matrix; reconstruct from trusted features.
+                # Existing PSD/solver checks still apply to the result.
+                del K
+                K = self._compute_kernel(X)
+        return K
 
     def _known_psd_kernel(self):
         """Only internally constructed kernels with known PSD parameters qualify."""
@@ -336,7 +404,22 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                         dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
         self._Xfit = X
 
-        K = self._compute_kernel(X)
+        # Record construction-time provenance, not merely the methods that
+        # happen to be bound later when fit reuses this cache.
+        trusted_rbf = (
+            self.solver_mode == 'schur'
+            and isinstance(self.kernel, str) and self.kernel == 'rbf'
+            and getattr(self._compute_kernel, '__func__', None)
+                is KernelClfMixin._compute_kernel
+            and getattr(self._compute_training_kernel, '__func__', None)
+                is KernGDWD._compute_training_kernel
+            and getattr(self._known_psd_kernel, '__func__', None)
+                is KernGDWD._known_psd_kernel
+            and getattr(self.cv_init, '__func__', None) is KernGDWD.cv_init
+            and getattr(self._cv_cache_matches, '__func__', None)
+                is KernGDWD._cv_cache_matches
+            and self._known_psd_kernel())
+        K = self._compute_training_kernel(X)
         if (self.backend in ('auto', 'cholesky') and self.solver_mode == 'schur'
                 and self.implementation == 'optimized'):
             self._K_eig = None
@@ -345,6 +428,9 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
             # lambd/q candidates. A normal single fit need not do this work.
             self._set_K_eig(K)
         self._cv_K = K
+        self._cv_trusted_rbf_construction = bool(trusted_rbf)
+        self._cv_kernel_computation = self.kernel_computation_
+        self._cv_kernel_symmetry_correction = self.kernel_symmetry_correction_
         self._cv_X = X.copy()
         self._cv_kernel = self.kernel
         self._cv_kernel_kws = deepcopy(self.kernel_kws)
@@ -355,7 +441,8 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
 
     def _cv_cache_matches(self, X):
         """Invalidate hidden precomputation whenever data or kernel changes."""
-        if not hasattr(self, '_cv_X'):
+        if (not hasattr(self, '_cv_X') or
+                not hasattr(self, '_cv_kernel_computation')):
             return False
         # Corrected fits and cv_init construct K from float64 features. Compare
         # that same representation before deciding whether a CV candidate needs
@@ -392,8 +479,10 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
 
 class KernGDWDCV(KernelClfMixin, BaseEstimator):
     """
-    Fits kernel gDWD with cross-validation. gDWD cross-validation
-    can be significnatly faster if certain quantities are precomputed.
+    Fit kernel generalized DWD with cross-validation.
+    Reuses fold-specific kernels and, when needed, validated eigenpairs across
+    compatible candidates. The search loop is serial; runtime depends on the
+    grid and problem size.
 
     Parameters
     ----------
@@ -406,14 +495,16 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
     kernel: str, callable
         The kernel to use.
 
-    kern_kws_vals: list of dicts
+    kernel_kws_vals: list of dicts
         The kernel parameters to validate over.
 
     cv:
-        How to perform cross-valdiation. See documetnation in sklearn.model_selection.GridSearchCV.
+        Cross-validation splitter or fold count, interpreted by
+        sklearn.model_selection.check_cv.
 
     scoring:
-        What metric to use to score cross-validation. See documetnation in sklearn.model_selection.GridSearchCV.
+        Scorer name or callable accepted by sklearn.metrics.check_scoring.
+        Must return a finite real scalar.
 
     acceleration : {None, 'restart'}, default=None
         Forwarded unchanged to every candidate and the final KernGDWD refit.
@@ -535,7 +626,7 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
                        K_eig=None, random_state=None, solver_mode='schur'):
 
     """
-    Solves the kernel gDWD problem using the MM algorithm derived in Wang and Zou, 2017.
+    Solves the kernel gDWD problem using the MM algorithm derived in Wang and Zou (2018).
 
     Parameters
     ----------
@@ -545,20 +636,24 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
     y: array-like, (n_samples, )
         The vector of binary class labels.
 
-    lambd: float
-        Tuning parameter for DWD.
+    lambd : float
+        Coefficient of alpha.T @ K @ alpha in mean(V_q(y * f)) plus the
+        squared-norm penalty. Must be positive for solver_mode='schur';
+        legacy mode retains its historical nonnegative validation. The
+        intercept is unregularized.
 
-    q: float
-        Tuning parameter for generalized DWD (the exponent on the margin terms). When q = 1, gDWD is equivalent to DWD.
+    q : float, default=1.0
+        Positive generalized DWD loss exponent. q=1 gives standard DWD.
 
     alpha_init, offset_init:
         Initial values to start the optimization algorithm from.
 
-    sample_weight: None, array-like (n_samples,)
-        Optional weight for samples.
+    sample_weight : None
+        Sample weights are unsupported. Any non-None value raises
+        NotImplementedError.
 
-    implicit_P: bool
-        Whether to use the implicit P^{-1} gamma formulation (in the publication) or the explicit computation (in the arxiv version).
+    implicit_P : bool, default=True
+        Must be True. Explicit inverse computation is unsupported for kernel DWD.
 
     obj_tol: float
         Stopping condition for difference between successive objective
