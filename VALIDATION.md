@@ -1,3 +1,8 @@
+# Validation
+
+For the current release, see the [1.3.8 change-by-change validation](docs/validation-1.3.8.md).
+It distinguishes fresh numerical checks from historical evidence and records runtime costs.
+
 # DWD 1.3.5 source validation
 
 The final source passes 412 tests in py12_df, including 22 new regression

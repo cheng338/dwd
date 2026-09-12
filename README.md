@@ -1,4 +1,4 @@
-# Distance Weighted Discrimination 1.3.7
+# Distance Weighted Discrimination 1.3.8
 
 `dwd` provides linear and kernel Distance Weighted Discrimination classifiers
 with sklearn-style fitting, prediction, and cross-validation. One package now
@@ -14,6 +14,14 @@ The project builds on [slicersalt/dwd](https://github.com/slicersalt/dwd), origi
 implemented by [Iain Carmichael](https://idc9.github.io/), with upstream maintenance
 by David Allemang and [Kitware](https://kitware.com/). Original credits and the
 [MIT license](LICENSE.txt) are retained.
+
+## Changes in 1.3.8
+
+Ordinary residual acceptance now accounts for floating-point evaluation error.
+Final dual diagnostics use explicitly feasible weights and conservative bounds.
+The objective, unregularized intercept and stopping defaults are unchanged.
+See the [change-by-change validation](docs/validation-1.3.8.md), including
+independent numerical checks, MNIST agreement and measured runtime cost.
 
 ## Changes in 1.3.7
 

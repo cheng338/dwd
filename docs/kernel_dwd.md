@@ -217,7 +217,14 @@ objective stop may or may not satisfy the separate numerical check.
 - `gradient_inf_norm_`: retained coefficient-coordinate/intercept gradient
   diagnostic. Its scale depends on the kernel coordinates; it is not substituted
   for the RKHS criterion.
-- `dual_gap_` and `dual_equality_residual_`: corrected-fit feasible-dual diagnostics.
+- `dual_gap_` and `dual_equality_residual_`: corrected-fit dual diagnostics.
+  The slopes use an exact dyadic class-mass balance, and the dual value uses
+  an outward quadratic bound for a symmetric PSD kernel. The primal objective
+  and gap remain numerical estimates. `diagnostics_['dual_certificate']`
+  records the method and any explicit zero-slope fallback when a nonzero bound
+  is unavailable or weaker. An asymmetric stored kernel also uses that fallback;
+  the symmetric-kernel dual formula is not claimed for that score map.
+  These diagnostic choices do not change the fitted state or certify convergence.
   Tiny negative raw gaps from rounding remain visible. They are not the stopping
   tolerance. `backend_` is the effective backend. `diagnostics_` records
   `requested_backend`, `initial_backend`, `effective_backend`,
@@ -499,7 +506,15 @@ MM numerical failure.
 Initial coefficients, objective, lambda, and stopping policy are not changed by
 these numerical repairs.
 
-When the ordinary residual check fails, the solver first tries one inexpensive
+Ordinary residual acceptance includes forward-error allowances for the matrix
+product, scalar operations and coefficient sum, together with a lower bound
+for its relative RKHS scale. An inconclusive check can recompute the same product
+in short BLAS dot products with bounded accumulation; it uses at most 128 partial
+vectors. Unsupported arithmetic or unresolved cancellation retains the existing
+compensated check. These estimates require the documented floating-point and
+BLAS assumptions; they are not interval certificates for arbitrary runtimes.
+
+When the bounded ordinary residual check fails, the solver first tries one inexpensive
 native correction using its existing factor or basis. It accepts that trial only
 after fresh ordinary checks of the corrected state and scores. If the trial
 fails or produces a numerical error, it is discarded and the original state is

@@ -1,5 +1,15 @@
 # Updates
 
+## 1.3.8
+
+- Include floating-point error allowances in ordinary residual acceptance.
+- Construct exactly feasible final dual weights and conservatively bound their
+  diagnostic value; report fallback or unavailable cases explicitly.
+- Add independent numerical regression tests and a
+  [validation matrix](docs/validation-1.3.8.md) for major retained and new changes.
+- Keep the DWD objective, free intercept and stopping defaults unchanged.
+
+
 ## 1.3.7
 
 - Vectorize compensated-residual error bounds with the same outward rounding
