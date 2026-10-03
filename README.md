@@ -20,6 +20,12 @@ this fork is guided by [Chang Cheng](https://github.com/cheng338) and maintained
 at [cheng338/dwd](https://github.com/cheng338/dwd). Original credits and the
 [MIT license](LICENSE.txt) are retained.
 
+This fork corrects update and numerical errors and adds an optimized kernel
+implementation with optional compiled residual checks. It also adds numerical
+validation and recovery, clears fitted state after failed fits, fixes
+cross-validation issues, and repairs the examples. The DWD formulations and
+unregularized intercepts follow the cited methods.
+
 Marron, J. S., Todd, M. J., and Ahn, J. (2007).
 [Distance-weighted discrimination](https://doi.org/10.1198/016214507000001120).
 *Journal of the American Statistical Association*, 102(480), 1267-1271.
@@ -71,9 +77,9 @@ from PyPI may retrieve a different upstream release. See
 
 Kernel DWD provides a repaired reference implementation and an optimized
 implementation. Both use the corrected DWD objective and update algebra, but
-differ in numerical computation and default initialization; their finite-budget
-fitted models can differ. See the [release notes](RELEASE_NOTES.md) for
-compatibility changes.
+differ in numerical computation and default initialization; their fitted models
+can differ with a finite iteration budget. See the
+[release notes](RELEASE_NOTES.md) for compatibility changes.
 
 ```python
 from sklearn.datasets import make_circles
@@ -89,9 +95,10 @@ print(model.objective_tolerance_met_, model.converged_, model.rkhs_gradient_norm
 The defaults are `implementation='optimized'`, `q=1`, `solver_mode='schur'`, `backend='auto'`,
 `acceleration=None`,
 `initialization='auto'`, `stopping='objective'`, `obj_tol=1e-5`, and `max_iter=100`.
-The cap applies per attempt. A narrowly eligible internal-RBF numerical failure
-can trigger one spectral restart with the same initialization and objective;
-discarded work and total time are reported separately. See the
+The cap applies per attempt. For eligible fits using an internally constructed
+RBF kernel, a numerical failure can trigger one spectral restart with the same
+initialization and objective; discarded work and total time are reported
+separately. See the
 [restart and stopping rules](docs/kernel_dwd.md#automatic-numerical-restart).
 Auto initialization is zero for optimized fits. The intercept is unregularized.
 The parameter names remain `lambd`, `q`, and `kernel_kws`.
@@ -113,9 +120,9 @@ still raise. See [validation status](VALIDATION.md).
 The optimized default solves the original free-intercept MM equations with
 Cholesky, checks their residuals, and applies bounded refinement or a centered
 factorization when needed. A low reciprocal-condition estimate alone no longer
-rejects a fit. Centering is a solve representation; the fitted kernel, penalty,
-and intercept remain unchanged. Unknown kernel families still require PSD
-validation. Explicit spectral and L-BFGS backends, and checked eigenpair reuse,
+rejects a fit. Centering changes how the linear system is solved; the fitted
+kernel, penalty, and intercept remain unchanged. Unknown kernel families still
+require PSD validation. Explicit spectral and L-BFGS backends, and checked eigenpair reuse,
 remain available for optimized fits. None is a low-rank approximation.
 
 Difficult reference inverse actions have bounded alternative eigenbasis
@@ -132,11 +139,12 @@ certifies the entire stored float64 kernel exactly; a partial-rank approximation
 is never accepted. This matters for singular kernels, where the intended function
 can be representable even when an additional coefficient-sum convention is not.
 The loss, regularization, free intercept and current update remain unchanged.
-Exact work has fixed entry/rank/arithmetic budgets and stays lazy on healthy fits.
+This exact computation runs only after a failed update, within fixed entry,
+rank, and arithmetic budgets.
 An earlier characterization rejected nine extreme nearly constant synthetic
 RBF fits; see [validation](VALIDATION.md) for the current replay outcome. This is
 not a guarantee that every valid kernel will fit. See the numerical boundaries
-in [the guide](docs/kernel_dwd.md) and [validation](VALIDATION.md).
+in [the guide](docs/kernel_dwd.md).
 
 Corrected kernel models now retain `prediction_precision_`: adaptive evaluation
 uses ordinary query products only when their row error estimate passes, and
@@ -155,9 +163,9 @@ worker process, change provider modes, or silently alter the kernel to obtain a 
 Earlier local MKL failures motivated an automatic compatibility-mode workaround before 1.3.0.
 The updated runtime passed the previously failing controls; 1.3.0 removed
 that vendor-specific machinery while retaining the checks that reject invalid
-eigenpairs. This is not a guarantee for every runtime or input. A detected failure
-on another installation must be resolved there. Dense memory and eigen-preparation
-time still matter; EVD can need more workspace than other symmetric drivers.
+eigenpairs. This is not a guarantee for every runtime or input. Dense memory and
+eigen-preparation time still matter; EVD can need more workspace than other
+symmetric drivers.
 See [VALIDATION.md](VALIDATION.md) for the historical release checks and their scope.
 
 The default stops on absolute successive-objective change. `converged_` instead
@@ -208,9 +216,11 @@ method should cross-validate its complete training procedure and final predictor
 
 # Linear classifiers and SOCP
 
-`dwd.gen_dwd.GenDWD` provides generalized linear DWD with corrected/default or
-explicit historical algebra and objective/fixed/optimality stopping. Its linear
-explicit-system path remains available through `implicit_P=False`.
+`dwd.gen_dwd.GenDWD` provides generalized linear DWD with corrected update
+algebra by default. Set `solver_mode='legacy'` to use the historical algebra.
+It can stop based on objective change or numerical optimality, or run for a
+fixed number of iterations. The linear explicit-system path remains available
+through `implicit_P=False`.
 
 ```python
 from dwd.socp_dwd import DWD  # requires the socp extra
@@ -245,10 +255,6 @@ suite; optional SOCP tests skip. Release results are in [VALIDATION.md](VALIDATI
 Passing numerical and API tests is not a universal accuracy or speed guarantee.
 Historical notebooks and figures under `doc/` describe earlier implementations;
 they have not been relabeled as new release results.
-
-Background: Marron, Todd and Ahn (2007), *Distance-weighted discrimination*;
-Wang and Zou (2018), *Another look at distance-weighted discrimination*,
-[DOI 10.1111/rssb.12244](https://doi.org/10.1111/rssb.12244).
 
 # Release history
 
