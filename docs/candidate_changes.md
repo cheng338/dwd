@@ -5,7 +5,7 @@ preserves the corrected DWD objective, loss, free intercept, kernel construction
 and stopping tolerances. It changes native
 arithmetic reuse and adds an explicitly selected residual assessment order.
 The historical `solver_mode='legacy'` remains a compatibility mode with known
-incorrect algebra; it is not covered by a claim of paper-correct methodology.
+incorrect algebra; it is not a correct implementation of the cited methods.
 
 The native residual core shares a double-length product between two separate
 expanded accumulators. Nonzero components may be negated under the existing
@@ -35,19 +35,12 @@ policy rather than a new statistical model or a new convergence theorem.
 Reported probe time overlaps accurate-assessment time; timing counters must not
 be added as though all were exclusive. An accurate-first miss can add work.
 
-The original DWD mean-loss penalty is `lambd * ||f||^2`, with no intercept penalty.
-The dissertation's `lambda/2` convention therefore uses twice this `lambd`.
-Sampling, objective normalization and regularization are not performance knobs
-in this patch. Benchmark adoption of adaptive ordering requires a separate
-method identity; results obtained with different policies must not be mixed.
-
-Separate validation receipts record the development-build benchmarks and source
-checks. These bounded checks are not a completed MNIST search or a claim that
-all selectable historical modes have been re-proved correct. The final
-development source suite passed 509 tests with three skips; native and portable
-wheel installations and eight checks from the extracted source archive also
-passed. Those receipts identify their tested artifacts; stable release artifacts
-are built and checked separately. No universal speedup is claimed.
+The generalized kernel DWD objective uses a mean loss plus `lambd * ||f||^2`,
+where the norm excludes the intercept. For `q=1`, the dissertation's `lambda/2`
+convention therefore uses twice this `lambd`.
+Sampling, objective normalization and regularization are unchanged by
+these performance changes. Benchmark adoption of adaptive ordering requires a
+separate method identity; results obtained with different policies must not be mixed.
 
 Public API repairs reject complex explicit linear and legacy-kernel starting
 coefficients before any lossy conversion. Linear prediction raises on nonfinite
@@ -65,3 +58,11 @@ so old coefficients cannot be used against newly prepared training rows. A
 subsequent successful fit can still reuse the validated private preparation.
 These changes do not introduce a new objective, intercept penalty, regularizer
 or stopping rule.
+
+Separate validation receipts record the development-build benchmarks and source
+checks. These bounded checks are not a completed MNIST search or a claim that
+all selectable historical modes have been re-proved correct. The final
+development source suite passed 509 tests with three skips; native and portable
+wheel installations and eight checks from the extracted source archive also
+passed. Those receipts identify their tested artifacts; stable release artifacts
+are built and checked separately. No universal speedup is claimed.

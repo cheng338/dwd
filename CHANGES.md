@@ -226,7 +226,7 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
 ## 1.0.5 (2022-01-10)
 
 - Since `cvxpy` is not supported on all platforms, make this an optional dependency installable via `pip install dwd[socp]`. 
-- Remove the import aliases from `dwd.__init__`; one must explictly import the solver to be used:
+- Remove the import aliases from `dwd.__init__`; one must explicitly import the solver to be used:
   - `dwd.socp_dwd.DWD` (only in `dwd[socp]`)
   - `dwd.gen_dwd.GenDWD`
   - `dwd.gen_kern_dwd.KernGDWD`
@@ -235,7 +235,7 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
 ## 1.0.4 (2021-11-19)
 
 - Rolled back dependency version pinning to restore compatibility with other versions of Python.
-- Remove matplotlib main dependency
+- Remove matplotlib from the main dependencies.
 
 ## 1.0.3 (2021-11-19)
 
@@ -246,7 +246,7 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
 ## 1.0.2 (2021-05-28)
 
-- Convert `README.rst` to markdown to be more consistent other documentation.
+- Convert `README.rst` to markdown to be more consistent with other documentation.
 - Reverted changes to `solve_dwd_socp` to make it [DPP-compliant](https://www.cvxpy.org/tutorial/advanced/index.html#disciplined-parametrized-programming), as it caused DWD to stall in new versions of cvxpy.
 
 ## 1.0.1 (2021-05-17)

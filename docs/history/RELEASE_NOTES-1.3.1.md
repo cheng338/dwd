@@ -65,8 +65,8 @@ Two accepted changes remove repeated work: reuse the objective already checked
 for the immediately accepted MM state; and use a conservative dense-row bound
 before the existing fine prediction screen. The cheap bound can accept only rows
 the fine screen would accept under their shared floating-point assumptions.
-After one block cannot be fully shortcut, the remainder of that prediction call
-uses the exact original fine path. CSR is unchanged. No learned threshold,
+If the shortcut cannot handle an entire block, the remainder of that prediction
+call uses the exact original fine path. CSR is unchanged. No learned threshold,
 kernel-dependent tuning or numerical tolerance relaxation is involved.
 
 The fixed development check ran 24 fresh processes: both implementations,

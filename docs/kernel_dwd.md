@@ -6,15 +6,9 @@ stopping rules, and numerical diagnostics. For release-specific validation, see
 are in [compiled residual arithmetic](compiled_residual.md).
 
 `dwd.gen_kern_dwd.KernGDWD` fits one binary classifier. It does not search for
-parameters or create hidden validation splits. `KernGDWDCV` is an explicitly
-selected convenience wrapper; sklearn GridSearchCV can also wrap the plain
-estimator or a complete external training procedure.
-
-Generic `run_cv`, `GenDWDCV` and `KernGDWDCV` require finite real numeric scalar
-train/test scorer outputs. Invalid outputs raise before choosing/refitting a
-winner rather than silently excluding a candidate. Numeric Python/NumPy scalars
-and zero-dimensional numeric arrays are supported; object-dtype scorer results
-are outside this contract. Valid-score aggregation and first-tie ordering are unchanged.
+parameters or create hidden validation splits. `KernGDWDCV` provides
+cross-validation; sklearn GridSearchCV can also wrap the estimator or a complete
+external training procedure.
 
 ## Objective and parameter names
 
@@ -43,8 +37,9 @@ regularization geometry; it is not an equivalent kernel SOCP conversion.
 
 ## Implementations, backends, and initialization
 
-Both implementations introduced in 1.2.0 remain available. The default
-`implementation='optimized'` allows changes to the numerical computation.
+Both implementations introduced in 1.2.0 remain available.
+`implementation='optimized'` is the default and normally uses checked Cholesky
+solves.
 `implementation='reference'` repairs the Slicersalt implementation while retaining
 its eigen-decomposition, coefficient-MM route, normalized Gaussian initialization,
 and default absolute-objective stopping rule. Correcting its loss, MM algebra,
@@ -342,6 +337,17 @@ covers linear and nonnegative-gamma RBF kernels, plus polynomial kernels with a
 nonnegative integer degree and nonnegative gamma/coef0. Sigmoid, callable, and
 precomputed kernels do not receive that automatic PSD assumption.
 
+A matrix-level callable receives `(X_train, X_query, **kernel_kws)` and must
+return a training-by-query matrix. `kernel='precomputed'` instead follows the
+public sklearn input convention: square training Gram matrix in `fit`, then
+query-by-training values in `predict` or `decision_function`. Standard sklearn
+pairwise tags and built-in CV slicing preserve this orientation.
+
+Set `prediction_batch_size` to a positive integer to bound the number of query
+rows used by each prediction kernel calculation. This supports named, callable,
+and precomputed kernels. Callable kernels must compute consistent pairwise values
+when their query rows are partitioned. The training Gram matrix is still dense.
+
 ### RBF construction and query consistency
 
 Corrected named RBF fits first use scikit-learn's pairwise kernel. If that internally
@@ -370,16 +376,7 @@ regularization, loss, and the free intercept are unchanged. Corrected reference
 and optimized fits share this construction policy; automatic solver restart has
 the narrower optimized-only eligibility described above.
 
-A matrix-level callable receives `(X_train, X_query, **kernel_kws)` and must
-return a training-by-query matrix. `kernel='precomputed'` instead follows the
-public sklearn input convention: square training Gram matrix in `fit`, then
-query-by-training values in `predict` or `decision_function`. Standard sklearn
-pairwise tags and built-in CV slicing preserve this orientation.
-
-Set `prediction_batch_size` to a positive integer to bound the number of query
-rows used by each prediction kernel calculation. This supports named, callable,
-and precomputed kernels. Callable kernels must compute consistent pairwise values
-when their query rows are partitioned. The training Gram matrix is still dense.
+### Prediction precision
 
 Corrected models evaluate dense and CSR query matrices adaptively. The ordinary
 product is accepted per row only when a conservative estimate is no larger than
@@ -400,6 +397,8 @@ state cannot be accepted for stopping using one precision policy and exported
 under another. No inconsistent callback state is emitted. These are numerical
 estimates under the stated floating-point model, not universal interval proofs.
 
+### Fitted state, cross-validation and caches
+
 Starting a new fit clears learned state, including the kernel prediction-precision
 flag. If fitting or refitting fails, learned state is cleared before the exception
 propagates; prediction then raises `NotFittedError`. This contract applies to the
@@ -414,6 +413,12 @@ reference CV caches K and its checked eigensystem. Explicit optimized spectral
 or L-BFGS CV also prepares eigenpairs for reuse. Unknown kernels may still need
 an eigenvalues-only PSD check at fit time. Cloning clears learned state and does
 not transfer hidden caches.
+
+Generic `run_cv`, `GenDWDCV` and `KernGDWDCV` require finite real numeric scalar
+train/test scorer outputs. Invalid outputs raise before choosing/refitting a
+winner rather than silently excluding a candidate. Numeric Python/NumPy scalars
+and zero-dimensional numeric arrays are supported; object-dtype scorer results
+are outside this contract. Valid-score aggregation and first-tie ordering are unchanged.
 
 Cache equality accounts for kernel parameters (including nested arrays), data
 values/order after the solver's dtype conversion, sparse versus dense representation,
@@ -437,6 +442,8 @@ consistency, not the provenance of externally provided K. Never slice full-data
 eigenvectors to manufacture fold/subset eigenpairs. These parameters are
 preparation inputs, not alternative prediction-kernel definitions.
 
+## Numerical validation and recovery
+
 Corrected feature paths promote to float64 before constructing their Gram
 matrices. Casting an already rounded float32 external kernel cannot repair its
 lost precision. Matrices must be finite and symmetric, and materially indefinite
@@ -457,6 +464,8 @@ floating-point behavior, not exact originating Gram measurements. Tiny
 negative spectral values consistent with rounding may become
 zero, but positive eigenvalues are never truncated and no extra ridge or
 intercept penalty is silently added.
+
+### Eigensystem validation
 
 Computed full eigensystems must pass numerical validation before use. The native
 sequence is EVD, EVR, then EVX. Each candidate is checked against the same unchanged
@@ -493,6 +502,8 @@ squared eigenvalues; they cannot certify eigenvector correctness and report
 that limitation. Historical wheel and training-fit checks are documented in the
 [release record](../VALIDATION.md); they are not relabeled as tests of this release.
 
+### Constrained solves and residual checks
+
 Optimized Cholesky uses a reciprocal-condition estimate as diagnostic information,
 then checks each candidate solve against the original constrained MM equations.
 If necessary, bounded residual refinement or a centered factorization solves
@@ -514,8 +525,9 @@ vectors. Unsupported arithmetic or unresolved cancellation retains the existing
 compensated check. These estimates require the documented floating-point and
 BLAS assumptions; they are not interval certificates for arbitrary runtimes.
 
-When the bounded ordinary residual check fails, the solver first tries one inexpensive
-native correction using its existing factor or basis. It accepts that trial only
+With the default `residual_check_order='refinement_first'`, a failed bounded ordinary
+residual check first triggers one inexpensive native correction using the existing
+factor or basis. The solver accepts that trial only
 after fresh ordinary checks of the corrected state and scores. If the trial
 fails or produces a numerical error, it is discarded and the original state is
 reassessed using compensated float64 products and summation, with allowances for
@@ -539,6 +551,12 @@ original-equation residual can extend that private refinement budget to eight.
 These are corrections within an MM update, not extra MM iterations or a change
 to `max_iter`.
 
+For eligible optimized, unaccelerated Cholesky fits,
+`residual_check_order='adaptive'` can assess the untouched state accurately before
+trying another correction after two discarded trials whose original states passed
+accurate assessment. The same acceptance checks apply. This opt-in order can
+change finite-iteration results; see the [1.3.9 changes](candidate_changes.md).
+
 If reference spectral inverse-action refinement exhausts its allowance or
 stagnates at the same stored
 float64 coefficients, a final bounded correction can examine adjacent floats.
@@ -550,8 +568,9 @@ still pass the existing residual, coefficient-sum and RKHS accuracy checks.
 Unsuccessful private changes are discarded. The kernel, shift, target
 constraint, full eigenbasis and MM update count are unchanged.
 
-This correction is lazy on healthy solves and shares at most eight accepted
-coefficient moves across all five inverse representations of one solve action.
+This correction is skipped when the ordinary solve passes its checks. It shares
+at most eight accepted coefficient moves across all five inverse representations
+of one solve action.
 It also shares a budget of 1,048,576 normalized dense-work units. Each charged
 dense action costs `n * n` units; these units bound the number of scans and
 checks, not actual floating-point operations, bytes accessed or wall-clock time.
@@ -609,9 +628,9 @@ not a formal wall-clock or total-process-memory bound. Incomplete certification,
 non-PSD exact data or budget exhaustion makes recovery inapplicable, never a
 partial-rank model. Every positive direction must fit the complete certificate.
 
-Exact preparation is lazy and reused only within that fit. Ordinary healthy
-fits do not create it. Returned estimators retain normal float64 coefficients
-and diagnostic summaries, not rational matrices. Once active, the recovery can
+Exact preparation runs only after an ordinary MM proposal fails numerically
+and is reused only within that fit. Returned estimators retain normal float64
+coefficients and diagnostic summaries, not rational matrices. Once active, the recovery can
 serve subsequent MM actions; validation restoration still returns the earlier
 model and its representation metadata when appropriate. Successful completion
 adds one observed state per accepted MM update, with no hidden increase to the
@@ -642,4 +661,5 @@ Sample weights and kernel `implicit_P=False` remain explicitly unsupported.
 The existing low-level `solve_gen_kern_dwd` keeps its four-item MM return tuple
 `(alpha, offset, objective_history, C)`; it now defaults to corrected algebra and
 zero initialization. Request explicit legacy mode for the historical random
-initialization/update path. New backend and stopping options live on the estimator.
+initialization/update path. The estimator exposes the new backend and stopping
+options.

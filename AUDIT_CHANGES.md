@@ -6,19 +6,19 @@
 > zero initialization, while retaining objective-change stopping. See the
 > [current kernel API](docs/kernel_dwd.md) before reproducing older experiments.
 
-This is a development/release candidate, not the upstream PyPI release.
-It retains the upstream MIT license and original author credit. Original implementation:
-Iain Carmichael; upstream maintenance: David Allemang / Kitware; upstream repository:
-https://github.com/slicersalt/dwd . Compatibility fork:
-https://github.com/cheng338/dwd . Subsequent fork development is guided by Chang Cheng.
+This development candidate is distinct from the upstream PyPI release. It retains
+the MIT license and original author credit. Iain Carmichael wrote the original
+implementation, with upstream maintenance by David Allemang and Kitware at
+[slicersalt/dwd](https://github.com/slicersalt/dwd). Subsequent development of the
+[compatibility fork](https://github.com/cheng338/dwd) is guided by Chang Cheng.
 
-## Changes that can change scientific results
+## Changes that can affect scientific results
 
 - `KernGDWD(..., solver_mode='schur')`: repairs two kernel-MM algebra errors in
   the Schur denominator and the intercept/coefficient correction. The intercept
   is still unregularized. Reference: Wang and Zou, *Another Look at
-  Distance-Weighted Discrimination*, JRSS B 80(1), 177-198, DOI10.1111/rssb.12244,
-  Section4.1. Direct augmented-system, finite-difference and singular-system
+  Distance-Weighted Discrimination*, JRSS B 80(1), 177-198, DOI 10.1111/rssb.12244,
+  Section 4.1. Direct augmented-system, finite-difference and singular-system
   checks are independent references in the audit tests.
 - `GenDWD(..., solver_mode='schur')`: repairs the linear Sherman-Morrison
   correction. `implicit_P=False` is now actually forwarded to the linear solver.

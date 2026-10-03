@@ -1,6 +1,7 @@
 # Frozen performance regression oracle
 
-These two small source snapshots preserve the pre-performance numerical route.
+These two small source snapshots preserve the numerical implementation before
+the performance changes.
 They are loaded only by `test_performance_controls.py`, under private test-only
 module names. Relative numerical-helper imports use the package being tested.
 This keeps score routing and duplicate-objective recomputation independently

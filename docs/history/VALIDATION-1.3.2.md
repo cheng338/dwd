@@ -103,8 +103,8 @@ MM functions are mathematically impossible.
 The incremental internal-CV defect was reproduced with a metadata-only estimator:
 a NaN-scored candidate could beat a finite candidate and be refitted. The suite
 now rejects invalid scores before selection/refitting while retaining supported
-finite-score aggregation and first-tie behavior. Task6 used a guarded external
-scorer, so this defect does not explain its accuracy differences.
+finite-score aggregation and first-tie behavior. The external ensemble comparison
+used a guarded scorer, so this defect does not explain its accuracy differences.
 
 The compensated-prediction change converts the same ordered float64 product
 terms to Python floats before the unchanged `math.fsum`. An earlier saved-model

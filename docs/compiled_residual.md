@@ -53,7 +53,7 @@ depend on the NumPy C API.
 
 Normal source builds use setuptools and a locally available C compiler. The
 extension is optional: a missing compiler can produce a functioning package
-using the previous arithmetic. Compile success does not authorize relaxed
+using the previous arithmetic. Builds must use strict
 floating-point flags. MSVC uses `/fp:strict`; GCC/Clang builds disable implicit
 contraction, reassociation and fast-math.
 
@@ -61,7 +61,8 @@ contraction, reassociation and fast-math.
 clean source/build directory for portable and compiled wheel builds. For the
 audited Windows release build, `DWD_BUILD_ZIG` can name a local Zig executable.
 That explicit override fails the build if compilation fails; it never downloads
-a compiler or silently produces a purported accelerated wheel.
+a compiler or silently produces a wheel labeled as accelerated without the
+compiled helper.
 
 The performance improvement is workload dependent. It targets models requiring
 compensated residual checks, particularly large ill-conditioned kernel systems.

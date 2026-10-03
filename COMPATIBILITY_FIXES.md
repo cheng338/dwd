@@ -8,17 +8,6 @@ This repository is a compatibility-focused fork of
 [`slicersalt/dwd`](https://github.com/slicersalt/dwd), based on upstream commit
 `b564db19193674d967a9dc9327709869d5b67078` and the DWD 1.0.5 release.
 
-## Original work and license
-
-DWD was originally implemented in Python by Iain Carmichael and is maintained
-upstream by Kitware, Inc. The project implements methods described by Marron,
-Todd, and Ahn (2007) and Wang and Zou (2018). Full citations and author links
-remain in [README.md](README.md).
-
-The upstream MIT license and its copyright notice are preserved verbatim in
-[LICENSE.txt](LICENSE.txt). These compatibility changes are distributed under
-the same license.
-
 ## Compatibility changes
 
 The `1.0.5+compat2` version contains four narrowly scoped source corrections:
@@ -50,3 +39,14 @@ The compatibility tests verify that:
 - package metadata reports `1.0.5+compat2`.
 
 The fixes were also exercised with Python 3.11, NumPy and scikit-learn.
+
+## Original work and license
+
+DWD was originally implemented in Python by Iain Carmichael and is maintained
+upstream by Kitware, Inc. The project implements methods described by Marron,
+Todd, and Ahn (2007) and Wang and Zou (2018). Full citations and author links
+remain in [README.md](README.md).
+
+The upstream MIT license and its copyright notice are preserved verbatim in
+[LICENSE.txt](LICENSE.txt). These compatibility changes are distributed under
+the same license.
