@@ -32,7 +32,7 @@ The platform wheel uses the CPython stable ABI and has no NumPy C API dependency
 A compiler is a build-time requirement for accelerated source builds; the Python
 checker remains available if the extension is absent. The numerical native-screen
 runtime gate remains audited CPython 3.12. There is no runtime compiler download.
-See [build and runtime details](docs/compiled_residual.md).
+See [build and runtime details](../compiled_residual.md).
 
 The adapted accumulation helpers retain CPython attribution and its complete PSF
 license. Original DWD credits and MIT licensing remain intact. The frozen public
@@ -40,4 +40,4 @@ synthetic replay returns the same 21 models and retains the same nine documented
 extreme numerical rejections; this performance repair does not resolve those
 separate cases.
 
-See [validation](VALIDATION.md) and [1.3.3 history](docs/history/RELEASE_NOTES-1.3.3.md).
+See [validation](../../VALIDATION.md#dwd-134-validation-preserved-history) and [1.3.3 history](RELEASE_NOTES-1.3.3.md).

@@ -6,6 +6,7 @@ from sklearn.base import ClassifierMixin
 from sklearn.utils.validation import FLOAT_DTYPES, check_is_fitted
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils import check_array
+from dwd._fit_state import fit_with_cleanup
 
 
 class KernelClfMixin(ClassifierMixin):
@@ -164,6 +165,7 @@ class KernelScaler(TransformerMixin, BaseEstimator):
         # Needed for backported inspect.signature compatibility with PyPy
         pass
 
+    @fit_with_cleanup
     def fit(self, K, y=None):
         """Record the positive diagonal of a square training kernel.
         Parameters
@@ -202,10 +204,18 @@ class KernelScaler(TransformerMixin, BaseEstimator):
         n = len(self.K_diag_)
         if K.shape != (n, n):
             raise ValueError('KernelScaler only supports kernels with the fitted square shape.')
-        s = 1.0 / np.sqrt(self.K_diag_ / n)
-
-        K *= s[None, :]
-        K *= s[:, None]
+        with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
+            s = 1.0 / np.sqrt(self.K_diag_ / n)
+            if not np.isfinite(s).all() or np.any(s == 0):
+                # Preserve ordinary scaling arithmetic. Only retry when the
+                # preliminary division loses a positive subnormal diagonal.
+                s = np.sqrt(float(n)) / np.sqrt(self.K_diag_)
+            if not np.isfinite(s).all() or np.any(s == 0):
+                raise FloatingPointError('KernelScaler produced nonfinite or zero scaling factors.')
+            K *= s[None, :]
+            K *= s[:, None]
+        if not np.isfinite(K).all():
+            raise FloatingPointError('KernelScaler produced nonfinite transformed values.')
         return K
 
     @property

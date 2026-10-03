@@ -45,6 +45,6 @@ synthetic replay retained 21 successful fits and the same nine known extreme
 rejections; all returned models passed Decimal100 checks and matched 1.3.2 state
 bytes. These results do not establish universal accuracy or speed guarantees.
 
-See [validation](VALIDATION.md), the [kernel guide](docs/kernel_dwd.md), and the
-[archived 1.3.2 notes](docs/history/RELEASE_NOTES-1.3.2.md) for earlier repairs.
+See [validation](VALIDATION-1.3.3.md), the [kernel guide](../kernel_dwd.md), and the
+[archived 1.3.2 notes](RELEASE_NOTES-1.3.2.md) for earlier repairs.
 Original authorship and the MIT license are retained.

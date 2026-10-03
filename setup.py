@@ -20,10 +20,15 @@ class StrictBuildExt(build_ext):
             # Runtime installations never download or invoke build tools.
             if sys.platform != 'win32':
                 raise RuntimeError('DWD_BUILD_ZIG currently supports Windows builds.')
+            if sysconfig.get_platform().lower() != 'win-amd64':
+                raise RuntimeError('DWD_BUILD_ZIG requires a Windows AMD64 Python build.')
             for extension in self.extensions:
                 target = Path(self.get_ext_fullpath(extension.name)).resolve()
                 target.parent.mkdir(parents=True, exist_ok=True)
-                command = [zig, 'cc', *flags, '-s', '-shared', '-DPy_LIMITED_API=0x030B0000',
+                # Zig otherwise targets the build host's CPU (including AVX512
+                # on some hosts). A win_amd64 wheel must run on baseline x86-64.
+                command = [zig, 'cc', *flags, '-march=x86_64',
+                           '-s', '-shared', '-DPy_LIMITED_API=0x030B0000',
                            '-I' + sysconfig.get_path('include'),
                            str(Path(sys.base_prefix) / 'libs/python3.lib'),
                            *extension.sources, '-o', str(target)]

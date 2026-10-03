@@ -37,7 +37,13 @@ class KernelLinearSystem:
     direction is removed from the fitted function by that coordinate change.
     Every candidate is checked against those original equations before return.
     """
-    def __init__(self, K, shift):
+    def __init__(self, K, shift, *, residual_check_order='refinement_first'):
+        if residual_check_order not in ('refinement_first', 'adaptive'):
+            raise ValueError("residual_check_order must be 'refinement_first' or 'adaptive'.")
+        self.residual_check_order = residual_check_order
+        self._adaptive_unproductive_trials = 0
+        self._adaptive_factor_context = None
+        self._adaptive_factor_generation = 0
         self.K = K
         self.shift = float(shift)
         self.n = len(K)
@@ -77,6 +83,10 @@ class KernelLinearSystem:
             self.info['linear_recoveries'] += 1
 
     def _prepare(self, mode):
+        if self.residual_check_order == 'adaptive':
+            # A new representation must establish its own scheduling history.
+            self._adaptive_factor_generation += 1
+            self._reset_adaptive_history()
         started = perf_counter()
         if mode == 'anchor':
             # Eliminate the coefficient-sum constraint exactly in real
@@ -236,9 +246,42 @@ class KernelLinearSystem:
         Only a committed trial counts as a refinement step; attempted/discarded
         inverse actions and their elapsed time are reported separately.
         """
+        adaptive = (getattr(self, 'residual_check_order', 'refinement_first') == 'adaptive'
+                    and self.mode in ('original', 'centered'))
+        if adaptive:
+            self._check_adaptive_factor_context()
         measured = self._ordinary_measure(rhs, target_sum, x, s, product)
         if measured[0]:
+            if adaptive:
+                self._adaptive_unproductive_trials = 0
             return x, s, measured
+        probe = probe_identity = None
+        if adaptive and self._adaptive_unproductive_trials >= 2:
+            # This is a fallible probe of the untouched state, not a correction
+            # or a recovery attempt. All equation/constraint/RKHS gates remain.
+            probe_identity = self._adaptive_measurement_identity(rhs, target_sum, x, s)
+            probe_started = perf_counter()
+            self.info['adaptive_residual_probes'] = self.info.get('adaptive_residual_probes', 0) + 1
+            try:
+                probe = self._compensated_measure(rhs, target_sum, x, s,
+                                                  ordinary_maximum=measured[4])
+            except Exception as exc:
+                # Optional scheduling must not spend the normal recovery budget
+                # when accurate measurement is unavailable. The normal path
+                # below still raises if its own required measurement fails.
+                self.info['adaptive_residual_probe_errors'] = self.info.get('adaptive_residual_probe_errors', 0) + 1
+                self.info['last_adaptive_residual_probe_error'] = f'{type(exc).__name__}: {exc}'
+            finally:
+                self.info['adaptive_residual_probe_seconds'] = self.info.get('adaptive_residual_probe_seconds', 0.) + perf_counter() - probe_started
+            if probe_identity != self._adaptive_measurement_identity(rhs, target_sum, x, s):
+                probe = None
+                self.info['adaptive_residual_probe_invalidations'] = self.info.get('adaptive_residual_probe_invalidations', 0) + 1
+            if probe is not None and probe[0]:
+                self.info['adaptive_residual_probe_acceptances'] = self.info.get('adaptive_residual_probe_acceptances', 0) + 1
+                self.info['adaptive_native_trials_skipped'] = self.info.get('adaptive_native_trials_skipped', 0) + 1
+                return x, s, probe
+            self.info['adaptive_residual_probe_fallbacks'] = self.info.get('adaptive_residual_probe_fallbacks', 0) + 1
+            self._adaptive_unproductive_trials = 0
         started = perf_counter()
         self.info['native_refinement_trials'] = self.info.get('native_refinement_trials', 0) + 1
         try:
@@ -253,14 +296,48 @@ class KernelLinearSystem:
         finally:
             self.info['native_refinement_seconds'] = self.info.get('native_refinement_seconds', 0.) + perf_counter() - started
         if trial is not None and trial[0]:
+            if adaptive:
+                self._adaptive_unproductive_trials = 0
             self.info['native_refinement_acceptances'] = self.info.get('native_refinement_acceptances', 0) + 1
             self.info['refinement_steps'] += 1
             return trial_x, trial_s, trial
         self.info['native_refinement_discarded'] = self.info.get('native_refinement_discarded', 0) + 1
         # Both ordinary screens already declined. Repeating the original cheap
         # check cannot change that decision and may repeat a block matvec.
-        return x, s, self._compensated_measure(rhs, target_sum, x, s,
-                                             ordinary_maximum=measured[4])
+        if probe is not None and probe_identity == self._adaptive_measurement_identity(rhs, target_sum, x, s):
+            # Reuse only this call's original-state check; never the trial's
+            # measurement, another solve, or another factor representation.
+            accurate = probe
+            self.info['adaptive_residual_probe_reuses'] = self.info.get('adaptive_residual_probe_reuses', 0) + 1
+        else:
+            accurate = self._compensated_measure(rhs, target_sum, x, s,
+                                                 ordinary_maximum=measured[4])
+        if adaptive:
+            self._adaptive_unproductive_trials = min(2, self._adaptive_unproductive_trials + 1) if accurate[0] else 0
+        return x, s, accurate
+
+    def _reset_adaptive_history(self):
+        if self._adaptive_unproductive_trials:
+            self.info['adaptive_residual_history_resets'] = self.info.get('adaptive_residual_history_resets', 0) + 1
+        self._adaptive_unproductive_trials = 0
+        self._adaptive_factor_context = None
+
+    def _adaptive_context(self):
+        return (self._adaptive_factor_generation, id(self.K), self.shift, self.mode,
+                id(self.factor), id(self.factor[0]) if self.factor is not None else None,
+                id(self.v), getattr(self, 'denominator', None))
+
+    def _check_adaptive_factor_context(self):
+        context = self._adaptive_context()
+        if context != self._adaptive_factor_context:
+            self._reset_adaptive_history()
+            self._adaptive_factor_context = context
+
+    def _adaptive_measurement_identity(self, rhs, target_sum, x, s):
+        # Local O(n) snapshots are tiny beside the dense residual work. They
+        # deliberately include inputs as well as coefficient/intercept bits.
+        return (self._adaptive_context(), np.asarray(rhs).tobytes(), float(target_sum).hex(),
+                np.asarray(x).tobytes(), float(s).hex())
 
     def _equations_acceptable(self, rhs, target_sum, x, residual, constraint,
                               residual_bound=0., constraint_bound=0.):

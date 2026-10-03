@@ -14,6 +14,15 @@ from dwd._eigen import validated_eigh
 from dwd._fit_state import fit_with_cleanup
 
 
+def _validate_residual_check_order(estimator):
+    if estimator.residual_check_order not in ('refinement_first', 'adaptive'):
+        raise ValueError("residual_check_order must be 'refinement_first' or 'adaptive'.")
+    if estimator.residual_check_order == 'adaptive' and (estimator.implementation != 'optimized'
+            or estimator.acceleration is not None or estimator.solver_mode != 'schur'
+            or estimator.backend not in ('auto', 'cholesky')):
+        raise ValueError('Adaptive residual ordering requires unaccelerated optimized Cholesky MM.')
+
+
 class KernGDWD(KernelClfMixin, BaseEstimator):
     r"""
     Kernel Generalized Distance Weighted Discrimination
@@ -112,6 +121,17 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         finite-iteration estimator. Objective-change stopping need not give the
         same solution quality as ordinary MM. Reference, legacy and L-BFGS modes
         do not support this option. Spectral backend requests remain spectral.
+
+    residual_check_order : {'refinement_first', 'adaptive'}, default='refinement_first'
+        Explicit scheduling option for unaccelerated optimized Cholesky MM.
+        Adaptive first observes two discarded refinement trials whose original
+        states pass the accurate residual checks, then probes those same checks
+        before trying a correction. A declined or failed probe falls back to
+        refinement. Accuracy gates and recovery budgets are unchanged, but a
+        different accepted coefficient state can change finite-iteration results.
+        Reference, explicit spectral, L-BFGS, legacy and accelerated routes do
+        not support adaptive ordering. Automatic spectral recovery, if needed,
+        uses refinement_first; anchor recovery retains its original checks.
     """
 
     def __init__(self, lambd=1.0, q=1.0, kernel='linear',
@@ -120,9 +140,10 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                  backend='auto', stopping='objective', initialization='auto',
                  tol=1e-6, patience=3, min_delta=0., check_interval=1,
                  callback=None, prediction_batch_size=None, implementation='optimized',
-                 acceleration=None):
+                 acceleration=None, residual_check_order='refinement_first'):
         self.implementation = implementation
         self.acceleration = acceleration
+        self.residual_check_order = residual_check_order
         self.lambd = lambd
         self.q = q
 
@@ -270,11 +291,12 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                 callback=self.callback, validation=validation,
                 patience=self.patience, min_delta=self.min_delta,
                 check_interval=self.check_interval, implementation=self.implementation,
-                acceleration=self.acceleration)
+                acceleration=self.acceleration, residual_check_order=self.residual_check_order)
         self._set_fit_result(result)
         return self
 
     def _validate_options(self, validation_data=None):
+        _validate_residual_check_order(self)
         if self.implementation not in ('optimized', 'reference'):
             raise ValueError("implementation must be 'optimized' or 'reference'.")
         if self.implementation == 'reference' and self.solver_mode == 'legacy':
@@ -395,9 +417,14 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         self.validation_history_ = result.get('validation_history',
                                                self.diagnostics_.get('validation_history', []))
 
+    @fit_with_cleanup
     def cv_init(self, X):
         """
-        Initializes the object before computing a cross-valiation.
+        Prepare a tuning path and invalidate any previous fitted predictor.
+
+        New training rows cannot be combined with old coefficients. A failed
+        preparation also leaves the estimator unfitted; checked private caches
+        remain subject to their existing data and parameter validity checks.
         """
         # Promote before constructing the Gram matrix, not after rounding it.
         X = check_array(X, accept_sparse='csr',
@@ -511,6 +538,11 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         The option changes finite-iteration behavior; ordinary MM remains the
         default. Only optimized MM supports acceleration.
 
+    residual_check_order : {'refinement_first', 'adaptive'}, default='refinement_first'
+        Forwarded to every candidate and the final refit. Adaptive ordering is
+        restricted to unaccelerated optimized Cholesky MM and may change
+        finite-iteration results; see KernGDWD.
+
     """
     def __init__(self,
                  lambd_vals=np.logspace(-2, 2, 10),
@@ -521,11 +553,13 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
                  random_state=None, solver_mode='schur', backend='auto',
                  stopping='objective', initialization='auto', tol=1e-6,
                  patience=3, min_delta=0., check_interval=1, callback=None,
-                 prediction_batch_size=None, implementation='optimized', acceleration=None):
+                 prediction_batch_size=None, implementation='optimized', acceleration=None,
+                 residual_check_order='refinement_first'):
 
         self.lambd_vals = lambd_vals
         self.implementation = implementation
         self.acceleration = acceleration
+        self.residual_check_order = residual_check_order
         self.q_vals = q_vals
         self.kernel = kernel
         self.kernel_kws_vals = kernel_kws_vals
@@ -567,6 +601,7 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         """
         if sample_weight is not None:
             raise NotImplementedError('Sample weights are not implemented for KernGDWDCV.')
+        _validate_residual_check_order(self)
         if self.stopping == 'validation':
             raise ValueError('KernGDWDCV does not create monitoring splits. Use a plain '
                              'KernGDWD with explicit validation_data inside an explicitly '
@@ -591,7 +626,8 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
                                tol=self.tol, patience=self.patience, min_delta=self.min_delta,
                                check_interval=self.check_interval, callback=self.callback,
                                prediction_batch_size=self.prediction_batch_size,
-                               implementation=self.implementation, acceleration=self.acceleration),
+                               implementation=self.implementation, acceleration=self.acceleration,
+                               residual_check_order=self.residual_check_order),
                    X=X, y=y,
                    params=params,
                    scoring=self.scoring,
@@ -775,6 +811,8 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
             alpha = check_random_state(random_state).normal(size=n_samples)
             alpha /= np.linalg.norm(alpha)
     else:
+        if np.iscomplexobj(alpha_init):
+            raise ValueError('alpha_init must be real.')
         alpha = np.asarray(alpha_init, dtype=float).copy()
         if alpha.shape != (n_samples,) or not np.isfinite(alpha).all():
             raise ValueError('alpha_init must be a finite vector with one coefficient per sample.')

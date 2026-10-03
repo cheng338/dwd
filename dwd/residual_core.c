@@ -62,14 +62,40 @@ static DoubleLength dl_mul(double x, double y)
     return (DoubleLength) {z, zz};
 }
 
-static TripleLength tl_fma(double x, double y, TripleLength total)
+static TripleLength tl_add_product(DoubleLength pr, TripleLength total)
 {
     /* CPython: Algorithm 5.10 with SumKVert for K=3. */
-    DoubleLength pr = dl_mul(x, y);
     DoubleLength sm = dl_sum(total.hi, pr.hi);
     DoubleLength r1 = dl_sum(total.lo, pr.lo);
     DoubleLength r2 = dl_sum(r1.hi, sm.lo);
     return (TripleLength) {sm.hi, r2.hi, total.tiny + r1.lo + r2.lo};
+}
+
+static TripleLength tl_fma(double x, double y, TripleLength total)
+{
+    return tl_add_product(dl_mul(x, y), total);
+}
+
+static DoubleLength negative_product(double x, double y, DoubleLength product)
+{
+    /* Under the checked round-to-nearest mode, every operation in dl_mul is
+     * sign-symmetric except the sign of an exact zero. The guarded nonzero
+     * operands are in [2^-200, 2^200]: splitting and all nonzero multiplication
+     * intermediates are finite normal binary64 values (the finest product
+     * grid is 2^-504), so overflow/underflow cannot break that symmetry.
+     * Zero signs cannot affect a subsequent nonzero result in this expression
+     * tree. Thus NONZERO output components of dl_mul(x, -y) are exactly the
+     * negated components of dl_mul(x, y), including their bit representation.
+     *
+     * Do not guess signs when either output component is zero. Re-evaluate
+     * the original negative product in that case, including signed-zero
+     * operands and exactly representable products. Keep both independent
+     * TripleLength accumulators and their original term order: a rounded
+     * score cannot stand in for the expanded residual.
+     */
+    if (product.hi != 0.0 && product.lo != 0.0)
+        return (DoubleLength) {-product.hi, -product.lo};
+    return dl_mul(x, -y);
 }
 
 static double tl_to_d(TripleLength total)
@@ -152,8 +178,9 @@ DWD_EXPORT int dwd_sumprod_rows(
             double absolute = fabs(a);
             if (absolute > maximum)
                 maximum = absolute;
-            score = tl_fma(a, b, score);
-            residual = tl_fma(a, -b, residual);
+            DoubleLength product = dl_mul(a, b);
+            score = tl_add_product(product, score);
+            residual = tl_add_product(negative_product(a, b, product), residual);
         }
         /* Exactly the expanded product order of native_compensated_residual. */
         residual = tl_fma(rhs_i, 1.0, residual);

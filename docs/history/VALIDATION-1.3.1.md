@@ -3,7 +3,7 @@
 
 # DWD 1.3.1 validation
 
-**Local source and actual-wheel validation passed.** Checks used the requested
+**Local source and actual-wheel validation passed.** Checks used the
 Windows Anaconda `py12_df` environment. The tested wheel SHA256 is
 `4debfab97249264a85aad17dccdf16cf6ad3a70770eb615599dd196a72cb4e13`.
 Sealed 1.3.0 artifacts and historical measurements remain separate. The source

@@ -221,7 +221,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                  stopping='objective', tol=1e-6, backend='auto',
                  psd_known=False, callback=None, validation=None,
                  patience=3, min_delta=0., check_interval=1,
-                 implementation='optimized', acceleration=None):
+                 implementation='optimized', acceleration=None,
+                 residual_check_order='refinement_first'):
     """Solve one specified kernel DWD problem; no internal parameter search.
 
     y contains both -1/+1. ``validation`` is an explicitly supplied pair
@@ -239,6 +240,12 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         raise ValueError("acceleration must be None or 'restart'.")
     if acceleration is not None and (implementation != 'optimized' or backend == 'lbfgs'):
         raise ValueError('Acceleration is supported only for optimized MM, not reference or L-BFGS.')
+    if residual_check_order not in ('refinement_first', 'adaptive'):
+        raise ValueError("residual_check_order must be 'refinement_first' or 'adaptive'.")
+    if residual_check_order == 'adaptive' and (implementation != 'optimized'
+            or acceleration is not None or backend not in ('auto', 'cholesky')
+            or (backend == 'auto' and K_eig is not None)):
+        raise ValueError('Adaptive residual ordering requires unaccelerated optimized Cholesky MM.')
     lambd, q = _scalar(lambd, 'lambd', positive=True), _scalar(q, 'q', positive=True)
     obj_tol, tol = _scalar(obj_tol, 'obj_tol'), _scalar(tol, 'tol', positive=True)
     max_iter = _integer(max_iter, 'max_iter')
@@ -293,7 +300,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                    'attempted_backends': [backend], 'auto_fallback': False,
                    'fallback_reason': None, 'cholesky_setup_seconds': 0.,
                    'spectral_setup_seconds': 0., 'eigenvalue_check_seconds': 0.,
-                   'implementation': implementation, 'acceleration': acceleration}
+                   'implementation': implementation, 'acceleration': acceleration,
+                   'residual_check_order': residual_check_order}
     diagnostics.update(initial_details)
     U = values = system = None
     if backend in ('spectral', 'lbfgs') or K_eig is not None:
@@ -317,7 +325,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         c = None
     elif backend == 'cholesky':
         cholesky_started = perf_counter()
-        system = KernelLinearSystem(K, shift)
+        system = KernelLinearSystem(K, shift, residual_check_order=residual_check_order)
         scores = initial_scores
         c = None
         diagnostics['cholesky_setup_seconds'] = perf_counter() - cholesky_started

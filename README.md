@@ -1,4 +1,6 @@
-# Distance Weighted Discrimination 1.3.8
+# Distance Weighted Discrimination 1.3.9.dev20261001
+
+Unpublished local validation candidate. See [candidate changes](docs/candidate_changes.md).
 
 `dwd` provides linear and kernel Distance Weighted Discrimination classifiers
 with sklearn-style fitting, prediction, and cross-validation. One package now
@@ -7,12 +9,11 @@ Both use the corrected DWD objective and update algebra. They differ in numerica
 computation and default initialization, so finite-budget fitted models can differ.
 See the [release notes](RELEASE_NOTES.md) for compatibility changes.
 
-This fork is developed and maintained by [Chang Cheng](https://github.com/cheng338)
-at [cheng338/dwd](https://github.com/cheng338/dwd).
-
-The project builds on [slicersalt/dwd](https://github.com/slicersalt/dwd), originally
+This is a fork of [slicersalt/dwd](https://github.com/slicersalt/dwd), originally
 implemented by [Iain Carmichael](https://idc9.github.io/), with upstream maintenance
-by David Allemang and [Kitware](https://kitware.com/). Original credits and the
+by David Allemang and [Kitware](https://kitware.com/). Subsequent development of
+this fork is guided by [Chang Cheng](https://github.com/cheng338) and maintained
+at [cheng338/dwd](https://github.com/cheng338/dwd). Original credits and the
 [MIT license](LICENSE.txt) are retained.
 
 ## Changes in 1.3.8

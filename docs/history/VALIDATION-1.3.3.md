@@ -72,4 +72,4 @@ Runtime guards retain the portable method on other Python versions and outside
 the supported native-arithmetic range. Error bounds rely on IEEE binary64
 round-to-nearest and the documented implementation assumptions. Objective-change
 stopping remains distinct from stationarity. Historical results remain in the
-[1.3.2 validation record](docs/history/VALIDATION-1.3.2.md).
+[1.3.2 validation record](VALIDATION-1.3.2.md).

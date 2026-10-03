@@ -47,9 +47,11 @@ socp = [
 test = [
     "cvxpy",
     "matplotlib",
+    "setuptools>=68",
 ]
 test-base = [
     "matplotlib",
+    "setuptools>=68",
 ]
 doc = [
     'sphinx',

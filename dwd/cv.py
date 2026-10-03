@@ -86,26 +86,19 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     # get tuning path for each fold
     all_cv_results = []
     for f_idx, (train, test) in enumerate(folds):
-        if getattr(clf, 'kernel', None) == 'precomputed':
-            # A fold trains on its own Gram matrix and predicts with query
-            # rows against training columns, as sklearn's pairwise CV does.
-            X_train = X[train, :][:, train]
-            X_test = X[test, :][:, train]
-        else:
-            X_train = X[train, :]
-            X_test = X[test, :]
         y_train = y[train]
         y_test = y[test]
 
         # clone(clf) is critical to send a copy! otherwise clf gets modified
         fold_results = get_path_scores(clf=clone(clf),
-                                       X_train=X_train,
+                                       X_train=None,
                                        y_train=y_train,
-                                       X_test=X_test,
+                                       X_test=None,
                                        y_test=y_test,
                                        scorer=scorer,
                                        params=params,
-                                       fold_index=f_idx)
+                                       fold_index=f_idx,
+                                       _fold_source=(X, train, test))
 
         all_cv_results.append(fold_results)
 
@@ -147,7 +140,7 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
 
 
 def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
-                    *, fold_index=None):
+                    *, fold_index=None, _fold_source=None):
 
     # initalize classifier before cross validation
     cv_results = {'params': [],
@@ -156,10 +149,27 @@ def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
                   'runtime': [],
                   'init_time': 0.0}
 
+    # Materialize each representation at most once per fold. A candidate may
+    # select a precomputed kernel even when the constructor used a named kernel.
+    # The ordinary path keeps its original row-only slicing and cache reuse.
+    fold_views = {}
     # fit and score classifier for each parameter setting
     # TODO: parallelize here
     for param_setting in DoL2LoD(params):
         clf.set_params(**param_setting)
+
+        if _fold_source is not None:
+            pairwise = getattr(clf, 'kernel', None) == 'precomputed'
+            if pairwise not in fold_views:
+                source, train, test = _fold_source
+                if pairwise:
+                    if source.shape[0] != source.shape[1]:
+                        raise ValueError('A precomputed-kernel CV candidate requires a square input matrix.')
+                    fold_views[pairwise] = (source[train, :][:, train],
+                                            source[test, :][:, train])
+                else:
+                    fold_views[pairwise] = (source[train, :], source[test, :])
+            X_train, X_test = fold_views[pairwise]
 
         # KernGDWD's cache depends on both this training fold and the kernel
         # parameters. Lambda and q changes can reuse the same eigensystem.

@@ -1,5 +1,47 @@
 # Updates
 
+This changelog covers the fork of [slicersalt/dwd](https://github.com/slicersalt/dwd)
+maintained at [cheng338/dwd](https://github.com/cheng338/dwd). Subsequent fork
+development is guided by Chang Cheng. The original implementation by Iain
+Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
+license remain credited in the [README](README.md) and [license](LICENSE.txt).
+
+## [Unreleased]
+
+- Reuse the native residual core's double-length product across separate score
+  and residual accumulators, retaining the original negative-product calculation
+  for zero components to preserve signed-zero behavior. Acceptance bounds and
+  strict floating-point arithmetic remain unchanged.
+- Target baseline x86-64 instructions explicitly for Zig Windows AMD64 builds,
+  rather than inheriting the build host's instruction set.
+- Add opt-in `residual_check_order='adaptive'` to `KernGDWD` and `KernGDWDCV`
+  for eligible Cholesky fits. Keep `'refinement_first'` as the default and retain
+  the objective, equation, constraint, RKHS and descent acceptance checks.
+  Adaptive ordering can change finite-iteration states; it is a separate
+  numerical policy, not a convergence guarantee.
+- Correct historical notebook and figure imports to the current module paths.
+- Keep both gamma alternatives in the notebook kernel grid and remove
+  redundant fit calls. Use one CV worker in the introductory example.
+- Clear outputs only from changed notebook cells and identify retained output
+  as historical. Solver equations, estimator defaults and upstream credits
+  are unchanged.
+- Clear unusable state after a failed `KernelScaler.fit` and invalidate an old
+  kernel predictor when `cv_init` prepares new training rows. Keep the scaler's
+  copied diagonal independent of caller input, recover representable scaling
+  when a positive subnormal diagonal underflows in the preliminary division,
+  and reject nonfinite transformed values.
+- Reject complex explicit linear and legacy-kernel initial coefficients instead
+  of discarding their imaginary parts. Reject nonfinite linear decision values
+  instead of converting a NaN score into a class label.
+- Slice cross-validation kernels according to each candidate's `kernel`
+  parameter, including when the candidate selects `precomputed` instead of the
+  constructor default. Reuse each fold representation across compatible settings.
+- Declare setuptools for native build-policy tests, and include historical
+  notebook fixtures in source distributions for the bundled documentation tests.
+- Repair relative links in historical documentation and align current test
+  instructions with the bundled unittest runner, retaining historical execution
+  and validation claims as historical records.
+
 ## 1.3.8
 
 - Include floating-point error allowances in ordinary residual acceptance.

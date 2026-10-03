@@ -36,6 +36,6 @@ The revised source and actual wheel each passed **334 tests** under updated MKL.
 
 MNIST comparisons support faster optimized training, with mixed accuracy. A 6,000-training/1,000-development ensemble comparison found 3.6–6.3× faster training than original Slicersalt across three digit pairs. The development set had been reused; all 108 base and final learners in the repaired ensembles reached the 100-update cap without meeting the convergence check. These are finite-budget results, not proof of solved optima or universal accuracy gains. A new actual-wheel replay of 30 stored public synthetic cases retained 21 successful fits and nine unresolved extreme nearly constant RBF fits. Every returned model passed independent Decimal100 score/objective, finite-output and serialization checks. These bounded checks do not guarantee success for every valid kernel.
 
-See the [kernel guide](docs/kernel_dwd.md) and [validation record](VALIDATION.md).
+See the [kernel guide](../kernel_dwd.md) and [validation record](VALIDATION-1.3.2.md).
 
 Original Iain Carmichael attribution, Slicersalt/Kitware credits and the MIT license are retained.

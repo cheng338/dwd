@@ -22,7 +22,11 @@ class LinearClassifierMixin(ClassifierMixin):
         X = check_array(X, accept_sparse=['csr', 'csc', 'coo'])
         if X.shape[1] != self.coef_.shape[1]:
             raise ValueError('Feature count differs from training data.')
-        return safe_sparse_dot(X, self.coef_.T, dense_output=True).flatten() + self.intercept_
+        with np.errstate(over='ignore', invalid='ignore'):
+            scores = safe_sparse_dot(X, self.coef_.T, dense_output=True).flatten() + self.intercept_
+        if not np.isfinite(scores).all():
+            raise FloatingPointError('Nonfinite linear decision values.')
+        return scores
 
     def predict(self, X):
         scores = self.decision_function(X)

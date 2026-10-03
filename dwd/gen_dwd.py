@@ -429,6 +429,8 @@ def solve_gen_dwd(X, y, lambd, q=1,
         beta = (np.zeros(n_features) if use_zero else
                 check_random_state(random_state).normal(size=n_features))
     else:
+        if np.iscomplexobj(beta_init):
+            raise ValueError('beta_init must be real.')
         beta = np.asarray(beta_init, dtype=float).copy()
         if beta.shape != (n_features,) or not np.all(np.isfinite(beta)):
             raise ValueError('beta_init must be a finite vector with one entry per feature.')

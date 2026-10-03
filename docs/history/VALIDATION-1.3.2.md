@@ -30,7 +30,7 @@ and the updated native MKL runtime reporting 2025.3-Product. The OpenBLAS checks
 used Python 3.11.16, NumPy 2.4.6, SciPy 1.17.1 and scikit-learn 1.9.0; NumPy and
 SciPy reported OpenBLAS 0.3.31.188.0 and 0.3.30 respectively.
 
-The [GitHub workflow](.github/workflows/tests.yml) additionally tests Linux and
+The [GitHub workflow](../../.github/workflows/tests.yml) additionally tests Linux and
 Windows, Python 3.11 and 3.12, and base/SOCP installations: eight combinations.
 All eight jobs must pass on the publication revision before merge and release.
 The [Actions record](https://github.com/cheng338/dwd/actions) reports those runs.
@@ -70,7 +70,7 @@ The full residual, coefficient-sum and RKHS gates remain unchanged. At most
 eight accepted moves and a fixed abstract dense-work budget are shared across
 all five inverse representations of one solve action. Failed private changes
 are discarded. Healthy solves bypass this correction. See the
-[kernel guide](docs/kernel_dwd.md) for precise limits and diagnostics.
+[kernel guide](../kernel_dwd.md) for precise limits and diagnostics.
 
 Regression controls include the frozen failing case, a permutation, a small
 right-hand-side perturbation, independent Decimal80 equations, healthy solves,
@@ -119,5 +119,5 @@ MNIST comparisons, with mixed accuracy. Historical results and the new numerical
 tests do not establish universal accuracy gains, convergence at the 100-update
 cap, or success for every valid kernel. The defaults remain ordinary MM,
 q=1, objective tolerance 1e-5 and max_iter=100, with optional acceleration off.
-Earlier [1.3.1 release notes](docs/history/RELEASE_NOTES-1.3.1.md) and
-[validation](docs/history/VALIDATION-1.3.1.md) retain their historical scope.
+Earlier [1.3.1 release notes](RELEASE_NOTES-1.3.1.md) and
+[validation](VALIDATION-1.3.1.md) retain their historical scope.
