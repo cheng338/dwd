@@ -1,6 +1,6 @@
-# Distance Weighted Discrimination 1.3.9.dev20261001
+# Distance Weighted Discrimination 1.3.9
 
-Unpublished local validation candidate. See [candidate changes](docs/candidate_changes.md).
+Stable release, October 3, 2026. See the [1.3.9 changes and validation scope](docs/candidate_changes.md).
 
 `dwd` provides linear and kernel Distance Weighted Discrimination classifiers
 with sklearn-style fitting, prediction, and cross-validation. One package now
@@ -15,6 +15,21 @@ by David Allemang and [Kitware](https://kitware.com/). Subsequent development of
 this fork is guided by [Chang Cheng](https://github.com/cheng338) and maintained
 at [cheng338/dwd](https://github.com/cheng338/dwd). Original credits and the
 [MIT license](LICENSE.txt) are retained.
+
+## Changes in 1.3.9
+
+The native residual evaluator reuses a double-length product while preserving
+separate accumulators, signed-zero behavior and acceptance bounds. Windows AMD64
+Zig builds explicitly target baseline x86-64. API fixes cover failed scaler and
+kernel initialization, extreme scaling, complex initial coefficients, nonfinite
+linear predictions and candidate-specific precomputed-kernel CV slicing.
+Historical notebooks, figures and source-distribution fixtures are repaired.
+
+`residual_check_order='adaptive'` is an opt-in numerical policy for eligible
+optimized, unaccelerated Cholesky fits. The default remains `'refinement_first'`.
+The objective, free intercept and stopping settings are unchanged; optional
+ordering can change finite-iteration results and is not a convergence guarantee.
+See the [release notes](RELEASE_NOTES.md) and [detailed scope](docs/candidate_changes.md).
 
 ## Changes in 1.3.8
 
@@ -82,10 +97,29 @@ screen remains guarded to audited CPython 3.12 arithmetic. See
 [build and runtime details](docs/compiled_residual.md), [release notes](RELEASE_NOTES.md),
 and [validation](VALIDATION.md). The previous 1.3.3 repair remains intact.
 
-## Install from this release checkout
+## Installation
 
 Python 3.11+ and scikit-learn 1.6+ are required. The base package depends on
-NumPy, SciPy, scikit-learn, and threadpoolctl:
+NumPy, SciPy, scikit-learn, and threadpoolctl. Download a compatible wheel from
+the [1.3.9 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.9).
+For conventional Windows AMD64 CPython, install the native wheel:
+
+```shell
+python -m pip install ./dwd-1.3.9-cp311-abi3-win_amd64.whl
+```
+
+Alternatively, install the portable wheel without the optional compiled helper:
+
+```shell
+python -m pip install ./dwd-1.3.9-py3-none-any.whl
+```
+
+The helper retains its numerical runtime guards; the ABI tag does not promise
+acceleration on every compatible Python version. Pre-release numerical validation
+used conventional CPython 3.12 on Windows AMD64. Other platforms, older CPU
+hardware and free-threaded Python were not covered by those checks.
+
+To install from the release checkout instead:
 
 ```shell
 python -m pip install .
@@ -97,10 +131,10 @@ The optional linear SOCP classifier requires CVXPY:
 python -m pip install ".[socp]"
 ```
 
-The extra does not switch the kernel classifier to CVXPY. Installing `dwd` by
-name from PyPI may retrieve a different upstream release; the commands above
-install the contents of this checkout. See [VALIDATION.md](VALIDATION.md) for
-the tested environments and release checks.
+The extra does not switch the kernel classifier to CVXPY. This fork's release
+artifacts are distributed through GitHub, not PyPI. Installing `dwd` by name
+from PyPI may retrieve a different upstream release. See
+[VALIDATION.md](VALIDATION.md) for the tested environments and evidence scope.
 
 ## Kernel DWD
 

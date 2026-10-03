@@ -6,7 +6,7 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
-## [Unreleased]
+## 1.3.9 — 2026-10-03
 
 - Reuse the native residual core's double-length product across separate score
   and residual accumulators, retaining the original negative-product calculation

@@ -1,6 +1,6 @@
-# DWD candidate changes
+# DWD 1.3.9 changes and validation scope
 
-This unpublished fork candidate, developed under Chang Cheng's guidance,
+This October 3, 2026 release of the fork, developed under Chang Cheng's guidance,
 preserves the corrected DWD objective, loss, free intercept, kernel construction
 and stopping tolerances. It changes native
 arithmetic reuse and adds an explicitly selected residual assessment order.
@@ -17,7 +17,9 @@ The explicit Zig build uses baseline x86-64 instructions for Windows AMD64
 wheels, with strict floating-point flags. A general wheel must not silently
 inherit the build host's CPU instruction set. The native helper retains its
 existing runtime guards; an ABI tag alone does not promise acceleration on every
-supported Python runtime. Local validation uses CPython 3.12 on Windows AMD64.
+supported Python runtime. Pre-release numerical validation used conventional
+CPython 3.12 on Windows AMD64 with AOCL. It did not exercise other platforms,
+older CPU hardware or free-threaded Python.
 
 `KernGDWD` and `KernGDWDCV` accept
 `residual_check_order='refinement_first'` (the unchanged default) or `'adaptive'`.
@@ -39,9 +41,13 @@ Sampling, objective normalization and regularization are not performance knobs
 in this patch. Benchmark adoption of adaptive ordering requires a separate
 method identity; results obtained with different policies must not be mixed.
 
-Separate validation receipts record the candidate benchmarks. These bounded
-checks are not a completed MNIST search or a claim that all selectable historical
-modes have been re-proved correct.
+Separate validation receipts record the development-build benchmarks and source
+checks. These bounded checks are not a completed MNIST search or a claim that
+all selectable historical modes have been re-proved correct. The final
+development source suite passed 509 tests with three skips; native and portable
+wheel installations and eight checks from the extracted source archive also
+passed. Those receipts identify their tested artifacts; stable release artifacts
+are built and checked separately. No universal speedup is claimed.
 
 Public API repairs reject complex explicit linear and legacy-kernel starting
 coefficients before any lossy conversion. Linear prediction raises on nonfinite

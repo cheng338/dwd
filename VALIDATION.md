@@ -1,7 +1,10 @@
 # Validation
 
-For the current release, see the [1.3.8 change-by-change validation](docs/validation-1.3.8.md).
-It distinguishes fresh numerical checks from historical evidence and records runtime costs.
+For 1.3.9, see the [changes and validation scope](docs/candidate_changes.md)
+and [release notes](RELEASE_NOTES.md). Development-build evidence and stable
+artifact checks are distinct; a source pass does not certify a different binary.
+The [1.3.8 change-by-change validation](docs/validation-1.3.8.md) remains the
+historical record for that release, including its measured runtime costs.
 
 # DWD 1.3.5 source validation
 

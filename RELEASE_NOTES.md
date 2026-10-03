@@ -1,11 +1,47 @@
-DWD 1.3.8 repairs two numerical checks while preserving the generalized kernel DWD objective and unregularized intercept.
+# DWD 1.3.9 — October 3, 2026
 
-- Constrained-system acceptance now accounts for floating-point error in ordinary products and correction trials. Inconclusive cases can use bounded block products before existing compensated recovery.
-- Dual diagnostics now enforce exact signed mass balance and use conservative objective bounds. A valid weaker fallback prevents an unreliable diagnostic from falsely rejecting a fitted model.
-- Original-package repairs and retained recovery mechanisms are documented individually, with independent failure cases, regression evidence and remaining limits.
+This release improves numerical implementation, API validation and examples.
+The DWD objective, unregularized intercept, regularization convention and
+default stopping settings are unchanged.
 
-Local validation passed **467 native tests** and **458 portable tests**, with **9 expected native-only skips** and no failures. Six paired full-kernel MNIST regressions across 2 vs 3, 4 vs 9 and 3 vs 8 retained the same held-out labels and iteration counts.
+- Reuse a double-length product in the native residual evaluator while retaining
+  separate score and residual accumulators, strict floating-point arithmetic and
+  existing acceptance bounds. A zero-component fallback preserves signed-zero
+  behavior.
+- Target baseline x86-64 explicitly in Windows AMD64 Zig builds instead of
+  inheriting the build host's CPU features.
+- Add opt-in `residual_check_order='adaptive'` for eligible optimized,
+  unaccelerated Cholesky fits. The default remains `'refinement_first'` and
+  acceptance gates are unchanged. Optional ordering can change finite-iteration
+  results; it does not establish solver convergence.
+- Repair fitted-state cleanup in `KernelScaler` and public kernel initialization,
+  and avoid unnecessary intermediate underflow for tiny positive kernel
+  diagonals. Reject complex initial coefficients and nonfinite linear decision
+  scores explicitly.
+- Correct candidate-specific precomputed-kernel slicing in cross-validation
+  while retaining compatible fold preparation reuse.
+- Repair historical notebook and figure imports, retain both intended gamma
+  choices, remove duplicate fits, and include notebook fixtures and test build
+  dependencies in source distributions.
 
-The new checks have a measured cost: controlled full-kernel 2-vs-3 fits took approximately **2.1 times** the optimized pre-check baseline at 2,400 and 6,000 training rows. This is a correctness release, not a claimed speedup over that baseline. Default objective stopping and the 100-update limit per attempt are unchanged. Extreme valid problems can still exceed bounded numerical recovery capacity.
+Install a compatible wheel from the
+[GitHub release assets](https://github.com/cheng338/dwd/releases/tag/v1.3.9),
+or install this release checkout. The native wheel is
+`dwd-1.3.9-cp311-abi3-win_amd64.whl`; the portable alternative is
+`dwd-1.3.9-py3-none-any.whl`. These artifacts are distributed through GitHub,
+not PyPI. See the [installation instructions](README.md#installation).
 
-See the [validation and justification report](https://github.com/cheng338/dwd/blob/v1.3.8/docs/validation-1.3.8.md) for the evidence matrix, test protocols, timings and scope.
+Pre-release validation included independent arithmetic checks, baseline
+comparisons, bounded MNIST fits, source tests and installations of both wheel
+variants. It used conventional CPython 3.12 / Windows AMD64 with AOCL. Full
+MNIST search, other platforms, older CPU hardware and free-threaded Python were
+not validated by those checks. No universal speedup is claimed. See the
+[detailed changes and evidence scope](docs/candidate_changes.md).
+
+This is a fork of [slicersalt/dwd](https://github.com/slicersalt/dwd), originally
+implemented by Iain Carmichael with upstream maintenance by David Allemang and
+Kitware. Subsequent development of this fork is guided by Chang Cheng. Original
+credits and the MIT license are retained.
+
+The previous [1.3.8 release notes](docs/history/RELEASE_NOTES-1.3.8.md) are
+preserved separately.
