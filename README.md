@@ -1,13 +1,17 @@
-# Distance Weighted Discrimination 1.3.9
+# Overview
 
-Stable release, October 3, 2026. See the [1.3.9 changes and validation scope](docs/candidate_changes.md).
+This package implements Distance Weighted Discrimination (DWD) with a
+scikit-learn-style interface for fitting, prediction, and cross-validation.
+The methods follow Marron, Todd and Ahn (2007) and Wang and Zou (2018).
 
-`dwd` provides linear and kernel Distance Weighted Discrimination classifiers
-with sklearn-style fitting, prediction, and cross-validation. One package now
-offers a repaired reference kernel implementation and an optimized implementation.
-Both use the corrected DWD objective and update algebra. They differ in numerical
-computation and default initialization, so finite-budget fitted models can differ.
-See the [release notes](RELEASE_NOTES.md) for compatibility changes.
+The package implements:
+
+- Original linear DWD, solved with second-order cone programming (SOCP)
+  through the optional CVXPY dependency (`dwd.socp_dwd.DWD`).
+- Generalized linear DWD, solved with majorization-minimization (MM)
+  (`dwd.gen_dwd.GenDWD`).
+- Kernel generalized DWD, with reference and optimized MM implementations
+  (`dwd.gen_kern_dwd.KernGDWD`).
 
 This is a fork of [slicersalt/dwd](https://github.com/slicersalt/dwd), originally
 implemented by [Iain Carmichael](https://idc9.github.io/), with upstream maintenance
@@ -16,88 +20,15 @@ this fork is guided by [Chang Cheng](https://github.com/cheng338) and maintained
 at [cheng338/dwd](https://github.com/cheng338/dwd). Original credits and the
 [MIT license](LICENSE.txt) are retained.
 
-## Changes in 1.3.9
+Marron, J. S., Todd, M. J., and Ahn, J. (2007).
+[Distance-weighted discrimination](https://doi.org/10.1198/016214507000001120).
+*Journal of the American Statistical Association*, 102(480), 1267-1271.
 
-The native residual evaluator reuses a double-length product while preserving
-separate accumulators, signed-zero behavior and acceptance bounds. Windows AMD64
-Zig builds explicitly target baseline x86-64. API fixes cover failed scaler and
-kernel initialization, extreme scaling, complex initial coefficients, nonfinite
-linear predictions and candidate-specific precomputed-kernel CV slicing.
-Historical notebooks, figures and source-distribution fixtures are repaired.
+Wang, B., and Zou, H. (2018).
+[Another look at distance-weighted discrimination](https://doi.org/10.1111/rssb.12244).
+*Journal of the Royal Statistical Society: Series B*, 80(1), 177-198.
 
-`residual_check_order='adaptive'` is an opt-in numerical policy for eligible
-optimized, unaccelerated Cholesky fits. The default remains `'refinement_first'`.
-The objective, free intercept and stopping settings are unchanged; optional
-ordering can change finite-iteration results and is not a convergence guarantee.
-See the [release notes](RELEASE_NOTES.md) and [detailed scope](docs/candidate_changes.md).
-
-## Changes in 1.3.8
-
-Ordinary residual acceptance now accounts for floating-point evaluation error.
-Final dual diagnostics use explicitly feasible weights and conservative bounds.
-The objective, unregularized intercept and stopping defaults are unchanged.
-See the [change-by-change validation](docs/validation-1.3.8.md), including
-independent numerical checks, MNIST agreement and measured runtime cost.
-
-## Changes in 1.3.7
-
-Compensated residual checks reduce Python overhead by vectorizing the existing
-outward-rounded error bounds and using the optional compiled row evaluator for
-kernels with at least eight rows. Kernels below 2,048 rows use one worker without
-repeated thread-pool inspection. The arithmetic guards, acceptance thresholds,
-objective, unregularized intercept and stopping settings remain unchanged.
-See the [release notes](RELEASE_NOTES.md).
-
-## Changes in 1.3.6
-
-Internally generated RBF kernels recover from roundoff-induced asymmetry using
-consistent training and prediction construction. Supplied kernels and custom
-kernel outputs retain strict symmetry validation.
-
-Eligible optimized automatic MM fits can restart once through the spectral
-backend after constrained numerical recovery is exhausted. The original kernel,
-initialization, objective, unregularized intercept and stopping settings remain;
-the iteration cap applies per attempt, with discarded work reported separately.
-See the [kernel guide](docs/kernel_dwd.md) and [release notes](RELEASE_NOTES.md).
-
-## Changes in 1.3.5
-
-Failed fits now clear learned coefficients, class labels and other fitted state,
-including failures during a refit. Calling prediction after a failed fit raises
-`NotFittedError`; fitting valid data again restores normal use. This applies to
-linear and kernel DWD, their CV wrappers, the optional SOCP classifiers and
-kernel mean difference. Validated private precomputation caches remain reusable.
-See [the fitted-state contract](docs/failed_refit_state.md).
-
-A bounded intercept refinement and lazy anchor-coordinate LU recovery resolve
-reproduced MNIST ensemble fit failures at very small regularization and RBF
-coefficients. The original equation, coefficient-sum and RKHS acceptance checks
-remain unchanged. See the [intercept explanation](docs/intercept_midpoint_refinement.md),
-[anchor recovery equations](docs/anchor_linear_system.md), and
-[release notes](RELEASE_NOTES.md) for the validation scope and remaining limits.
-
-## Changes in 1.3.4
-
-An optional compiled residual checker avoids repeated Python list conversion
-and evaluates independent kernel rows in parallel. It preserves the existing
-compensated arithmetic, numerical acceptance bounds, objective, free intercept,
-and stopping settings. It respects the active BLAS thread limit, including
-one-thread GridSearchCV workers, without copying the dense kernel per worker.
-
-On the saved 12,089-row MNIST 2-versus-3 configuration, a fresh 100-update fit
-took 47.12 seconds, compared with the previous 377.39-second median. Its fitted
-coefficients, intercept, objective history, preprocessing and prediction probes
-were bitwise identical to the saved model. This is a scoped workload result;
-ordinary fits that do not need compensated checks may see little change.
-
-The accelerated wheel contains a small optional C extension with no NumPy C API.
-Source builds use a local compiler when available; the existing Python checker
-remains available when compilation or loading is unavailable. The current native
-screen remains guarded to audited CPython 3.12 arithmetic. See
-[build and runtime details](docs/compiled_residual.md), [release notes](RELEASE_NOTES.md),
-and [validation](VALIDATION.md). The previous 1.3.3 repair remains intact.
-
-## Installation
+# Installation
 
 Python 3.11+ and scikit-learn 1.6+ are required. The base package depends on
 NumPy, SciPy, scikit-learn, and threadpoolctl. Download a compatible wheel from
@@ -136,7 +67,13 @@ artifacts are distributed through GitHub, not PyPI. Installing `dwd` by name
 from PyPI may retrieve a different upstream release. See
 [VALIDATION.md](VALIDATION.md) for the tested environments and evidence scope.
 
-## Kernel DWD
+# Kernel DWD
+
+Kernel DWD provides a repaired reference implementation and an optimized
+implementation. Both use the corrected DWD objective and update algebra, but
+differ in numerical computation and default initialization; their finite-budget
+fitted models can differ. See the [release notes](RELEASE_NOTES.md) for
+compatibility changes.
 
 ```python
 from sklearn.datasets import make_circles
@@ -239,7 +176,7 @@ a fixed update budget, as observed in the development comparisons, so ordinary
 MM remains the default. Compare acceleration and stopping through an external
 validation procedure when predictive performance is the goal.
 
-## Explicit parameter search
+# Explicit parameter search
 
 Keep preprocessing inside the CV pipeline. Gamma remains an entry in
 `kernel_kws`, so tune whole dictionaries rather than `kernel_kws__gamma`:
@@ -269,7 +206,7 @@ preparation across lambda values. Generic GridSearchCV clones estimators and doe
 not automatically share that cache. An external ensemble or support-selection
 method should cross-validate its complete training procedure and final predictor.
 
-## Linear classifiers and SOCP
+# Linear classifiers and SOCP
 
 `dwd.gen_dwd.GenDWD` provides generalized linear DWD with corrected/default or
 explicit historical algebra and objective/fixed/optimality stopping. Its linear
@@ -287,7 +224,7 @@ It preserves vectorized constraints, solver-status checks, and the unregularized
 intercept. Its finite `optimal_inaccurate` results are accepted with CVXPY's
 warning; that status does not certify a requested residual tolerance.
 
-## Supported boundaries and tests
+# Supported boundaries and tests
 
 Sample weights remain explicitly unsupported. Kernel `implicit_P=False` and
 `KernMD(naive_bayes=True)` also raise explicitly. Dense kernel calculations may
@@ -312,3 +249,88 @@ they have not been relabeled as new release results.
 Background: Marron, Todd and Ahn (2007), *Distance-weighted discrimination*;
 Wang and Zou (2018), *Another look at distance-weighted discrimination*,
 [DOI 10.1111/rssb.12244](https://doi.org/10.1111/rssb.12244).
+
+# Release history
+
+Stable release, October 3, 2026. See the [1.3.9 changes and validation scope](docs/candidate_changes.md).
+
+## Changes in 1.3.9
+
+The native residual evaluator reuses a double-length product while preserving
+separate accumulators, signed-zero behavior and acceptance bounds. Windows AMD64
+Zig builds explicitly target baseline x86-64. API fixes cover failed scaler and
+kernel initialization, extreme scaling, complex initial coefficients, nonfinite
+linear predictions and candidate-specific precomputed-kernel CV slicing.
+Historical notebooks, figures and source-distribution fixtures are repaired.
+
+`residual_check_order='adaptive'` is an opt-in numerical policy for eligible
+optimized, unaccelerated Cholesky fits. The default remains `'refinement_first'`.
+The objective, free intercept and stopping settings are unchanged; optional
+ordering can change finite-iteration results and is not a convergence guarantee.
+See the [release notes](RELEASE_NOTES.md) and [detailed scope](docs/candidate_changes.md).
+
+## Changes in 1.3.8
+
+Ordinary residual acceptance now accounts for floating-point evaluation error.
+Final dual diagnostics use explicitly feasible weights and conservative bounds.
+The objective, unregularized intercept and stopping defaults are unchanged.
+See the [change-by-change validation](docs/validation-1.3.8.md), including
+independent numerical checks, MNIST agreement and measured runtime cost.
+
+## Changes in 1.3.7
+
+Compensated residual checks reduce Python overhead by vectorizing the existing
+outward-rounded error bounds and using the optional compiled row evaluator for
+kernels with at least eight rows. Kernels below 2,048 rows use one worker without
+repeated thread-pool inspection. The arithmetic guards, acceptance thresholds,
+objective, unregularized intercept and stopping settings remain unchanged.
+See the [release notes](RELEASE_NOTES.md).
+
+## Changes in 1.3.6
+
+Internally generated RBF kernels recover from roundoff-induced asymmetry using
+consistent training and prediction construction. Supplied kernels and custom
+kernel outputs retain strict symmetry validation.
+
+Eligible optimized automatic MM fits can restart once through the spectral
+backend after constrained numerical recovery is exhausted. The original kernel,
+initialization, objective, unregularized intercept and stopping settings remain;
+the iteration cap applies per attempt, with discarded work reported separately.
+See the [kernel guide](docs/kernel_dwd.md) and [release notes](RELEASE_NOTES.md).
+
+## Changes in 1.3.5
+
+Failed fits now clear learned coefficients, class labels and other fitted state,
+including failures during a refit. Calling prediction after a failed fit raises
+`NotFittedError`; fitting valid data again restores normal use. This applies to
+linear and kernel DWD, their CV wrappers, the optional SOCP classifiers and
+kernel mean difference. Validated private precomputation caches remain reusable.
+See [the fitted-state contract](docs/failed_refit_state.md).
+
+A bounded intercept refinement and lazy anchor-coordinate LU recovery resolve
+reproduced MNIST ensemble fit failures at very small regularization and RBF
+coefficients. The original equation, coefficient-sum and RKHS acceptance checks
+remain unchanged. See the [intercept explanation](docs/intercept_midpoint_refinement.md),
+[anchor recovery equations](docs/anchor_linear_system.md), and
+[release notes](RELEASE_NOTES.md) for the validation scope and remaining limits.
+
+## Changes in 1.3.4
+
+An optional compiled residual checker avoids repeated Python list conversion
+and evaluates independent kernel rows in parallel. It preserves the existing
+compensated arithmetic, numerical acceptance bounds, objective, free intercept,
+and stopping settings. It respects the active BLAS thread limit, including
+one-thread GridSearchCV workers, without copying the dense kernel per worker.
+
+On the saved 12,089-row MNIST 2-versus-3 configuration, a fresh 100-update fit
+took 47.12 seconds, compared with the previous 377.39-second median. Its fitted
+coefficients, intercept, objective history, preprocessing and prediction probes
+were bitwise identical to the saved model. This is a scoped workload result;
+ordinary fits that do not need compensated checks may see little change.
+
+The accelerated wheel contains a small optional C extension with no NumPy C API.
+Source builds use a local compiler when available; the existing Python checker
+remains available when compilation or loading is unavailable. The current native
+screen remains guarded to audited CPython 3.12 arithmetic. See
+[build and runtime details](docs/compiled_residual.md), [release notes](RELEASE_NOTES.md),
+and [validation](VALIDATION.md). The previous 1.3.3 repair remains intact.
