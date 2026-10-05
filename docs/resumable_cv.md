@@ -85,6 +85,18 @@ checkpoints are not silently treated as a new run. You may change `jobs` or
 before new CV fitting; it is not silently dropped. Source and runtime files
 must remain unchanged while the process is running.
 
+The runtime identity records the compiled accelerator's availability at startup,
+native-screen support and, when loaded, the extension's path and file hash.
+Different startup states cannot share checkpoints even when the package files
+are identical. The extension must belong to the identified DWD installation.
+Runs without the optional compiled accelerator can still resume when their
+recorded runtime matches.
+
+Checkpoints created before these accelerator fields were added cannot be resumed
+with the updated example. Start a new run directory, or use the matching old
+example and runtime to resume the earlier run; missing fields are not inferred
+or migrated.
+
 The run directory contains `identity.json`, `generation.json` and completed
 evaluations under `receipts/fold-0000/candidate-000000.json`, with zero-based
 fold and candidate indices. Process locks prevent concurrent invocations from

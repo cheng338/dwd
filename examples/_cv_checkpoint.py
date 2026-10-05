@@ -16,6 +16,7 @@ from pathlib import Path
 import platform
 import sys
 import threading
+import types
 import uuid
 
 import numpy as np
@@ -27,6 +28,7 @@ _HASH_LOCK = threading.RLock()
 _RUNTIME_FILES = _RUNTIME_PACKAGE_FILES = _RUNTIME_PACKAGES = None
 _RUNTIME_MODULES = _RUNTIME_DIGEST = _RUNTIME_NATIVE = None
 _RUNTIME_ACCELERATOR = _RUNTIME_CONTROLLER = _RUNTIME_MODULE_COUNT = None
+_RUNTIME_ACCELERATOR_IDENTITY = None
 _RUNTIME_GUARDS = set()
 _RESOLVED_PATHS = {}
 
@@ -371,6 +373,36 @@ def _loaded_source_guards():
             _RUNTIME_GUARDS.add(path)
 
 
+def _accelerator_identity(accelerator, native_supported, files, package_root):
+    """Identify the observed extension binding within the frozen DWD inventory."""
+    identity = {'available': accelerator is not None,
+                'native_screen_supported': bool(native_supported),
+                'artifact': None, 'sha256': None}
+    if accelerator is None:
+        return identity
+    if not isinstance(accelerator, types.ModuleType) or not callable(getattr(accelerator, 'evaluate', None)):
+        raise CheckpointError('Loaded accelerator identity is unavailable')
+    origin = getattr(accelerator, '__file__', None)
+    if not isinstance(origin, (str, os.PathLike)) or not origin:
+        raise CheckpointError('Loaded accelerator origin is unavailable')
+    try:
+        origin = Path(origin).resolve(strict=True)
+        package_root = Path(package_root).absolute()
+        matches = []
+        for filename, sha256 in files.items():
+            path = Path(filename)
+            if (path.is_relative_to(package_root)
+                    and (path.suffix.lower() in ('.pyd', '.dll', '.so', '.dylib') or '.so.' in path.name)
+                    and path.resolve() == origin):
+                matches.append((str(path), sha256))
+    except (OSError, ValueError) as error:
+        raise CheckpointError('Loaded accelerator artifact is unavailable') from error
+    if len(matches) != 1:
+        raise CheckpointError('Loaded accelerator is outside the identified DWD artifacts or is ambiguous')
+    identity['artifact'], identity['sha256'] = matches[0]
+    return identity
+
+
 def runtime_fingerprint(*, check_inventory=True):
     """Hash once, check complete inventory per stage and core/native guards per fit.
 
@@ -381,7 +413,7 @@ def runtime_fingerprint(*, check_inventory=True):
     """
     global _RUNTIME_FILES, _RUNTIME_PACKAGE_FILES, _RUNTIME_PACKAGES, _RUNTIME_MODULES
     global _RUNTIME_DIGEST, _RUNTIME_NATIVE, _RUNTIME_ACCELERATOR
-    global _RUNTIME_CONTROLLER, _RUNTIME_MODULE_COUNT
+    global _RUNTIME_CONTROLLER, _RUNTIME_MODULE_COUNT, _RUNTIME_ACCELERATOR_IDENTITY
     from dwd import _compiled_residual, _native_residual
     import scipy.linalg  # Load numerical dependencies before observing thread pools.
     deep = check_inventory or _RUNTIME_PACKAGE_FILES is None
@@ -426,6 +458,10 @@ def runtime_fingerprint(*, check_inventory=True):
         if _RUNTIME_PACKAGE_FILES is not None and files != _RUNTIME_PACKAGE_FILES:
             raise CheckpointError('Numerical package inventory changed; restart before resuming')
         _RUNTIME_PACKAGE_FILES = dict(files)
+    if _RUNTIME_ACCELERATOR_IDENTITY is None:
+        _RUNTIME_ACCELERATOR_IDENTITY = _accelerator_identity(
+            _RUNTIME_ACCELERATOR[0], _RUNTIME_ACCELERATOR[1],
+            _RUNTIME_PACKAGE_FILES, Path(packages['dwd']['origin']).parent)
     _loaded_source_guards()
     for path in _RUNTIME_GUARDS:
         _file_hash(path)
@@ -458,6 +494,7 @@ def runtime_fingerprint(*, check_inventory=True):
         raise CheckpointError('Loaded runtime inventory changed in this process; restart before resuming')
     return {'python': sys.version, 'implementation': platform.python_implementation(),
             'machine': platform.machine(), 'packages': packages,
+            'accelerator': dict(_RUNTIME_ACCELERATOR_IDENTITY),
             'files_sha256': _RUNTIME_DIGEST, 'file_count': len(files),
             'native_pools': sorted(pools, key=lambda row: row['filepath'])}
 

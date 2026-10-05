@@ -8,6 +8,12 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
 ## Unreleased
 
+- Record startup accelerator availability, native-screen support and the loaded
+  extension's path and hash in resumable CV checkpoint identities. Reject
+  incompatible startup states and unidentified extension bindings before fitting.
+  Existing checkpoints without this information require the matching old example
+  and runtime, or a new run directory with the updated example. Estimator
+  mathematics, CV selection and fitting are unchanged.
 - Recover representable DWD objectives when summing finite losses or adding a
   penalty before averaging overflows. Preserve ordinary arithmetic in linear,
   legacy kernel, corrected kernel and accelerated proposal evaluations. Keep
