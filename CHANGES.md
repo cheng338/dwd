@@ -6,6 +6,21 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 1.3.10 — 2026-10-05
+
+- Batch dense rows requiring accurate score evaluation in bounded groups,
+  preserving elementwise arithmetic and each row's summation order. Retain
+  row-wise evaluation for sparse inputs, wider floating dtypes and allocation
+  fallback; leave precision selection and estimator defaults unchanged.
+- Add a fixed-grid binary kernel DWD tuning example that saves completed
+  candidate/fold evaluations, verifies checkpoint compatibility before reuse,
+  and optionally runs folds in parallel. Retain within-fold matrix preparation,
+  scoring and candidate selection; final fitting remains fresh. The estimator
+  mathematics and existing `run_cv` API are unchanged.
+- Reuse coefficient preparation within each dense accurate score call. Keep
+  product arithmetic, summation order, numerical validation and sparse scoring
+  unchanged; prepare nothing when adaptive scoring needs no expanded rows.
+
 ## 1.3.9 — 2026-10-03
 
 - Reuse the native residual core's double-length product across separate score

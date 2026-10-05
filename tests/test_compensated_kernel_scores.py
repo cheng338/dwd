@@ -171,9 +171,9 @@ class CompensatedKernelScoreTests(unittest.TestCase):
         import dwd._kernel_scores as scores
         original = scores._expanded_row
         rows = []
-        def observed(K, alpha, sparse, i):
+        def observed(K, alpha, sparse, i, **kwargs):
             rows.append(i)
-            return original(K, alpha, sparse, i)
+            return original(K, alpha, sparse, i, **kwargs)
         query = np.array([[1., 0., 0.], [1., 1., 1.], [0., 2., 0.]])
         with patch.object(scores, '_expanded_row', side_effect=observed):
             assert_array_equal(adaptive_kernel_matvec(query, self.alpha), [1e16, 1., 2.])

@@ -41,29 +41,54 @@ REPORT=dict(no_MNIST_fits=True,no_official_test_reads=True,
 def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 class Controls(unittest.TestCase):
-    def paired_scores(self,K,alpha,name):
-        records=[]
-        for module in (old_scores,new_scores):
-            expanded=[];fast=[];original=module._expanded_row
-            def row(*args):expanded.append(args[-1]);return original(*args)
-            if module is new_scores:
-                tier=module._dense_first_tier
+    def paired_scores(self, K, alpha, name):
+        records = []
+        for score_module in (old_scores, new_scores):
+            expanded, fast, inside_batch = [], [], [False]
+            original_row = score_module._expanded_row
+            def row(*args, **kwargs):
+                if not inside_batch[0]:
+                    expanded.append(args[-1])
+                return original_row(*args, **kwargs)
+            if score_module is new_scores:
+                original_batch = score_module._expanded_dense_rows
+                def rows(K, alpha, indices, *args, **kwargs):
+                    expanded.extend(int(index) for index in indices)
+                    prior = inside_batch[0]
+                    inside_batch[0] = True
+                    try:
+                        return original_batch(K, alpha, indices, *args, **kwargs)
+                    finally:
+                        inside_batch[0] = prior
+                tier = score_module._dense_first_tier
                 def capture(*args):
-                    value=tier(*args);fast.append(bool(np.all(value)));return value
-                with patch.object(module,'_dense_first_tier',side_effect=capture),patch.object(module,'_expanded_row',side_effect=row):
-                    result=module.adaptive_kernel_matvec(K,alpha)
+                    value = tier(*args)
+                    fast.append(bool(np.all(value)))
+                    return value
+                with patch.object(score_module, '_dense_first_tier', side_effect=capture), patch.object(
+                        score_module, '_expanded_row', side_effect=row), patch.object(
+                        score_module, '_expanded_dense_rows', side_effect=rows):
+                    result = score_module.adaptive_kernel_matvec(K, alpha)
             else:
-                with patch.object(module,'_expanded_row',side_effect=row):result=module.adaptive_kernel_matvec(K,alpha)
-            records.append((result,expanded,fast))
-        # Compare real old/new routes, not a restatement of the new formula.
-        np.testing.assert_array_equal(records[0][0],records[1][0])
-        self.assertEqual(records[0][1],records[1][1])
-        fast_rows=set()
-        for block,good in enumerate(records[1][2]):
-            if good:fast_rows.update(range(128*block,min(128*(block+1),K.shape[0])))
+                with patch.object(score_module, '_expanded_row', side_effect=row):
+                    result = score_module.adaptive_kernel_matvec(K, alpha)
+            records.append((result, expanded, fast))
+        # Preserve the historical output, exact routing and first-tier checks.
+        np.testing.assert_array_equal(records[0][0], records[1][0])
+        self.assertEqual(records[0][0].dtype, records[1][0].dtype)
+        self.assertEqual(records[0][0].shape, records[1][0].shape)
+        self.assertEqual(records[0][0].tobytes(), records[1][0].tobytes())
+        self.assertEqual(records[0][1], records[1][1])
+        fast_rows = set()
+        for block, good in enumerate(records[1][2]):
+            if good:
+                fast_rows.update(range(128*block, min(128*(block+1), K.shape[0])))
         self.assertFalse(fast_rows.intersection(records[0][1]))
-        REPORT['score_cases'].append(dict(name=name,rows=K.shape[0],columns=K.shape[1],
-            expanded_rows=records[0][1],first_tier_blocks=records[1][2],bitwise_and_routing_equal=True))
+        REPORT['score_cases'].append(dict(
+            name=name, rows=K.shape[0], columns=K.shape[1],
+            expanded_rows=records[0][1], first_tier_blocks=records[1][2],
+            bitwise_and_routing_equal=True))
+
 
     def test_dense_layouts_signed_scales_and_mutated_alpha(self):
         rng=np.random.RandomState(914)

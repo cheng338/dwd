@@ -384,9 +384,28 @@ product is accepted per row only when a conservative estimate is no larger than
 and gradual underflow; an overflowing estimate sends that row to expanded
 products instead of rejecting a potentially finite cancellation result.
 Uncertain rows use high/low products with accurate summation. CSR duplicate
-entries count as their separate stored contributions. Temporary product storage
-is at most O(128 * n_training), or O(n_training) for one expanded row; there is
-no full query-by-training product temporary beyond the query kernel itself.
+entries count as their separate stored contributions. Expanded-product storage
+is O(n_training); adaptive screening retains its existing block of at most 128
+query rows.
+
+Dense score evaluation prepares the coefficients' high/low split once per
+helper call, when the first expanded row is needed. The preparation is reused
+only within that call; it is not stored on the fitted model or shared between
+prediction batches. Product arithmetic, summation order and per-row numerical
+validation remain unchanged. Empty queries and adaptive calls whose ordinary
+scores all pass need no split; sparse rows retain their existing evaluation.
+
+Dense rows requiring expanded evaluation are automatically grouped in batches
+of at most eight. Each row retains the same elementwise product arithmetic and
+high-then-low `math.fsum` term order. A conservative 1 MiB allowance sizes the
+product-array batches; it is not a hard cap on temporary memory or process RSS.
+Batch size decreases as the number of training coefficients grows; above 4,096
+coefficients, evaluation remains row by row. Sparse inputs, single-row
+evaluations and floating dtypes wider than 64 bits also retain the row-wise path.
+If allocation fails, batch arrays are released before retrying row by row, and
+batching is disabled for the rest of that helper call. An allocation failure in
+the row-wise retry still propagates. This adds no option and leaves precision
+selection, estimator defaults and DWD mathematics unchanged.
 
 If the fit requires fully compensated original-kernel reconstruction, all later
 query rows use that policy. The ordinary/adaptive product and the fully

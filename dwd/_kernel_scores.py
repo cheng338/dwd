@@ -1,13 +1,14 @@
 """Accurate original-kernel score evaluation for cancellation-prone models.
 
 This changes matrix-vector evaluation, never the kernel, coefficients or
-intercept. Row-wise high/low products plus fsum use O(n_training) temporary
-storage; no dense product matrix or extended-precision dtype is required.
+intercept. Bounded tiles of high/low products retain each row's fsum order.
+Temporary storage remains O(n_training); no full extra kernel-sized product
+matrix or extended-precision dtype is required.
 """
 import numpy as np
 from scipy.sparse import issparse
 
-from ._compensated_residual import _gradual_underflow, _products, _fsum
+from ._compensated_residual import _gradual_underflow, _products, _fsum, _split_operand
 
 
 def _inputs(K, alpha):
@@ -33,15 +34,79 @@ def _inputs(K, alpha):
     return K, alpha, sparse
 
 
-def _expanded_row(K, alpha, sparse, i):
+def _expanded_row(K, alpha, sparse, i, *, _split_b=None):
     if sparse:
         start, stop = K.indptr[i:i+2]
         row = K.data[start:stop]
         coefficients = alpha[K.indices[start:stop]]
     else:
         row, coefficients = K[i], alpha
-    high, low = _products(row, coefficients)
+    if sparse or _split_b is None:
+        high, low = _products(row, coefficients)
+    else:
+        high, low = _products(row, coefficients, _split_b=_split_b)
     return _fsum(high.tolist() + low.tolist())
+
+
+
+# Bound the extra product-array work. The byte allowance conservatively accounts
+# for elementwise temporaries; per-row Python summation storage remains O(n).
+_SCORE_TILE_BYTES = 1024 * 1024
+_SCORE_TILE_MAX_ROWS = 8
+
+
+def _expanded_dense_rows(K, alpha, indices, split_alpha, result, *, batch_enabled=True):
+    """Evaluate selected rows in order, with bounded temporary dense products.
+
+    Elementwise products and each row's fsum term order are unchanged. If a
+    tile fails, retry its rows in the original sequence: a later product error
+    must not replace an earlier row's summation error. Allocation failure also
+    disables batching for the remaining rows in this call.
+    """
+    # Wider floating dtypes can warn or fail when cast to binary64. Keep
+    # their original row-by-row conversion and error ordering on all platforms.
+    if K.dtype.kind == 'f' and K.dtype.itemsize > 8:
+        batch_enabled = False
+    capacity = min(_SCORE_TILE_MAX_ROWS,
+                   max(1, _SCORE_TILE_BYTES // (128 * len(alpha))))
+    position = 0
+    while position < len(indices):
+        stop = min(position + (capacity if batch_enabled else 1), len(indices))
+        if stop - position < 2:
+            index = int(indices[position])
+            result[index] = _expanded_row(K, alpha, False, index, _split_b=split_alpha)
+            position = stop
+            continue
+        tile = high = low = coefficients = None
+        fallback = False
+        try:
+            selected = indices[position:stop]
+            tile = np.asarray(K[selected], dtype=float)
+            coefficients = np.broadcast_to(alpha, tile.shape)
+            high, low = _products(tile, coefficients, _split_b=split_alpha)
+        except (MemoryError, FloatingPointError):
+            fallback = True
+        if not fallback:
+            try:
+                for local, index in enumerate(selected):
+                    result[int(index)] = _fsum(high[local].tolist() + low[local].tolist())
+            except MemoryError:
+                fallback = True
+        if fallback:
+            # Release large tile buffers before attempting the original path.
+            # Leave the exception handler first, so its traceback releases
+            # product temporaries as well. Numerical summation errors above
+            # propagate directly in the original row order.
+            # Retrying successful earlier rows is deterministic and does not
+            # expose partial results outside this helper's owner.
+            tile = high = low = coefficients = None
+            batch_enabled = False
+            for index in indices[position:stop]:
+                index = int(index)
+                result[index] = _expanded_row(K, alpha, False, index, _split_b=split_alpha)
+        tile = high = low = coefficients = None
+        position = stop
+    return batch_enabled
 
 
 def compensated_kernel_matvec(K, alpha):
@@ -54,8 +119,18 @@ def compensated_kernel_matvec(K, alpha):
     """
     K, alpha, sparse = _inputs(K, alpha)
     result = np.empty(K.shape[0], dtype=float)
+    split_alpha = None
+    if not sparse and K.shape[0] > 1:
+        with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+            split_alpha = _split_operand(alpha)
+        _expanded_dense_rows(K, alpha, range(K.shape[0]), split_alpha, result)
+        return result
     for i in range(K.shape[0]):
-        result[i] = _expanded_row(K, alpha, sparse, i)
+        if not sparse and split_alpha is None:
+            # The same dense coefficients serve every row in this call.
+            with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+                split_alpha = _split_operand(alpha)
+        result[i] = _expanded_row(K, alpha, sparse, i, _split_b=split_alpha)
     return result
 
 
@@ -119,6 +194,8 @@ def adaptive_kernel_matvec(K, alpha):
     magnitude = np.abs(alpha)
     coefficient_upper = None if sparse else _dense_l1_upper(magnitude)
     cheap_enabled = not sparse
+    split_alpha = None
+    batch_enabled = True
     eps = np.finfo(float).eps
     eta = float(np.nextafter(0., 1.))
     for start in range(0, K.shape[0], 128):
@@ -162,7 +239,20 @@ def adaptive_kernel_matvec(K, alpha):
         reliable = (np.isfinite(scores[start:stop]) & np.isfinite(bound)
                     & (denominator > 0) & (sum_denominator > 0)
                     & (absolute_sum >= 0) & (bound <= threshold))
-        for local in np.flatnonzero(~reliable):
+        uncertain = np.flatnonzero(~reliable)
+        if not sparse and len(uncertain) > 1:
+            if split_alpha is None:
+                with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+                    split_alpha = _split_operand(alpha)
+            batch_enabled = _expanded_dense_rows(
+                K, alpha, start + uncertain, split_alpha, scores,
+                batch_enabled=batch_enabled)
+            continue
+        for local in uncertain:
             index = start+int(local)
-            scores[index] = _expanded_row(K, alpha, sparse, index)
+            if not sparse and split_alpha is None:
+                # Prepare only when an accurate dense row is first needed.
+                with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+                    split_alpha = _split_operand(alpha)
+            scores[index] = _expanded_row(K, alpha, sparse, index, _split_b=split_alpha)
     return scores

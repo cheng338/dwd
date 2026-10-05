@@ -1,0 +1,15 @@
+{
+  "description": "Frozen row-wise score helper and product primitives immediately before bounded dense score batching. Test-only sources; never imported by package runtime.",
+  "source": "Retained DWD implementation reviewed before application on 2026-10-05.",
+  "validation": "Verify sha256_lf after replacing CRLF by LF, permitting normal checkout line-ending conversion without changing source text. source_sha256 records the original retained bytes.",
+  "files": {
+    "_kernel_scores.py": {
+      "source_sha256": "ae272b0e4002271512880bbc0933f0f16a5c291b738a94d0c92936d228fbc9fe",
+      "sha256_lf": "dfe6c0ce60c23284476ebcf968c1da51dc014fffbf182ae6be912612369e5212"
+    },
+    "_compensated_residual.py": {
+      "source_sha256": "c96f91ce4f9551db4b03a4dc653300c180e05ab6f64e4a8266a8eb3e36e7c9c8",
+      "sha256_lf": "71ee9a20547c9a7bccc8ad44d74aad0dc4f57fe8763a2aadd5dc28e91c3acee2"
+    }
+  }
+}
