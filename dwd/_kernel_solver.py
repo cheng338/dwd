@@ -10,6 +10,7 @@ from types import MappingProxyType
 from math import fsum
 
 import numpy as np
+from ._objective_mean import objective_mean as _objective_mean
 from scipy.linalg import cho_factor, cho_solve, eigh, LinAlgError
 from scipy.linalg.lapack import dpocon
 from scipy.optimize import minimize
@@ -180,7 +181,7 @@ def optimality_diagnostics(K, y, alpha, offset, lambd, q, *, scores=None):
     margins = y * (scores + offset)
     norm2 = _nonnegative_quadratic(float(alpha @ scores),
                                   float(np.sum(np.abs(alpha * scores))), 'RKHS norm squared')
-    primal = float(np.mean(V(margins, q=q)) + lambd * norm2)
+    primal = float(_objective_mean(V(margins, q=q), lambd * norm2, inside=False))
     z = y * V_grad(margins, q=q) / n
     coefficient_residual = z + 2 * lambd * alpha
     gradient_alpha = K @ z + 2 * lambd * scores
@@ -394,7 +395,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
             try:
                 norm = _nonnegative_quadratic(float(coefficients @ checked),
                     float(np.sum(np.abs(coefficients * checked))), 'original RKHS norm squared')
-                value = float(np.mean(V(y * (checked + b), q=q)) + lambd * norm)
+                value = float(_objective_mean(
+                    V(y * (checked + b), q=q), lambd * norm, inside=False))
                 objective_drift = float(value - expected_value)
                 good = (np.isfinite(value) and np.isfinite(objective_drift)
                         and abs(objective_drift) <= 5e-8 * max(1., abs(value)))
@@ -413,7 +415,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     def objective():
         norm2 = (initial_quadratic if iteration == 0 else
                  float(c @ (values * c)) if c is not None else float(alpha @ scores))
-        value = float(np.mean(V(y * (scores + offset), q=q)) + lambd * norm2)
+        value = float(_objective_mean(
+            V(y * (scores + offset), q=q), lambd * norm2, inside=False))
         if not np.isfinite(value) or not np.isfinite(offset) or not np.isfinite(scores).all():
             raise FloatingPointError('Nonfinite kernel DWD objective or state.')
         return value
@@ -574,7 +577,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                 b, w = theta[0], theta[1:]
                 g = U @ (sqrt_values * w)
                 z = y * V_grad(y * (g + b), q=q) / n
-                value = float(np.mean(V(y * (g + b), q=q)) + lambd * (w @ w))
+                value = float(_objective_mean(
+                    V(y * (g + b), q=q), lambd * (w @ w), inside=False))
                 gradient = np.r_[z.sum(), sqrt_values * (U.T @ z) + 2 * lambd * w]
                 if not np.isfinite(value) or not np.isfinite(gradient).all():
                     raise FloatingPointError('Nonfinite L-BFGS objective or gradient.')

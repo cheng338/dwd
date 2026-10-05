@@ -6,6 +6,7 @@ remain the responsibility of the selected, independently verified system.
 import math
 
 import numpy as np
+from ._objective_mean import objective_mean as _objective_mean
 
 from .gen_dwd import V, V_grad
 
@@ -46,8 +47,9 @@ class RestartedMM:
                 scores = self.system.last_product.copy()
             else:
                 alpha, offset, scores = self.proximal_step(rhs)
-            value = float(np.mean(V(self.y * (scores + offset), q=self.q))
-                          + self.lambd * (alpha @ scores))
+            value = float(_objective_mean(
+                V(self.y * (scores + offset), q=self.q),
+                self.lambd * (alpha @ scores), inside=False))
         if not np.isfinite(value) or not np.isfinite(scores).all() or not np.isfinite(offset):
             raise FloatingPointError('Nonfinite accelerated kernel MM proposal.')
         return alpha, float(offset), scores, value

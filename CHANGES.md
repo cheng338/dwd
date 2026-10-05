@@ -6,6 +6,15 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## Unreleased
+
+- Recover representable DWD objectives when summing finite losses or adding a
+  penalty before averaging overflows. Preserve ordinary arithmetic in linear,
+  legacy kernel, corrected kernel and accelerated proposal evaluations. Keep
+  loss hooks, gradients, the unregularized intercept, solver updates and
+  acceptance thresholds unchanged; reject nonfinite inputs and objectives
+  outside floating-point range.
+
 ## 1.3.10 — 2026-10-05
 
 - Batch dense rows requiring accurate score evaluation in bounded groups,

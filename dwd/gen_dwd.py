@@ -1,4 +1,5 @@
 import numpy as np
+from dwd._objective_mean import objective_mean as _objective_mean
 from dwd._eigen import validated_eigh
 from dwd._fit_state import fit_with_cleanup
 from numbers import Real
@@ -703,7 +704,8 @@ def dwd_obj(X, y, q, lambd, beta, offset, X_beta=None):
     """
     if X_beta is None:
         X_beta = X.dot(beta)
-    return np.mean(V(y * (X_beta + offset), q=q) + lambd * beta.dot(beta))
+    return _objective_mean(V(y * (X_beta + offset), q=q),
+                           lambd * beta.dot(beta), inside=True)
 
 
 def c_from_lambd(lambd, q, beta):

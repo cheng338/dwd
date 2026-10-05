@@ -1,4 +1,5 @@
 import numpy as np
+from dwd._objective_mean import objective_mean as _objective_mean
 from scipy.linalg import eigh
 from copy import deepcopy
 from numbers import Integral, Real
@@ -971,8 +972,8 @@ def kern_dwd_obj(K, y, q, lambd, alpha, offset, K_alpha=None):
     """
     if K_alpha is None:
         K_alpha = K.dot(alpha)
-    return np.mean(V(y * (K_alpha + offset), q=q) +
-                   lambd * alpha.T.dot(K_alpha))
+    return _objective_mean(V(y * (K_alpha + offset), q=q),
+                           lambd * alpha.T.dot(K_alpha), inside=True)
 
 
 def c_from_lambd(K, lambd, q, alpha, K_alpha=None):
