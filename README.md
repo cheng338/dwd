@@ -273,10 +273,12 @@ A separate resumable kernel DWD tuning example saves verified completed folds an
 always performs a fresh final fit. The existing `run_cv` API, objective, free
 intercept and solver defaults are unchanged.
 
-Performance gains are specific to affected prediction workloads. The validation
-also retains an unresolved full-kernel timing slowdown and an extreme-input
-training-query compatibility qualification for the new example. See the
-[validation scope](docs/validation-1.3.10.md) and [example guide](docs/resumable_cv.md).
+Performance gains are specific to affected prediction workloads. Follow-up tests
+identified concurrent work in the original full-kernel timing comparison and
+found no persistent package regression. The validation retains the historical
+measurements and an extreme-input training-query compatibility qualification
+for the new example. See the [validation scope](docs/validation-1.3.10.md) and
+[example guide](docs/resumable_cv.md).
 
 ## Changes in 1.3.9
 

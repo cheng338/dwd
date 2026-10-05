@@ -26,14 +26,40 @@ or a universal accuracy guarantee.
 
 ## Performance limits
 
-In the paired study comparison, ensemble DWD warm prediction mean time improved
-19.69% on digits 2 versus 3 and 12.76% across all 30 ensemble DWD cases. Fitting
-speed did not show an established improvement. Nine full-kernel cases were
-1.59% slower to fit and 1.57% slower to predict; the cause remains unresolved and
-the stated 2% non-regression bound was not established. A narrower same-model
-readout follow-up did not reproduce that slowdown. The primary observations
-remain part of the evidence. These are workload-specific results, not a promise
-of improvement on every dataset or machine.
+In the original paired study comparison, ensemble DWD warm prediction mean time
+improved 19.69% on digits 2 versus 3 and 12.76% across all 30 ensemble DWD cases.
+Fitting speed did not show an established improvement. Nine full-kernel cases
+were 1.59% slower to fit and 1.57% slower to predict. Those historical
+observations are retained.
+
+Follow-up investigation on October 5, 2026 found unequal concurrent numerical
+work during the original comparison. A 144-fit repeat across the same nine
+saved cases included 54 baseline/current pairs and 18 identical-baseline
+control pairs. The aggregate current-versus-baseline fit difference was
+-0.060%, with an approximate 95% block-bootstrap interval of -0.161% to +0.047%.
+The repeated fit and scoring estimates did not establish a persistent package
+regression. This interval describes the fixed cases and conditions, not a
+universal or worst-case 2% bound.
+
+A separate 24-fit controlled comparison used three saved cases, both original
+package versions, and an identically prepared companion that was either idle
+or running a representative prediction workload. Competing work increased
+mean fit time by 3.85% for the baseline and 4.48% for the current version, with
+a slowdown in all 12 within-version comparisons. Eight additional instrumented
+fits on the 4-versus-9 case found added time in unchanged native residual
+arithmetic, thread discovery and other fit work. The earlier case-specific
+version difference did not persist; the changed scoring helper ran once per
+fit and took 2.9 to 3.6 milliseconds. All 32 new fits retained the original
+recorded fitted state, predictions and accuracy exactly.
+
+Concurrent work is therefore a demonstrated timing confound and a credible
+contributor to the original result. Its precise share of the full historical
+percentage cannot be reconstructed from the saved telemetry, and the controlled
+workload was not an exact replay of every historical activity. The timing
+investigation is closed without a demonstrated package regression. These
+results do not promise improvement on every dataset or machine. The follow-up
+changed no estimator code, mathematical method, solver defaults or release
+binaries.
 
 ## Resumable-example numerical qualification
 
