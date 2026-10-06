@@ -20,8 +20,12 @@ on arrays with the same outward rounding points. The C core additionally checks
 its arithmetic domain and rounding behavior.
 Uncertain or unsupported evaluations retain the prior Python/native or portable
 fallback. No numerical tolerance is relaxed. The current native-screen runtime
-gate remains CPython 3.12; other supported Python versions retain the portable
-path even if they can load the stable-ABI extension.
+gate remains conventional CPython 3.12. On Windows, CPython 3.11 can install
+and load the `cp311-abi3` wheel, but DWD still uses its portable compensated
+residual check; the same residual guard excludes CPython 3.13 and later.
+On CPython 3.12, omitting the extension can still leave the guarded built-in
+`math.sumprod` residual path available. The wheel ABI and DWD's residual
+arithmetic guard are separate from NumPy/SciPy BLAS acceleration.
 
 The adapted arithmetic source includes the complete Python Software Foundation
 license in `dwd/CPYTHON-LICENSE.txt`. Original DWD attribution and its MIT license

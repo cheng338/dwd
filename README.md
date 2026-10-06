@@ -38,23 +38,32 @@ Wang, B., and Zou, H. (2018).
 
 Python 3.11+ and scikit-learn 1.6+ are required. The base package depends on
 NumPy, SciPy, scikit-learn, and threadpoolctl. Download a compatible wheel from
-the [1.3.10 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.10).
-For conventional Windows AMD64 CPython, install the native wheel:
+the [1.3.11 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.11).
+For conventional Windows AMD64 CPython 3.11 or later, install the native wheel:
 
 ```shell
-python -m pip install ./dwd-1.3.10-cp311-abi3-win_amd64.whl
+python -m pip install ./dwd-1.3.11-cp311-abi3-win_amd64.whl
 ```
 
-Alternatively, install the portable wheel without the optional compiled helper:
+To omit the optional compiled helper, install the portable wheel (Python 3.11+):
 
 ```shell
-python -m pip install ./dwd-1.3.10-py3-none-any.whl
+python -m pip install ./dwd-1.3.11-py3-none-any.whl
 ```
 
 The helper retains its numerical runtime guards; the ABI tag does not promise
-acceleration on every compatible Python version. Pre-release numerical validation
-used conventional CPython 3.12 on Windows AMD64. Other platforms, older CPU
-hardware and free-threaded Python were not covered by those checks.
+acceleration on every compatible Python version. Local numerical validation
+uses conventional CPython 3.12 with AOCL on Windows AMD64. These are not Ubuntu
+or Intel-hardware performance results. Other platforms and free-threaded Python
+remain outside those local checks.
+
+The `cp311-abi3` tag describes extension loading compatibility, not which
+residual arithmetic DWD selects. Its guarded compiled and built-in
+`math.sumprod` residual paths are currently eligible only on conventional
+CPython 3.12. CPython 3.11 and 3.13+ use the portable compensated residual
+check even if the extension is installed. A portable wheel on CPython 3.12
+can still use guarded `math.sumprod`; it simply omits the optional extension.
+These choices do not disable or select NumPy/SciPy BLAS acceleration.
 
 To install from the release checkout instead:
 
@@ -73,10 +82,9 @@ artifacts are distributed through GitHub, not PyPI. Installing `dwd` by name
 from PyPI may retrieve a different upstream release. See
 [VALIDATION.md](VALIDATION.md) for the tested environments and evidence scope.
 
-The optional `rbf_computation='direct'`, `affine_computation='joint'` and
-`exact_recovery='extended'` described below are available in the updated local
-source checkout. The published 1.3.10 wheels do not include them; install from
-that updated checkout when these options are required.
+Version 1.3.11 includes the optional `rbf_computation='direct'`,
+`affine_computation='joint'` and `exact_recovery='extended'` described below.
+Their defaults remain unchanged; the 1.3.10 wheels do not provide these options.
 
 # Kernel DWD
 
@@ -301,7 +309,18 @@ they have not been relabeled as new release results.
 
 # Release history
 
-Stable release, October 5, 2026. See the [1.3.10 validation scope](docs/validation-1.3.10.md).
+Version 1.3.11, October 6, 2026. See the [current validation scope](VALIDATION.md).
+
+## Changes in 1.3.11
+
+This release adds optional direct RBF computation, joint affine scoring and
+extended exact recovery, together with objective-overflow recovery, eligible
+linear-gradient reuse and earlier release of prediction kernel blocks. The
+resumable example records accelerator identity and permits an explicit final
+thread limit while retaining one thread per native pool in each CV worker.
+These changes preserve the DWD methodology; optional numerical policies can change rounded results and cost
+more. See the [changelog](CHANGES.md#1311--2026-10-06) for individual changes.
+
 
 ## Changes in 1.3.10
 

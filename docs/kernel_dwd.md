@@ -402,8 +402,8 @@ the narrower optimized-only eligibility described above.
 
 `rbf_computation='direct'` is an explicit option for numerical accuracy on
 `KernGDWD` and `KernGDWDCV`. The default remains `'standard'`, including its
-documented extreme-input limitations. The direct option is available in the
-updated local source checkout; published DWD 1.3.10 wheels do not include it.
+documented extreme-input limitations. The direct option is included in DWD
+1.3.11; the earlier 1.3.10 wheels do not include it.
 
 ```python
 model = KernGDWD(

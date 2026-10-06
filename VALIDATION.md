@@ -1,15 +1,45 @@
 # Validation
 
-For the published 1.3.10 release, see the
+Version 1.3.11 packages the changes below, developed and validated individually
+after 1.3.10. The per-change records retain their original scope and timing
+limitations. For 1.3.10 evidence, see the separate
 [validation scope and timing follow-up](docs/validation-1.3.10.md).
-That release evidence does not cover the later local objective-reduction
-recovery, startup-accelerator checkpoint-identity fixes, optional direct RBF
-construction, optional joint affine scoring, extended exact recovery, linear
-gradient reuse, prediction kernel block release or final-refit thread control listed under
-[Unreleased](CHANGES.md#unreleased). Their validation is separate from the
-published-release evidence.
 
-## Final-refit thread control in local source
+## Main release verification
+
+The main release requires Python 3.11 or later. It retains the original
+stable-ABI build policy and standard-library TOML test import. Python 3.10
+compatibility is provided only by a separate CPython 3.10 wheel and its
+associated compatibility source bundle; it is not enabled in the main source.
+
+The numerical payload in these release wheels is byte-identical to the
+payload exercised by the complete 684-test suite on Windows with Python
+3.12.14 and AOCL: 678 tests passed with the native wheel and 667 passed with
+the portable wheel, with six and 17 declared skips respectively. No executed
+test failed. That preliminary packaging candidate also supported Python 3.10;
+its compatibility-only build/metadata/test changes are absent from main.
+Final main artifact checks separately verify Python >=3.11 metadata,
+installed source provenance and the restored build/test contracts.
+
+Skips cover unavailable wider-than-float64 arithmetic, optional compiled
+features and optional frozen-binary comparisons. The three frozen-binary
+comparison methods subsequently passed on the native wheel; the rebuilt
+extension is byte-identical to the earlier validated extension. Independent
+rational-oracle checks passed in the full native suite.
+
+The AOCL environment uses NumPy 2.5.2, SciPy 1.18.0, scikit-learn 1.9.0,
+joblib 1.5.3, threadpoolctl 3.5.0 and CVXPY 1.8.2. NumPy and SciPy load AOCL-BLAS
+5.2.0. Broad optional SOCP/CVXPY imports additionally load MKL 2025.3 and Intel
+OpenMP alongside AOCL's LLVM OpenMP and scikit-learn's Microsoft OpenMP.
+`threadpoolctl` reports the multiple-OpenMP warning. Correctness checks
+completed successfully; this is not evidence of a pure AOCL process or a
+performance comparison. Loaded library paths, versions and hashes were saved
+with the validation receipts. Windows checks on the AMD host do not establish
+Ubuntu behavior or Intel-target performance.
+
+<a id="final-refit-thread-control-in-local-source"></a>
+
+## Final-refit thread control
 
 The standalone kernel tuning example now accepts an explicit positive integer
 `final_native_threads`, with default `1`, also exposed as
@@ -56,7 +86,9 @@ it does not select one automatically or guarantee a speedup. Correctness checks
 could overlap other workers and provide no timing evidence. Increasing native
 threads can also increase CPU time without improving elapsed time.
 
-## Prediction kernel block lifetime in local source
+<a id="prediction-kernel-block-lifetime-in-local-source"></a>
+
+## Prediction kernel block lifetime
 
 Multi-batch prediction releases its local reference to each kernel block after
 copying the completed scores into the result, before constructing the next
@@ -99,7 +131,9 @@ lifetime regression tests verify collection before the next allocation, copied
 score views, externally retained arrays, and failure followed by retry. These
 checks introduce no new timing claim.
 
-## Linear-gradient reuse in local source
+<a id="linear-gradient-reuse-in-local-source"></a>
+
+## Linear-gradient reuse
 
 Eligible built-in float64 `GenDWD` iterations with `stopping='optimality'`
 reuse the gradient already evaluated at the current coefficients and intercept
@@ -165,7 +199,9 @@ Linear `GenDWDCV` fits inherit reuse when configured for optimality stopping.
 Kernel DWD, ensemble-DWD and the kernel-based resumable example receive no
 direct benefit. Their defaults and the linear examples' defaults are unchanged.
 
-## Optional joint affine scoring in local source
+<a id="optional-joint-affine-scoring-in-local-source"></a>
+
+## Optional joint affine scoring
 
 `affine_computation='joint'` retains the DWD methodology while including the
 intercept in accurate score evaluation. The default remains `'standard'`.
@@ -207,7 +243,9 @@ callback values, validation histories and public scores. The adopted helper's
 executable content is unchanged from the validated prototype. These adoption
 checks ran with concurrent correctness work; they are not timing benchmarks.
 
-## Optional extended exact recovery in local source
+<a id="optional-extended-exact-recovery-in-local-source"></a>
+
+## Optional extended exact recovery
 
 `exact_recovery='extended'` selects rank-32 and 8192-bit limits for both exact
 factor certification and MM recovery. The standard rank-16/4096-bit setting

@@ -6,7 +6,7 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
-## Unreleased
+## 1.3.11 — 2026-10-06
 
 - Add optional `final_native_threads=1` and `--final-native-threads` to the
   resumable kernel tuning example. Keep `jobs=1` and one native thread per
