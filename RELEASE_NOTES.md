@@ -1,3 +1,9 @@
+> Historical release notes for 1.3.9. For the published 1.3.10 changes, see
+> the [changelog](CHANGES.md#1310--2026-10-05) and
+> [validation scope and timing follow-up](docs/validation-1.3.10.md).
+> Later local fixes listed under [Unreleased](CHANGES.md#unreleased) are
+> separate from the published release and its validation evidence.
+
 # DWD 1.3.9 — October 3, 2026
 
 This release improves numerical implementation, API validation and examples.

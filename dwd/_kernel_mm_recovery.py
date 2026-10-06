@@ -1,16 +1,19 @@
 """Lazy, bounded recovery of an MM function in certified kernel coordinates.
 
 This is a function-space MM contract, not an alternative solver for the
-stronger coefficient-sum gauge. It is instantiated only after an ordinary
-numerical update fails. The original matrix and all model parameters stay
+stronger coefficient-sum gauge. Exact arithmetic is prepared only after an
+ordinary numerical update fails. The original matrix and all model parameters stay
 unchanged. Only small diagnostics survive in the returned fitted estimator.
 """
 from time import perf_counter
 
 
 class KernelMMRecovery:
-    def __init__(self, K, delta):
+    def __init__(self, K, delta, *, exact_recovery='standard'):
+        if not isinstance(exact_recovery, str) or exact_recovery not in ('standard', 'extended'):
+            raise ValueError("exact_recovery must be 'standard' or 'extended'.")
         self.K, self.delta = K, delta
+        self.exact_recovery = exact_recovery
         self.action = None
         self.info = {
             'attempted': False, 'accepted_actions': 0,
@@ -35,7 +38,15 @@ class KernelMMRecovery:
         started = perf_counter()
         if not self.info['attempted']:
             self.info.update(attempted=True, initial_numerical_failure=str(trigger))
-            certified = exact_kernel_factor(self.K)
+            # Preserve the standard helper defaults and calling convention.
+            # Larger caps change capacity only, never certification or accuracy.
+            if self.exact_recovery == 'extended':
+                caps = dict(max_entries=65536, max_rank=32, max_bits=8192,
+                            max_operations=1000000)
+                self.info.update(exact_recovery='extended', resource_caps=dict(caps))
+                certified = exact_kernel_factor(self.K, **caps)
+            else:
+                certified = exact_kernel_factor(self.K)
             self.info['certificate_status'] = certified.status
             self.info['certificate'] = dict(certified.metadata)
             if not certified.certified:
@@ -43,7 +54,10 @@ class KernelMMRecovery:
                     f'{trigger} Certified MM function recovery is inapplicable: '
                     f'{certified.status}.')
             try:
-                self.action = CertifiedKernelMM(self.K, certified.factor, self.delta)
+                if self.exact_recovery == 'extended':
+                    self.action = CertifiedKernelMM(self.K, certified.factor, self.delta, **caps)
+                else:
+                    self.action = CertifiedKernelMM(self.K, certified.factor, self.delta)
             except (BudgetExhausted, CertificateFailure, FloatingPointError,
                     OverflowError) as exc:
                 self.info['preparation_failure'] = f'{type(exc).__name__}: {exc}'

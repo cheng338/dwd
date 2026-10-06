@@ -64,6 +64,14 @@ class KernelClfMixin(ClassifierMixin):
 
         elif isinstance(self.kernel, str):
             if (self.kernel == 'rbf' and
+                    getattr(self, 'kernel_computation_', None) == 'direct_v1'):
+                from ._direct_rbf import accurate_rbf
+                gamma = (self.kernel_kws or {}).get('gamma')
+                if isinstance(gamma, bool):
+                    gamma = float(gamma)
+                return accurate_rbf(self._Xfit, X,
+                                    gamma=gamma)
+            if (self.kernel == 'rbf' and
                     getattr(self, 'kernel_computation_', None) == 'norm_sum'):
                 from ._rbf import norm_sum_rbf
                 return norm_sum_rbf(
@@ -110,11 +118,24 @@ class KernelClfMixin(ClassifierMixin):
                 stop = min(start + batch_size, X.shape[0])
                 K = self._compute_kernel(X[start:stop])
                 scores[start:stop] = self._kernel_decision_product(K)
+                del K
         return scores.ravel() if scores.shape[1] == 1 else scores
 
     def _kernel_decision_product(self, K):
         """Evaluate the training-by-query kernel using the fitted precision mode."""
         precision = getattr(self, 'prediction_precision_', 'ordinary')
+        if getattr(self, 'affine_computation_', 'standard') == 'joint':
+            from scipy.sparse import issparse
+            from ._affine_scores import affine_scores
+            query = K.T
+            if issparse(query) and query.format != 'csr':
+                query = query.tocsr()
+            intercepts = np.broadcast_to(np.asarray(self.intercept_, dtype=float),
+                                         (1, len(self.dual_coef_))).reshape(-1)
+            policy = 'compensated' if precision == 'compensated' else 'adaptive'
+            return np.column_stack([
+                affine_scores(query, alpha, intercept, policy=policy)
+                for alpha, intercept in zip(self.dual_coef_, intercepts)])
         if precision not in ('compensated', 'adaptive'):
             return safe_sparse_dot(K.T, self.dual_coef_.T,
                                    dense_output=True) + self.intercept_

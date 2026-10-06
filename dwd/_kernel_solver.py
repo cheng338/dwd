@@ -223,7 +223,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                  psd_known=False, callback=None, validation=None,
                  patience=3, min_delta=0., check_interval=1,
                  implementation='optimized', acceleration=None,
-                 residual_check_order='refinement_first'):
+                 residual_check_order='refinement_first', affine_computation='standard',
+                 exact_recovery='standard'):
     """Solve one specified kernel DWD problem; no internal parameter search.
 
     y contains both -1/+1. ``validation`` is an explicitly supplied pair
@@ -233,6 +234,10 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     against ``tol``. The default remains the upstream absolute objective rule.
     """
     started = perf_counter()
+    if not isinstance(exact_recovery, str) or exact_recovery not in ('standard', 'extended'):
+        raise ValueError("exact_recovery must be 'standard' or 'extended'.")
+    if not isinstance(affine_computation, str) or affine_computation not in ('standard', 'joint'):
+        raise ValueError("affine_computation must be 'standard' or 'joint'.")
     if implementation not in ('optimized', 'reference'):
         raise ValueError("implementation must be 'optimized' or 'reference'.")
     if implementation == 'reference' and backend not in ('auto', 'spectral'):
@@ -470,10 +475,16 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         validation_stop = False
         if validation_due:
             coefficients = current_alpha() if observed_alpha is None else observed_alpha
-            validation_scores = (compensated_kernel_matvec(val_K, coefficients)
-                                 if prediction_precision == 'compensated'
-                                 else adaptive_kernel_matvec(val_K, coefficients))
-            score = float(np.mean((validation_scores + offset > 0) == (val_y > 0)))
+            if affine_computation == 'joint':
+                from ._affine_scores import affine_scores
+                validation_values = affine_scores(
+                    val_K, coefficients, offset, policy=prediction_precision)
+            else:
+                validation_scores = (compensated_kernel_matvec(val_K, coefficients)
+                                     if prediction_precision == 'compensated'
+                                     else adaptive_kernel_matvec(val_K, coefficients))
+                validation_values = validation_scores + offset
+            score = float(np.mean((validation_values > 0) == (val_y > 0)))
             validation_history.append({'iteration': iteration, 'score': score,
                                        'prediction_precision': prediction_precision})
             if best_state is None or score > best_score + min_delta:
@@ -514,7 +525,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
             raise _RequestedStop()
 
     optimizer_details = {}
-    mm_recovery = KernelMMRecovery(K, shift)
+    mm_recovery = (KernelMMRecovery(K, shift) if exact_recovery == 'standard'
+                   else KernelMMRecovery(K, shift, exact_recovery=exact_recovery))
     last_proximal_uses_certified_columns = False
     constrained_recovery_origin = None
 
@@ -710,7 +722,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                   objective_history=np.asarray(history), n_iter=int(iteration),
                   returned_iteration=int(returned_iteration), termination_reason=reason,
                   converged=bool(final['rkhs_gradient_norm'] <= tol), backend=backend,
-                  prediction_precision=prediction_precision,
+                  prediction_precision=prediction_precision, affine_computation=affine_computation,
+                  exact_recovery=exact_recovery,
                   validation_history=validation_history, diagnostics=diagnostics,
                   objective_tolerance_met=bool(iteration > 0 and abs(history[-1] - history[-2]) < obj_tol))
     return result

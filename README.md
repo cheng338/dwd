@@ -73,6 +73,11 @@ artifacts are distributed through GitHub, not PyPI. Installing `dwd` by name
 from PyPI may retrieve a different upstream release. See
 [VALIDATION.md](VALIDATION.md) for the tested environments and evidence scope.
 
+The optional `rbf_computation='direct'`, `affine_computation='joint'` and
+`exact_recovery='extended'` described below are available in the updated local
+source checkout. The published 1.3.10 wheels do not include them; install from
+that updated checkout when these options are required.
+
 # Kernel DWD
 
 Kernel DWD provides a repaired reference implementation and an optimized
@@ -93,8 +98,9 @@ print(model.objective_tolerance_met_, model.converged_, model.rkhs_gradient_norm
 ```
 
 The defaults are `implementation='optimized'`, `q=1`, `solver_mode='schur'`, `backend='auto'`,
-`acceleration=None`,
-`initialization='auto'`, `stopping='objective'`, `obj_tol=1e-5`, and `max_iter=100`.
+`acceleration=None`, `rbf_computation='standard'`, `affine_computation='standard'`,
+`exact_recovery='standard'`, `initialization='auto'`, `stopping='objective'`,
+`obj_tol=1e-5`, and `max_iter=100`.
 The cap applies per attempt. For eligible fits using an internally constructed
 RBF kernel, a numerical failure can trigger one spectral restart with the same
 initialization and objective; discarded work and total time are reported
@@ -102,6 +108,22 @@ separately. See the
 [restart and stopping rules](docs/kernel_dwd.md#automatic-numerical-restart).
 Auto initialization is zero for optimized fits. The intercept is unregularized.
 The parameter names remain `lambd`, `q`, and `kernel_kws`.
+
+For sensitive RBF inputs, `KernGDWD(kernel='rbf', rbf_computation='direct')`
+opts into direct coordinate differences instead of the standard norm/dot
+distance formula. It addresses the demonstrated self/equal-copy discrepancy
+and large-offset cancellation while preserving the mathematical RBF and DWD
+objective. It can change rounded scores, fits and CV choices, and can cost
+substantially more. `KernGDWDCV` accepts the same option. See the
+[supported settings, benchmarks and precision limits](docs/kernel_dwd.md#optional-direct-rbf-computation).
+
+For scores sensitive to intercept cancellation,
+`KernGDWD(affine_computation='joint')` evaluates uncertain products and the
+intercept together before rounding. It preserves the expression `K @ alpha + b`,
+the free intercept and the class tie rule. `KernGDWDCV` accepts the same option.
+It can change rounded scores, labels or validation choices and can be slower,
+especially for exact ties. The default remains `'standard'`. See
+[joint affine scoring](docs/kernel_dwd.md#optional-joint-affine-scoring).
 
 Choose `implementation='reference'` for the repaired Slicersalt algorithm: full
 eigen-decomposition, coefficient MM updates, native Gaussian initialization
@@ -140,7 +162,12 @@ is never accepted. This matters for singular kernels, where the intended functio
 can be representable even when an additional coefficient-sum convention is not.
 The loss, regularization, free intercept and current update remain unchanged.
 This exact computation runs only after a failed update, within fixed entry,
-rank, and arithmetic budgets.
+rank, and arithmetic budgets. For small difficult kernels,
+`exact_recovery='extended'` raises the rank cap from 16 to 32 and the arithmetic
+cap from 4096 to 8192 bits. Entry and operation caps, mathematical checks and
+the standard default are unchanged. This can recover additional fits at extra
+cost; it does not make ordinary fitting faster or establish convergence. See
+[extended exact recovery](docs/kernel_dwd.md#optional-extended-exact-recovery).
 An earlier characterization rejected nine extreme nearly constant synthetic
 RBF fits; see [validation](VALIDATION.md) for the current replay outcome. This is
 not a guarantee that every valid kernel will fit. See the numerical boundaries
@@ -226,6 +253,17 @@ algebra by default. Set `solver_mode='legacy'` to use the historical algebra.
 It can stop based on objective change or numerical optimality, or run for a
 fixed number of iterations. The linear explicit-system path remains available
 through `implicit_P=False`.
+
+With `stopping='optimality'`, eligible built-in float64 paths reuse the current
+gradient for the next MM step, avoiding a repeated loss derivative and
+transposed feature product. The gradient is reused before the coefficients or
+intercept change; final diagnostics are computed afresh at the returned model.
+`GenDWDCV` inherits this behavior when optimality stopping is requested.
+The default `stopping='objective'` and example stopping settings are unchanged;
+there is no new public option. Custom hooks, other gradient dtypes and active
+NumPy `call` or `log` error handlers keep the previous computation. This
+optimization applies to linear DWD, with no direct benefit to kernel DWD or
+ensemble-DWD. See [the checks and timing scope](VALIDATION.md#linear-gradient-reuse-in-local-source).
 
 ```python
 from dwd.socp_dwd import DWD  # requires the socp extra

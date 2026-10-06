@@ -1,6 +1,6 @@
 # Local audit candidate: 1.0.5+audit1
 
-> Historical record, superseded by [release 1.1.0](RELEASE_NOTES.md).
+> Historical record, superseded by release 1.1.0; see the [changelog](CHANGES.md).
 > The legacy defaults and opt-in corrected-mode advice below describe audit1,
 > not the current release. Version 1.1.0 defaults to corrected Schur algebra and
 > zero initialization, while retaining objective-change stopping. See the

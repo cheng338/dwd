@@ -42,6 +42,8 @@ def main(argv=None):
                         help='Estimator and shuffled stratified-fold seed (default: 42).')
     parser.add_argument('--jobs', type=_positive_int, default=1,
                         help='Maximum simultaneous folds; each uses one native thread.')
+    parser.add_argument('--final-native-threads', type=_positive_int, default=1,
+                        help='Native thread limit for fresh final scaling and fitting only (default: 1).')
     parser.add_argument('--max-iter', type=_positive_int, default=100)
     parser.add_argument('--scale', action='store_true', help='Fit StandardScaler within each training fold.')
     parser.add_argument('--resume', action='store_true')
@@ -61,7 +63,8 @@ def main(argv=None):
         model, X, y,
         {'lambd': args.lambd, 'kernel_kws': [{'gamma': gamma} for gamma in args.gamma]},
         args.run_dir, cv=StratifiedKFold(args.folds, shuffle=True, random_state=args.seed),
-        jobs=args.jobs, resume=args.resume, scale=args.scale, refit_best=not args.cv_only)
+        jobs=args.jobs, resume=args.resume, scale=args.scale, refit_best=not args.cv_only,
+        final_native_threads=args.final_native_threads)
     print('Best CV accuracy:', result['best_score'])
     print('Selected parameters:', result['best_params'])
     print('Work summary:', result['work_summary'])

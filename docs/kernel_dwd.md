@@ -252,6 +252,11 @@ objective stop may or may not satisfy the separate numerical check.
   `compensated_score_reconstructions`,
   `max_adaptive_score_reconstruction_error_before_retry`, and
   `objective_evaluation_retries` when these paths execute.
+- `affine_computation_`: fitted `'standard'` or `'joint'` scoring policy. This
+  is separate from `prediction_precision_`, which chooses adaptive or fully
+  compensated evaluation. Prediction uses the fitted affine policy even if
+  the constructor parameter is subsequently changed. Older serialized models
+  without this field retain standard scoring; refit to enable joint scoring.
 - `diagnostics_['mm_function_recovery']`: lazy exact-certificate preparation,
   accepted recovery actions and their checks. `accepted_actions` counts helper
   actions, including actions inside a subsequently rejected acceleration
@@ -263,6 +268,12 @@ objective stop may or may not satisfy the separate numerical check.
   representation for the returned coefficients. `backend_` still identifies
   the numerical backend initially selected for the ordinary route; consult
   these fields for recovery details.
+- `exact_recovery_`: requested `'standard'` or `'extended'` capacity for the
+  completed fit. It does not establish that exact recovery was used; inspect
+  `diagnostics_['mm_function_recovery']` for actual attempts and accepted actions.
+  Constructor changes affect the next fit, while serialized fitted state
+  retains its provenance. Older objects without the option use the standard
+  setting when cloned or refitted.
 - `C_`: descriptive conversion from the fitted norm. It does not change `lambd`.
   A zero-norm conversion or an overflowed conversion is not a valid positive
   finite C for a separate SOCP fit. `C_conversion_finite_` identifies whether the
@@ -306,7 +317,9 @@ set must remain outside this selection process.
 Callbacks are optional and receive a mapping with `iteration`, `alpha`, `offset`
 (also `intercept`), `objective`, `training_scores`, `decision_values`, and
 `elapsed_seconds`. The initial state is included. `training_scores` means
-`K @ alpha`; `decision_values` includes the intercept. Arrays are protected
+`K @ alpha`; `decision_values` includes the intercept. These are optimizer
+trace values, not a recomputation using optional joint affine scoring, so their
+rounded margins may differ from public decision scores. Arrays are protected
 copies, so callbacks cannot modify the numerical state. Return `True`, or raise
 `StopIteration`, to stop; return `False` or `None` to continue. Other return types
 raise.
@@ -348,9 +361,17 @@ rows used by each prediction kernel calculation. This supports named, callable,
 and precomputed kernels. Callable kernels must compute consistent pairwise values
 when their query rows are partitioned. The training Gram matrix is still dense.
 
+Completed scores are copied into the result before releasing each temporary
+kernel block. When the package owns those blocks, the previous block no longer
+overlaps the next allocation. This does not free caller-owned precomputed
+matrices or arrays retained by a callable, and single-batch prediction receives
+no such saving. Kernel and scoring arithmetic are unchanged. See the
+[allocation checks and timing limits](../VALIDATION.md#prediction-kernel-block-lifetime-in-local-source).
+
 ### RBF construction and query consistency
 
-Corrected named RBF fits first use scikit-learn's pairwise kernel. If that internally
+With the default `rbf_computation='standard'`, corrected named RBF fits first
+use scikit-learn's pairwise kernel. If that internally
 constructed self-kernel exceeds the existing symmetry tolerance
 `100 * eps * max(1, max(abs(K)))`, the package reconstructs it from the validated
 float64 features. It adds the two squared norms before subtracting the dot-product
@@ -359,8 +380,9 @@ One computed triangle is mirrored and the self-diagonal is set to its analytic
 value of one. External or custom kernel matrices retain the strict validator and
 are not averaged.
 
-The fitted `kernel_computation_` is `'sklearn'` on the ordinary path or `'norm_sum'`
-on the reconstructed path. `kernel_symmetry_correction_` records the triggering
+For the standard policy, fitted `kernel_computation_` is `'sklearn'` on the
+ordinary path or `'norm_sum'` on the reconstructed path.
+`kernel_symmetry_correction_` records the triggering
 asymmetry. The selected distance formula is also used for prediction and explicit
 validation kernels, including dense/CSR and batched queries. Serialization and
 compatible CV caches preserve the policy. Self-kernel mirroring and BLAS/batch
@@ -376,9 +398,68 @@ regularization, loss, and the free intercept are unchanged. Corrected reference
 and optimized fits share this construction policy; automatic solver restart has
 the narrower optimized-only eligibility described above.
 
+### Optional direct RBF computation
+
+`rbf_computation='direct'` is an explicit option for numerical accuracy on
+`KernGDWD` and `KernGDWDCV`. The default remains `'standard'`, including its
+documented extreme-input limitations. The direct option is available in the
+updated local source checkout; published DWD 1.3.10 wheels do not include it.
+
+```python
+model = KernGDWD(
+    kernel='rbf', kernel_kws={'gamma': .1}, lambd=.02,
+    rbf_computation='direct',
+)
+```
+
+Direct computation requires `solver_mode='schur'`, the named `'rbf'` kernel,
+the package's original construction hooks, and `kernel_kws` containing only
+`gamma` or no entries. Gamma must be finite and nonnegative; `None` keeps
+`1 / n_features`. It supports corrected reference and optimized fits with
+validated float64 dense or CSR features. Legacy mode, other kernel families,
+callable/precomputed kernels, extra kernel keywords and caller-supplied
+training `K` raise when direct computation is requested. They retain their
+existing behavior under the standard policy.
+
+The calculation uses coordinate differences in bounded dense tiles or a
+sparse row merge. Exceptional overflow and very small squared distances use
+exact arithmetic on the represented inputs before rounding the gamma-weighted
+exponent. Gamma zero returns ones. This addresses the demonstrated equal-row
+and common-offset cancellation failures without changing
+`exp(-gamma * ||x-y||**2)`, adding jitter, or modifying a caller's kernel.
+The dense output still requires one value per training/query pair, and the
+usual PSD, residual and objective checks remain in force.
+
+The fitted `kernel_computation_='direct_v1'` is used for training, prediction
+and explicit validation. Changing the constructor option takes effect on the
+next fit. Existing serialized models retain their fitted standard policy;
+CV caches and resumable checkpoints distinguish the requested computation.
+Loading a new direct model in an older package that lacks `direct_v1` is
+unsupported. Use `rbf_computation='direct'` on `KernGDWDCV`, or
+`kerngdwd__rbf_computation='direct'` on the `make_pipeline` example in the
+[README](../README.md#explicit-parameter-search). The standalone resumable-CV Python
+function accepts a `KernGDWD` configured this way; no separate CLI flag is added.
+
+Direct computation can be substantially slower. In ten paired MNIST 2-vs-3
+prediction measurements per estimator with one native thread, it took about
+18 times as long for full-kernel DWD and 6 times as long for ensemble DWD.
+Four pairs had background-CPU flags; the unflagged measurements led to the
+same conclusion. These are workload-specific costs, not universal ratios.
+Six saved MNIST fits retained their test labels and accuracies, and all three
+ensembles retained their selected rows. More sensitive fixtures changed
+coefficients, row rankings and labels, so matching results are not guaranteed.
+
+Direct distances are not universally correctly rounded or compensated sums.
+On an adversarial 4,097-feature test, sequential summation gave relative kernel
+errors of about `2.27e-13` at gamma 1 and `1.59e-10` at gamma 700. Correcting
+kernel construction also does not eliminate rounding in `K @ alpha + b` or
+promise identical scores for every batch shape. The separate prediction
+precision checks below still apply; numerical recovery limits are unchanged.
+
 ### Prediction precision
 
-Corrected models evaluate dense and CSR query matrices adaptively. The ordinary
+With `affine_computation='standard'`, corrected models evaluate dense and CSR
+query matrices adaptively. The ordinary
 product is accepted per row only when a conservative estimate is no larger than
 `5e-7 * max(1, abs(ordinary_score))`. The estimate includes positive-dot rounding
 and gradual underflow; an overflowing estimate sends that row to expanded
@@ -416,10 +497,64 @@ state cannot be accepted for stopping using one precision policy and exported
 under another. No inconsistent callback state is emitted. These are numerical
 estimates under the stated floating-point model, not universal interval proofs.
 
+### Optional joint affine scoring
+
+`affine_computation='joint'` is an optional precision mode for
+`KernGDWD` and `KernGDWDCV` with `solver_mode='schur'`. It supports the same
+named, callable and precomputed kernels as corrected kernel DWD. It is
+independent of `rbf_computation`: joint scoring evaluates the supplied kernel
+entries more accurately but cannot repair inaccurate entries themselves.
+
+```python
+model = KernGDWD(
+    kernel='rbf', kernel_kws={'gamma': 1.0}, lambd=.02,
+    affine_computation='joint',
+).fit(X, y)
+```
+
+The expression remains `K @ alpha + b`. Adaptive screening includes both the
+dot product and intercept addition. It accepts an ordinary row only when its
+error estimate is at most `5e-7 * max(1, abs(score))` and is smaller than the
+absolute score. Uncertain rows sum expanded high/low products together with
+the intercept before rounding. Models requiring compensated prediction skip
+the ordinary screen. Exceptional range or unresolved cancellation can require
+an exact rational sum of the represented inputs. Product temporaries are
+processed in bounded groups, with row-wise retry after an allocation failure;
+the exact fallback has no fixed wall-time limit.
+
+The DWD loss, regularization, unregularized intercept, solver updates and
+acceptance thresholds are unchanged. Binary classification still chooses the
+second class only for a strictly positive returned score. A tiny positive exact
+value can round to zero when it is below binary64 range; the existing zero tie
+rule still applies. Ordinary accepted scores are not guaranteed to be correctly
+rounded, and the bounds rely on the stated binary64 arithmetic model.
+
+Explicit validation stopping uses the same joint scoring as public prediction.
+Correcting a rounded score may change a label, the best validation checkpoint
+or the stopping iteration. CV candidate scoring likewise uses the selected
+policy; neither the fold split nor its scoring rule changes. Constructor
+cloning copies the requested option; serialization preserves the fitted
+`affine_computation_`. Changing a parameter after fitting does not change the
+stored scoring policy. Old models retain standard behavior until refitted.
+
+The repair was reproduced with a genuine two-observation fitted linear-kernel
+model: the standard score was zero while the exact represented affine value
+was positive, and joint scoring recovered its sign. Locked MNIST controls
+retained all tested labels, ensemble rankings and selected samples. This is a
+conditional precision benefit, not evidence of a general accuracy increase.
+
+In ten matched prediction pairs per workload, full-kernel pipeline timing was
+approximately unchanged; the difficult ensemble pipeline cost about 9% more.
+Other numerical test workers had exited before timing. Three of twenty pairs
+had background-CPU flags; excluding them gave the same conclusion. Constructed
+exact-tie rows were substantially slower because every row required exact
+arithmetic. These costs support keeping `'standard'` as the default. See
+[validation scope](../VALIDATION.md) for the evidence and limits.
+
 ### Fitted state, cross-validation and caches
 
 Starting a new fit clears learned state, including the kernel prediction-precision
-flag. If fitting or refitting fails, learned state is cleared before the exception
+flag and fitted affine policy. If fitting or refitting fails, learned state is cleared before the exception
 propagates; prediction then raises `NotFittedError`. This contract applies to the
 package's linear and kernel classifiers, their CV wrappers, optional conic
 classifiers, and `KernMD`. Constructor parameters and validated private
@@ -441,8 +576,10 @@ are outside this contract. Valid-score aggregation and first-tie ordering are un
 
 Cache equality accounts for kernel parameters (including nested arrays), data
 values/order after the solver's dtype conversion, sparse versus dense representation,
-implementation, mode, and backend. Corrected fits compare the promoted float64
-features they actually use, allowing identical float32 inputs to reuse preparation;
+implementation, mode, backend, and requested `rbf_computation` and
+`affine_computation`, plus the requested `exact_recovery` capacity. Corrected fits
+compare the promoted float64 features they actually use, allowing identical
+float32 inputs to reuse preparation;
 legacy mode retains its original dtype distinction. The RBF construction
 policy is cached with K; automatic restart also checks construction provenance. A
 lambda/q change can reuse the same eigensystem. Different subsets or feature
@@ -612,7 +749,7 @@ recursively or construct a new factorization. The original tolerances still
 apply. Diagnostics record compensated checks, scalar corrections, auxiliary
 actions, acceptance counts and their costs when those paths execute.
 
-## Bounded exact-function recovery for singular kernels
+## Bounded exact-function recovery
 
 The DWD model is an RKHS function with a free intercept. For a singular PSD
 kernel, several coefficient vectors can represent that same function. An
@@ -639,8 +776,9 @@ intercept are unchanged, and no L-BFGS or Cholesky substitution is made for the
 reference. Initial preparation errors and arbitrary observer errors do not
 become recovery triggers.
 
-The private caps are 65,536 matrix entries, rank 16, 4,096-bit intermediate
-arithmetic and one million counted exact operations per preparation/step.
+With the default `exact_recovery='standard'`, the caps are 65,536 matrix entries,
+rank 16, 4,096-bit intermediate arithmetic and one million counted exact
+operations per preparation/step.
 The entry cap is checked before finite scans or rational allocations. Operations
 and rational intermediate sizes are bounded conservatively; these counters are
 not a formal wall-clock or total-process-memory bound. Incomplete certification,
@@ -658,11 +796,62 @@ rules. The exact MM recovery is not used by L-BFGS or explicit legacy updates.
 
 Thirty public fits on previously saved extreme synthetic kernels returned 21
 checked models in the preceding range-recovery candidate: all 18 exact rank-five
-cases completed, while nine nearly constant RBF fits still rejected. Their
-complete exact rank exceeds this bounded recovery's budget. That limitation is
-not proof that those DWD functions are unrepresentable or impossible. Those
-cases were not MNIST. See the release-specific [validation](../VALIDATION.md)
-for the final source/wheel checks and their scope.
+cases completed, while nine nearly constant RBF fits still rejected at the
+rank-16 limit. Those were the first observed refusals, not complete diagnoses
+of their stored kernels. The extended investigation below distinguishes a
+capacity limitation from exact indefiniteness. Those cases were not MNIST.
+See the release-specific [validation](../VALIDATION.md) for source/wheel checks
+and their scope.
+
+### Optional extended exact recovery
+
+`KernGDWD(exact_recovery='extended')` and
+`KernGDWDCV(exact_recovery='extended')` select a larger bounded capacity for
+corrected Schur fits. The default remains `'standard'`.
+
+| Limit | Standard | Extended |
+|---|---:|---:|
+| Stored matrix entries | 65,536 | 65,536 |
+| Complete exact rank | 16 | 32 |
+| Rational/intermediate arithmetic bits | 4,096 | 8,192 |
+| Counted exact operations per stage | 1,000,000 | 1,000,000 |
+
+The setting is passed to both the complete factor certificate and the MM
+action. Certification, action preparation and each subsequent step have their
+own operation budgets. These limits bound arithmetic work, not total fit time
+or process memory. The entry cap allows square matrices of at most 256 rows;
+the option cannot extend this recovery to a full MNIST kernel matrix.
+
+Exact arithmetic remains lazy: a healthy MM fit takes its ordinary path.
+The setting does not enable recovery in L-BFGS, which does not use this MM
+fallback; explicit legacy updates reject the extended setting. It preserves
+the loss, regularization, free intercept, complete represented kernel and all
+acceptance thresholds. It never authorizes rank truncation, added diagonal
+ridge, an approximate certificate or a repaired indefinite kernel. Failed
+certification still returns no model through this recovery route.
+
+In the nine historical nearly constant RBF cases, the three 30-observation
+fits have an exactly positive-definite rank-30 stored matrix. Raising rank
+alone passes factor certification but still exhausts MM preparation's bit
+budget. The extended setting completes five fixed updates in each case and
+also survives 100 updates under default objective stopping. Those longer
+runs reach `max_iter` with convergence and stopping-criterion flags false;
+returning a checked model is not evidence of convergence.
+
+The six cases with 75 or 120 observations still refuse at rank 32. Separate
+exact quadratic witnesses establish that those stored float64 matrices are
+indefinite, so more resources cannot produce an exact PSD certificate for
+them unchanged. This concerns rounded matrices, not the mathematical Gaussian
+kernel or every other solver route. Neither profile silently alters them.
+
+Three fresh-process observations measured about 0.066 seconds for default
+refusal and 2.744 seconds for the extended five-update fit on the 30-row case.
+These are different outcomes, not a speed comparison. Other known trial
+workers had exited, but systemwide background activity and peak memory were
+not measured. Independent checks verified the recovered equations and original
+DWD objectives; see [validation scope](../VALIDATION.md). The capacity is
+optional because its benefit is conditional and more work can still end in
+refusal.
 
 ## Numerical scope
 

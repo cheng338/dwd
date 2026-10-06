@@ -15,6 +15,31 @@ from dwd._eigen import validated_eigh
 from dwd._fit_state import fit_with_cleanup
 
 
+def _validate_rbf_computation(estimator):
+    policy = getattr(estimator, 'rbf_computation', 'standard')
+    if not isinstance(policy, str) or policy not in ('standard', 'direct'):
+        raise ValueError("rbf_computation must be 'standard' or 'direct'.")
+    if policy == 'direct' and (estimator.solver_mode != 'schur'
+            or not isinstance(estimator.kernel, str) or estimator.kernel != 'rbf'):
+        raise ValueError("rbf_computation='direct' requires named RBF and solver_mode='schur'.")
+
+
+def _validate_affine_computation(estimator):
+    policy = getattr(estimator, 'affine_computation', 'standard')
+    if not isinstance(policy, str) or policy not in ('standard', 'joint'):
+        raise ValueError("affine_computation must be 'standard' or 'joint'.")
+    if policy == 'joint' and estimator.solver_mode != 'schur':
+        raise ValueError("affine_computation='joint' requires solver_mode='schur'.")
+
+
+def _validate_exact_recovery(estimator):
+    policy = getattr(estimator, 'exact_recovery', 'standard')
+    if not isinstance(policy, str) or policy not in ('standard', 'extended'):
+        raise ValueError("exact_recovery must be 'standard' or 'extended'.")
+    if policy == 'extended' and estimator.solver_mode != 'schur':
+        raise ValueError("exact_recovery='extended' requires solver_mode='schur'.")
+
+
 def _validate_residual_check_order(estimator):
     if estimator.residual_check_order not in ('refinement_first', 'adaptive'):
         raise ValueError("residual_check_order must be 'refinement_first' or 'adaptive'.")
@@ -52,6 +77,38 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
 
     kernel_kws : dict or None, default=None
         Kernel keyword arguments, such as {'gamma': 0.1} for the RBF kernel.
+
+    rbf_computation : {'standard', 'direct'}, default='standard'
+        Standard retains the existing sklearn/norm-sum construction policy.
+        Direct evaluates coordinate differences for named RBF kernels in Schur
+        mode, with range-safe exceptional handling. It can change floating-point
+        kernel entries, fitted coefficients and selected observations. It can
+        also cost substantially more. Only gamma is accepted in kernel_kws.
+        The fitted policy is retained for scoring;
+        supplied training K and replaced construction hooks are unsupported.
+
+    affine_computation : {'standard', 'joint'}, default='standard'
+        Optional evaluation of the full decision expression K @ alpha + b in
+        Schur mode, including explicit validation-stopping scores. Joint avoids
+        rounding the dot product before cancellation with the intercept. It
+        refines uncertain rows and can use expensive exact rational recovery
+        for exceptional range or unresolved signs. Ordinary accepted scores are
+        not guaranteed correctly rounded. Kernel construction, solver updates,
+        objective checks and the score > 0 tie rule are unchanged. Corrected
+        scores may change predictions, CV selection or validation stopping.
+        The fitted affine_computation_ policy survives constructor changes;
+        refit to change it. Callback training scores retain solver arithmetic.
+
+    exact_recovery : {'standard', 'extended'}, default='standard'
+        Resource profile for lazy certified MM recovery after ordinary numerical
+        failure. Extended requires Schur mode and raises the exact rank and
+        rational bit caps from 16/4096 to 32/8192. Both profiles retain the
+        65,536-entry and 1,000,000-operation caps for factor preparation and
+        each MM preparation/step, with unchanged complete-PSD and accuracy
+        checks. This can recover additional small problems at substantial cost;
+        it does not guarantee convergence or bound wall time and total memory.
+        Healthy fits and L-BFGS do not use this recovery. exact_recovery_ records
+        the fitted profile; changing the constructor parameter requires refitting.
 
     implicit_P: bool
         Use the implicit inverse-product solver. False remains unsupported for
@@ -135,16 +192,26 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         uses refinement_first; anchor recovery retains its original checks.
     """
 
+    # Old serialized estimators predate this constructor parameter.
+    rbf_computation = 'standard'
+    affine_computation = 'standard'
+    exact_recovery = 'standard'
+
     def __init__(self, lambd=1.0, q=1.0, kernel='linear',
                  kernel_kws=None, implicit_P=True, max_iter=100,
                  obj_tol=1e-5, random_state=None, solver_mode='schur',
                  backend='auto', stopping='objective', initialization='auto',
                  tol=1e-6, patience=3, min_delta=0., check_interval=1,
                  callback=None, prediction_batch_size=None, implementation='optimized',
-                 acceleration=None, residual_check_order='refinement_first'):
+                 acceleration=None, residual_check_order='refinement_first',
+                 rbf_computation='standard', affine_computation='standard',
+                 exact_recovery='standard'):
         self.implementation = implementation
         self.acceleration = acceleration
         self.residual_check_order = residual_check_order
+        self.rbf_computation = rbf_computation
+        self.affine_computation = affine_computation
+        self.exact_recovery = exact_recovery
         self.lambd = lambd
         self.q = q
 
@@ -194,6 +261,8 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         self : object
         """
         self._validate_options(validation_data)
+        if self.rbf_computation == 'direct' and K is not None:
+            raise ValueError("rbf_computation='direct' constructs K from features; supplied K is unsupported.")
         if sample_weight is not None:
             raise NotImplementedError('Sample weights are not implemented for KernGDWD.')
         # Callers own K's correspondence to X. Supplied eigenpairs are also
@@ -292,11 +361,17 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                 callback=self.callback, validation=validation,
                 patience=self.patience, min_delta=self.min_delta,
                 check_interval=self.check_interval, implementation=self.implementation,
-                acceleration=self.acceleration, residual_check_order=self.residual_check_order)
+                acceleration=self.acceleration, residual_check_order=self.residual_check_order,
+                affine_computation=self.affine_computation,
+                **({'exact_recovery': self.exact_recovery}
+                   if self.exact_recovery != 'standard' else {}))
         self._set_fit_result(result)
         return self
 
     def _validate_options(self, validation_data=None):
+        self._validate_direct_rbf_configuration()
+        _validate_affine_computation(self)
+        _validate_exact_recovery(self)
         _validate_residual_check_order(self)
         if self.implementation not in ('optimized', 'reference'):
             raise ValueError("implementation must be 'optimized' or 'reference'.")
@@ -331,8 +406,37 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                 self.stopping not in ('objective', 'fixed') or self.callback is not None):
             raise ValueError('Legacy mode supports only the spectral backend, objective/fixed stopping, and no callback.')
 
+    def _validate_direct_rbf_configuration(self):
+        _validate_rbf_computation(self)
+        if self.rbf_computation == 'direct':
+            if self.kernel_kws is not None and not isinstance(self.kernel_kws, dict):
+                raise TypeError('Direct RBF kernel_kws must be a dictionary or None.')
+            if not self._direct_rbf_eligible():
+                raise ValueError('Direct RBF requires finite nonnegative gamma, no other '
+                                 'kernel keywords, and the standard kernel construction hooks.')
+
+    def _direct_rbf_eligible(self):
+        """Use the opt-in policy only with supported construction provenance."""
+        return (self.rbf_computation == 'direct'
+                and self.solver_mode == 'schur'
+                and isinstance(self.kernel, str) and self.kernel == 'rbf'
+                and not (set(self.kernel_kws or {}) - {'gamma'})
+                and getattr(self._compute_kernel, '__func__', None)
+                    is KernelClfMixin._compute_kernel
+                and getattr(self._compute_training_kernel, '__func__', None)
+                    is KernGDWD._compute_training_kernel
+                and getattr(self._known_psd_kernel, '__func__', None)
+                    is KernGDWD._known_psd_kernel
+                and self._known_psd_kernel())
+
     def _compute_training_kernel(self, X):
-        """Repair only a trusted named RBF construction that fails symmetry."""
+        """Construct the requested RBF policy without changing solver checks."""
+        if self.rbf_computation == 'direct':
+            self._validate_direct_rbf_configuration()
+        if self._direct_rbf_eligible():
+            self.kernel_computation_ = 'direct_v1'
+            self.kernel_symmetry_correction_ = 0.0
+            return self._compute_kernel(X)
         self.kernel_computation_ = 'sklearn'
         self.kernel_symmetry_correction_ = 0.0
         K = self._compute_kernel(X)
@@ -389,6 +493,8 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         if precision not in ('ordinary', 'compensated', 'adaptive'):
             raise ValueError('Invalid fitted kernel prediction precision.')
         self.prediction_precision_ = precision
+        self.affine_computation_ = result.get('affine_computation', 'standard')
+        self.exact_recovery_ = result.get('exact_recovery', 'standard')
         self.intercept_ = np.asarray(result['offset']).reshape(-1)
         self.dual_coef_ = np.asarray(result['alpha']).reshape(1, -1)
         self.objective_history_ = np.asarray(result['objective_history'])
@@ -427,6 +533,9 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         preparation also leaves the estimator unfitted; checked private caches
         remain subject to their existing data and parameter validity checks.
         """
+        self._validate_direct_rbf_configuration()
+        _validate_affine_computation(self)
+        _validate_exact_recovery(self)
         # Promote before constructing the Gram matrix, not after rounding it.
         X = check_array(X, accept_sparse='csr',
                         dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
@@ -465,10 +574,26 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         self._cv_solver_mode = self.solver_mode
         self._cv_backend = self.backend
         self._cv_implementation = self.implementation
+        self._cv_rbf_computation = self.rbf_computation
+        self._cv_affine_computation = self.affine_computation
+        self._cv_exact_recovery = self.exact_recovery
         return self
 
     def _cv_cache_matches(self, X):
         """Invalidate hidden precomputation whenever data or kernel changes."""
+        if self.exact_recovery != getattr(self, '_cv_exact_recovery', 'standard'):
+            return False
+        if self.affine_computation != getattr(self, '_cv_affine_computation', 'standard'):
+            return False
+        requested = self.rbf_computation
+        if requested != getattr(self, '_cv_rbf_computation', 'standard'):
+            return False
+        cached_policy = getattr(self, '_cv_kernel_computation', None)
+        if requested == 'direct':
+            if cached_policy != 'direct_v1' or not self._direct_rbf_eligible():
+                return False
+        elif cached_policy == 'direct_v1':
+            return False
         if (not hasattr(self, '_cv_X') or
                 not hasattr(self, '_cv_kernel_computation')):
             return False
@@ -526,6 +651,22 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
     kernel_kws_vals: list of dicts
         The kernel parameters to validate over.
 
+    rbf_computation : {'standard', 'direct'}, default='standard'
+        Forwarded to every candidate and the final refit. Direct requires named
+        RBF in Schur mode with gamma-only kernel keywords; see KernGDWD for
+        numerical compatibility and cost limits. Standard preserves existing
+        construction behavior.
+
+    affine_computation : {'standard', 'joint'}, default='standard'
+        Forwarded to every candidate and the final refit. Joint uses the
+        optional full affine decision evaluation described by KernGDWD and
+        requires Schur mode. It can change CV scores and the chosen candidate.
+
+    exact_recovery : {'standard', 'extended'}, default='standard'
+        Forwarded to every candidate and the final refit. Extended requires
+        Schur mode and increases the bounded exact recovery capacity described
+        by KernGDWD; it does not weaken numerical acceptance checks.
+
     cv:
         Cross-validation splitter or fold count, interpreted by
         sklearn.model_selection.check_cv.
@@ -545,6 +686,11 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         finite-iteration results; see KernGDWD.
 
     """
+    # Old serialized CV estimators retain the standard constructor policy.
+    rbf_computation = 'standard'
+    affine_computation = 'standard'
+    exact_recovery = 'standard'
+
     def __init__(self,
                  lambd_vals=np.logspace(-2, 2, 10),
                  q_vals=np.logspace(-2, 2, 5),
@@ -555,12 +701,16 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
                  stopping='objective', initialization='auto', tol=1e-6,
                  patience=3, min_delta=0., check_interval=1, callback=None,
                  prediction_batch_size=None, implementation='optimized', acceleration=None,
-                 residual_check_order='refinement_first'):
+                 residual_check_order='refinement_first', rbf_computation='standard',
+                 affine_computation='standard', exact_recovery='standard'):
 
         self.lambd_vals = lambd_vals
         self.implementation = implementation
         self.acceleration = acceleration
         self.residual_check_order = residual_check_order
+        self.rbf_computation = rbf_computation
+        self.affine_computation = affine_computation
+        self.exact_recovery = exact_recovery
         self.q_vals = q_vals
         self.kernel = kernel
         self.kernel_kws_vals = kernel_kws_vals
@@ -602,6 +752,9 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         """
         if sample_weight is not None:
             raise NotImplementedError('Sample weights are not implemented for KernGDWDCV.')
+        _validate_rbf_computation(self)
+        _validate_affine_computation(self)
+        _validate_exact_recovery(self)
         _validate_residual_check_order(self)
         if self.stopping == 'validation':
             raise ValueError('KernGDWDCV does not create monitoring splits. Use a plain '
@@ -628,7 +781,10 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
                                check_interval=self.check_interval, callback=self.callback,
                                prediction_batch_size=self.prediction_batch_size,
                                implementation=self.implementation, acceleration=self.acceleration,
-                               residual_check_order=self.residual_check_order),
+                               residual_check_order=self.residual_check_order,
+                               rbf_computation=self.rbf_computation,
+                               affine_computation=self.affine_computation,
+                               exact_recovery=self.exact_recovery),
                    X=X, y=y,
                    params=params,
                    scoring=self.scoring,
@@ -646,6 +802,8 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         self.intercept_ = self.best_estimator_.intercept_
         self.dual_coef_ = self.best_estimator_.dual_coef_
         self.prediction_precision_ = getattr(self.best_estimator_, 'prediction_precision_', 'ordinary')
+        self.affine_computation_ = getattr(self.best_estimator_, 'affine_computation_', 'standard')
+        self.exact_recovery_ = getattr(self.best_estimator_, 'exact_recovery_', 'standard')
 
         return self
 

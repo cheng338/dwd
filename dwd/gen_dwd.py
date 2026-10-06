@@ -491,19 +491,43 @@ def solve_gen_dwd(X, y, lambd, q=1,
     obj_vals.append(prev_obj)
 
     for i in range(max_iter):
+        step_gradient = None
         if stopping == 'optimality':
-            if _linear_gradient(X, y, q, lambd, beta, offset, X_beta)[2] <= tol:
+            builtin_before = (_linear_gradient is _BUILTIN_LINEAR_GRADIENT
+                              and V_grad is _BUILTIN_LOSS_GRADIENT
+                              and (get_step_implicit is _BUILTIN_IMPLICIT_STEP if implicit_P
+                                   else get_step_explicit is _BUILTIN_EXPLICIT_STEP)
+                              and not _has_numpy_error_handler())
+            current_gradient = _linear_gradient(X, y, q, lambd, beta, offset, X_beta)
+            if current_gradient[2] <= tol:
                 break
+            # Reuse only built-in evaluations at this unchanged iterate.
+            # Replaced loss/gradient/step hooks retain their original calls.
+            if (builtin_before and _linear_gradient is _BUILTIN_LINEAR_GRADIENT
+                    and V_grad is _BUILTIN_LOSS_GRADIENT
+                    and current_gradient[1].dtype == _REUSE_GRADIENT_DTYPE
+                    and not _has_numpy_error_handler()):
+                step_gradient = current_gradient[:2]
 
         # get step
         if implicit_P:
-            beta_step, offset_step = \
-                get_step_implicit(X, y, beta, offset, lambd, q,
-                                  U, v, g, pi, UP=UP, X_beta=X_beta)
+            if step_gradient is not None and get_step_implicit is _BUILTIN_IMPLICIT_STEP:
+                beta_step, offset_step = get_step_implicit(
+                    X, y, beta, offset, lambd, q, U, v, g, pi, UP=UP,
+                    X_beta=X_beta, _gradient=step_gradient)
+            else:
+                beta_step, offset_step = \
+                    get_step_implicit(X, y, beta, offset, lambd, q,
+                                      U, v, g, pi, UP=UP, X_beta=X_beta)
         else:
-            beta_step, offset_step = \
-                get_step_explicit(X, y, beta, offset, lambd, q, P_inv,
-                                  X_beta=X_beta)
+            if step_gradient is not None and get_step_explicit is _BUILTIN_EXPLICIT_STEP:
+                beta_step, offset_step = get_step_explicit(
+                    X, y, beta, offset, lambd, q, P_inv,
+                    X_beta=X_beta, _gradient=step_gradient)
+            else:
+                beta_step, offset_step = \
+                    get_step_explicit(X, y, beta, offset, lambd, q, P_inv,
+                                      X_beta=X_beta)
 
         offset = offset - offset_step  # step[0]
         beta = beta - beta_step  # step[1:]
@@ -564,19 +588,22 @@ def get_P0_eig(X):
 
 
 def get_step_implicit(X, y, beta, offset, lambd, q, U, v, g, pi,
-                      UP=None, X_beta=None):
+                      UP=None, X_beta=None, *, _gradient=None):
     """
     Gets the MM step by implicitly calculating P^{-1} gamma
     """
     n_samples = X.shape[0]
 
     # compute update
-    if X_beta is None:
-        X_beta = X.dot(beta)
-    z = y * V_grad(y * (X_beta + offset), q=q) / n_samples
+    if _gradient is None:
+        if X_beta is None:
+            X_beta = X.dot(beta)
+        z = y * V_grad(y * (X_beta + offset), q=q) / n_samples
 
-    gamma = X.T.dot(z) + 2 * lambd * beta
-    gamma = np.insert(gamma, 0, z.sum())
+        gamma = X.T.dot(z) + 2 * lambd * beta
+        gamma = np.insert(gamma, 0, z.sum())
+    else:
+        gamma = np.insert(_gradient[1], 0, _gradient[0])
 
     # implictly compute P_inv @ gamma
 
@@ -594,19 +621,22 @@ def get_step_implicit(X, y, beta, offset, lambd, q, U, v, g, pi,
     return beta_step, offset_step
 
 
-def get_step_explicit(X, y, beta, offset, lambd, q, P_inv, X_beta=None):
+def get_step_explicit(X, y, beta, offset, lambd, q, P_inv, X_beta=None, *, _gradient=None):
     """
     Gets the MM step by explicitly calculating P^{-1} gamma
     """
     n_samples = X.shape[0]
 
     # compute update
-    if X_beta is None:
-        X_beta = X.dot(beta)
-    z = y * V_grad(y * (X_beta + offset), q=q) / n_samples
+    if _gradient is None:
+        if X_beta is None:
+            X_beta = X.dot(beta)
+        z = y * V_grad(y * (X_beta + offset), q=q) / n_samples
 
-    gamma = X.T.dot(z) + 2 * lambd * beta
-    gamma = np.insert(gamma, 0, z.sum())
+        gamma = X.T.dot(z) + 2 * lambd * beta
+        gamma = np.insert(gamma, 0, z.sum())
+    else:
+        gamma = np.insert(_gradient[1], 0, _gradient[0])
 
     step = (n_samples / _majorization_constant(q)) * P_inv @ gamma
 
@@ -726,3 +756,17 @@ def c_from_lambd(lambd, q, beta):
         log_c = (np.log1p(q) + q * np.log1p(1.0 / q)
                  + (q + 1.0) * np.log(norm))
         return float(np.exp(log_c))
+
+
+def _has_numpy_error_handler():
+    """Error callbacks and loggers may mutate state or raise during evaluation."""
+    policies = np.geterr().values()
+    return 'call' in policies or 'log' in policies
+
+
+# Private identity guards preserve replaced module-level hooks.
+_BUILTIN_LOSS_GRADIENT = V_grad
+_BUILTIN_LINEAR_GRADIENT = _linear_gradient
+_BUILTIN_IMPLICIT_STEP = get_step_implicit
+_BUILTIN_EXPLICIT_STEP = get_step_explicit
+_REUSE_GRADIENT_DTYPE = np.dtype(np.float64)

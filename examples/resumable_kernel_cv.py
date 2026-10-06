@@ -6,6 +6,7 @@ maximum selection. Only named feature kernels and accuracy scoring are in
 scope. Completed receipts contain scores and diagnostics, never fitted models.
 """
 from copy import deepcopy
+from contextlib import nullcontext
 from numbers import Integral, Real
 import os
 from time import perf_counter
@@ -239,9 +240,14 @@ def _scan_receipts(directory, identity_hash, folds, candidates):
     return completed
 
 
-def _check_runtime(expected, *, check_inventory=True):
-    if runtime_fingerprint(check_inventory=check_inventory) != expected:
+def _check_runtime(expected, *, check_inventory=True, native_threads=1):
+    options = {'check_inventory': check_inventory}
+    if native_threads != 1:
+        options['expected_native_threads'] = native_threads
+    observed = runtime_fingerprint(**options)
+    if observed != expected:
         raise CheckpointError('Source or numerical runtime changed during the run.')
+    return observed
 
 
 def _run_fold(clf, X, y, train, test, candidates, fold_index, existing,
@@ -324,7 +330,8 @@ def _aggregate(records_by_fold, candidates):
 
 
 def _work_summary(records, replayed, started, refit_seconds, final_scaling_seconds,
-                   refit_best, workers, refit_diagnostics):
+                   refit_best, workers, refit_diagnostics, final_native_threads,
+                   final_runtime):
     current = {key: 0.0 for key in ('preparation', 'fit', 'score', 'scaling')}
     historical = dict(current)
     mapping = {'preparation_seconds': 'preparation', 'runtime': 'fit',
@@ -349,7 +356,9 @@ def _work_summary(records, replayed, started, refit_seconds, final_scaling_secon
         'fold_workers': workers, 'native_threads_per_worker': 1,
         'current_seconds': current, 'historical_seconds': historical,
         'final_refit': {'performed': refit_best, 'fresh_model': refit_best,
-                        'diagnostics': refit_diagnostics},
+                        'diagnostics': refit_diagnostics,
+                        'native_threads_requested': final_native_threads,
+                        'runtime': final_runtime},
         'interpretation': 'Preparation, fit, score and scaling are summed elapsed '
             'worker intervals, not CPU time or wall time. Replayed receipt timings '
             'describe historical evaluations. Final refitting always trains a fresh '
@@ -399,7 +408,8 @@ def _warn_summary(error):
 
 
 def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
-                     jobs=1, resume=False, scale=False, refit_best=True):
+                     jobs=1, resume=False, scale=False, refit_best=True,
+                     final_native_threads=1):
     """Run fixed-grid binary kernel DWD CV, optionally reusing completed folds.
 
     ``params`` follows ``dwd.cv.run_cv``: a dictionary of values or value lists.
@@ -407,9 +417,14 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
     worker uses one native thread and processes its candidate path serially.
     ``jobs=-1`` allows all logical CPUs, capped by the number of unfinished folds.
     Scaling, when requested, is fitted using each training fold only.
+    ``final_native_threads`` is a positive integer (default 1) used only for
+    full-data scaling and the fresh final fit. CV always uses one native thread.
+    The caller's thread limits are restored before return. Changing native
+    threads may change floating-point reductions; no faster fit is guaranteed.
 
     ``resume=True`` requires matching data, materialized folds, parameters,
-    source and numerical runtime. Jobs and refit choice may change. Each saved
+    source and numerical runtime. Jobs, refit choice and final native-thread
+    count may change. Each saved
     evaluation is checksummed and checked semantically before new fits begin.
     An unfinished evaluation is rerun; models and partial solver state are not
     serialized. ``refit_best=True`` therefore performs fresh full-data fitting
@@ -425,6 +440,7 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
     jobs = _integer(jobs, 'jobs')
     if jobs == 0 or jobs < -1:
         raise ValueError('jobs must be positive or -1.')
+    final_native_threads = _integer(final_native_threads, 'final_native_threads', 1)
     if scoring != 'accuracy' or not isinstance(scoring, str):
         raise ValueError('This example supports accuracy scoring only.')
     _validate_estimator(clf)
@@ -496,37 +512,57 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
             best_score = aggregate['mean_test_score'][best_index]
             best_clf = scaler = None
             refit_diagnostics = None
+            final_runtime = None
             refit_seconds = final_scaling_seconds = 0.0
             if refit_best:
-                final_X = X
-                if scale:
-                    scale_started = perf_counter()
-                    scaler = StandardScaler()
-                    final_X = scaler.fit_transform(X)
-                    final_scaling_seconds = perf_counter() - scale_started
-                best_clf = clone(clf).set_params(**best_params)
-                checkpoint.assert_current()
-                _check_runtime(expected_runtime, check_inventory=False)
-                fit_started = perf_counter()
-                best_clf.fit(final_X, y)
-                refit_seconds = perf_counter() - fit_started
-                try:
-                    refit_diagnostics = _diagnostics(best_clf)
-                except Exception as error:
-                    _warn_summary(error)
+                expected_final_runtime = expected_runtime
+                if final_native_threads != 1:
+                    expected_final_runtime = deepcopy(expected_runtime)
+                    for pool in expected_final_runtime['native_pools']:
+                        pool['num_threads'] = final_native_threads
+                final_limits = (threadpool_limits(limits=final_native_threads)
+                                if final_native_threads != 1 else nullcontext())
+                with final_limits:
+                    final_X = X
+                    if scale:
+                        scale_started = perf_counter()
+                        scaler = StandardScaler()
+                        final_X = scaler.fit_transform(X)
+                        final_scaling_seconds = perf_counter() - scale_started
+                    best_clf = clone(clf).set_params(**best_params)
+                    checkpoint.assert_current()
+                    if final_native_threads == 1:
+                        final_runtime = _check_runtime(expected_runtime, check_inventory=False)
+                    else:
+                        final_runtime = _check_runtime(
+                            expected_final_runtime, check_inventory=False,
+                            native_threads=final_native_threads)
+                    fit_started = perf_counter()
+                    best_clf.fit(final_X, y)
+                    refit_seconds = perf_counter() - fit_started
+                    if final_native_threads != 1:
+                        _check_runtime(expected_final_runtime, check_inventory=False,
+                                       native_threads=final_native_threads)
+                    try:
+                        refit_diagnostics = _diagnostics(best_clf)
+                    except Exception as error:
+                        _warn_summary(error)
             checkpoint.assert_current()
             _check_runtime(expected_runtime)
             try:
                 summary = _work_summary(completed, replayed, started, refit_seconds,
                                          final_scaling_seconds, refit_best, workers,
-                                         refit_diagnostics)
+                                         refit_diagnostics, final_native_threads,
+                                         final_runtime)
             except Exception as error:
                 _warn_summary(error)
                 summary = {
                     'schema': _SCHEMA, 'scope': 'current_invocation',
                     'coverage': 'unavailable', 'reporting_error': type(error).__name__,
                     'final_refit': {'performed': refit_best, 'fresh_model': refit_best,
-                                    'diagnostics': refit_diagnostics}}
+                                    'diagnostics': refit_diagnostics,
+                                    'native_threads_requested': final_native_threads,
+                                    'runtime': final_runtime}}
             result = {'best_params': best_params, 'best_score': best_score,
                       'best_clf': best_clf, 'scaler': scaler,
                       'agg_results': aggregate, 'all_cv_results': all_cv_results,

@@ -8,6 +8,59 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
 ## Unreleased
 
+- Add optional `final_native_threads=1` and `--final-native-threads` to the
+  resumable kernel tuning example. Keep `jobs=1` and one native thread per
+  detected pool in each CV worker as defaults; larger `jobs` values remain
+  bounded by unfinished folds. Apply an explicitly requested final limit only
+  to full-data scaling, fresh fitting and diagnostics, record its runtime, and
+  restore caller limits on success or failure. Compatible CV receipts may be
+  reused when only final threads change; source/runtime identity checks remain
+  strict. Estimator code and mathematics are unchanged, while different thread
+  counts can change floating-point reductions. See the
+  [guide](docs/resumable_cv.md#parallel-execution) and
+  [validation scope](VALIDATION.md#final-refit-thread-control-in-local-source).
+- Release each completed prediction kernel block before constructing the next
+  one. This removes one overlapping allocation for owned multi-batch kernels,
+  while preserving kernel calls, scoring arithmetic and returned values. It is
+  automatic internal behavior, with no new option or general speedup claim. See
+  [scope and validation](VALIDATION.md#prediction-kernel-block-lifetime-in-local-source).
+- Reuse the current gradient in eligible built-in float64 `GenDWD` iterations
+  with `stopping='optimality'`, avoiding a repeated loss derivative and
+  transposed feature product. Preserve the iterate, MM arithmetic order,
+  stopping rules and fresh final diagnostics. Keep the previous computation
+  for custom hooks, other gradient dtypes and active NumPy `call` or `log`
+  handlers. Ordinary duplicate warning counts can decrease. The optimization
+  is automatic within the existing optional stopping mode; the objective
+  default and example settings are unchanged. See
+  [validation and timing scope](VALIDATION.md#linear-gradient-reuse-in-local-source).
+- Add opt-in `exact_recovery='extended'` to `KernGDWD` and `KernGDWDCV`.
+  Raise the complete exact-factor rank limit from 16 to 32 and exact-arithmetic
+  limit from 4096 to 8192 bits, for both certification and MM recovery. Retain
+  the standard default, matrix-entry and operation caps, original kernel and
+  mathematical acceptance checks. Prepare exact arithmetic only after an
+  ordinary MM update fails. Record the requested setting in fitted provenance,
+  CV caches and resumable identities. The option extends coverage for small
+  difficult kernels at additional cost; see the
+  [limits and validation scope](docs/kernel_dwd.md#optional-extended-exact-recovery).
+- Add opt-in `affine_computation='joint'` to `KernGDWD` and `KernGDWDCV` for
+  corrected Schur fits. Include the intercept in adaptive error screening and
+  accurate summation for public prediction and explicit validation stopping.
+  This repairs a demonstrated decision-boundary rounding error without changing
+  the DWD objective, free intercept, solver acceptance checks or zero tie rule.
+  Keep `'standard'` as the default; the optional arithmetic can change rounded
+  scores and validation choices, and exact ties can be substantially slower.
+  Preserve the fitted choice through serialization and distinguish it in CV
+  caches and resumable checkpoint identities. See the
+  [scope and costs](docs/kernel_dwd.md#optional-joint-affine-scoring).
+- Add opt-in `rbf_computation='direct'` to `KernGDWD` and `KernGDWDCV`.
+  Evaluate named RBF kernels from coordinate differences, with range-safe
+  handling of exceptional distances, to repair demonstrated self/equal-copy
+  inconsistencies and large-offset cancellation. Keep `'standard'` as the
+  default; direct computation can be substantially slower. Preserve the RBF
+  function, DWD objective and solver acceptance checks, while allowing changed
+  rounded kernels, coefficients and predictions. Retain old fitted policies
+  and distinguish the requested policy in CV cache and checkpoint identities.
+  See the [scope, cost and precision limits](docs/kernel_dwd.md#optional-direct-rbf-computation).
 - Record startup accelerator availability, native-screen support and the loaded
   extension's path and hash in resumable CV checkpoint identities. Reject
   incompatible startup states and unidentified extension bindings before fitting.

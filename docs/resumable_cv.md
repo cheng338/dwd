@@ -30,7 +30,8 @@ Repeat the same command with `--resume` to continue. Use `--scale` to fit a
 validation rows. The final scaler is fitted on all supplied training rows.
 Keep the scaling choice unchanged when resuming.
 
-The defaults are five folds, seed 42, one fold worker and no scaling. The CLI
+The defaults are five folds, seed 42, one fold worker, one native thread per
+detected numerical-library pool, and no scaling. The CLI
 uses shuffled stratified folds; `--seed` controls both their construction and
 the estimator seed.
 `--max-iter` defaults to the estimator's 100-update cap; other solver defaults
@@ -60,6 +61,7 @@ result = run_resumable_cv(
     resume=False,
     scale=False,
     refit_best=True,
+    final_native_threads=1,
 )
 ```
 
@@ -67,6 +69,21 @@ An integer `cv` follows scikit-learn's default unshuffled stratified splitting
 for classifiers. To use shuffled folds, supply a `StratifiedKFold` with an
 explicit integer `random_state`. The realized train/validation indices are
 included in the checkpoint identity.
+
+To use optional joint affine scoring, set
+`KernGDWD(..., affine_computation='joint')` in the Python interface. The policy
+is recorded with estimator and candidate parameters; changing it requires a
+new run directory. Completed evaluations retain the chosen arithmetic when
+resumed, and the selected estimator uses it in the final refit. The source
+identity also includes the affine scoring helper. See
+[the precision option](kernel_dwd.md#optional-joint-affine-scoring) for costs
+and numerical scope.
+
+`KernGDWD(..., exact_recovery='extended')` selects the optional larger recovery
+capacity for each fit. It is also part of estimator, candidate and source
+identity, so a checkpoint cannot be reused after changing this setting. The
+default is unchanged. See [extended exact recovery](kernel_dwd.md#optional-extended-exact-recovery)
+for its small-kernel scope and work limits.
 
 The return dictionary contains `best_params`, `best_score`, `best_clf`, `scaler`,
 `agg_results`, `all_cv_results` and `work_summary`. `best_clf` is `None` when
@@ -80,8 +97,11 @@ disabled, `scaler` is `None`. No fitted model is serialized in the checkpoint.
 Each saved evaluation belongs to a specific candidate and fold. Compatibility
 checks cover the data, materialized folds, candidate settings, scaling, source
 and numerical runtime. A changed search requires a new run directory. Existing
-checkpoints are not silently treated as a new run. You may change `jobs` or
-`refit_best` when resuming. A corrupt or incompatible receipt stops the run
+checkpoints are not silently treated as a new run. You may change `jobs`,
+`refit_best` or `final_native_threads` when resuming with the same source and
+runtime. Final thread counts do not enter CV identity: CV always runs with one
+native thread per detected pool, and the requested final model is fitted afresh.
+A corrupt or incompatible receipt stops the run
 before new CV fitting; it is not silently dropped. Source and runtime files
 must remain unchanged while the process is running.
 
@@ -96,6 +116,10 @@ Checkpoints created before these accelerator fields were added cannot be resumed
 with the updated example. Start a new run directory, or use the matching old
 example and runtime to resume the earlier run; missing fields are not inferred
 or migrated.
+
+The final-thread option also changes the recorded example source identity.
+Checkpoints from an earlier example version still require its matching source
+and runtime, or a new run directory; this option does not relax that check.
 
 The run directory contains `identity.json`, `generation.json` and completed
 evaluations under `receipts/fold-0000/candidate-000000.json`, with zero-based
@@ -141,7 +165,9 @@ The `work_summary` describes only the current invocation:
   scaling durations of replayed evaluations.
 - `fold_workers` is the number of workers used, which is zero on complete CV
   replay. `final_refit` records whether a fresh final model was fitted and
-  includes that model's termination diagnostics.
+  includes that model's termination diagnostics, `native_threads_requested`
+  and the observed `runtime` fingerprint. The runtime is `None` when final
+  fitting is skipped.
 
 Preparation, fit, score and scaling totals sum elapsed worker intervals. They
 are neither CPU time nor overall wall time. The wall interval begins on entry
@@ -152,16 +178,34 @@ from its receipts, including any matrix rebuilding after an interruption.
 
 ## Parallel execution
 
-`jobs=1` runs folds serially. Larger positive values permit separate fold worker
-processes, bounded by the number of unfinished folds. In the Python interface,
-`jobs=-1` permits all logical processors, subject to that same bound. Each
-process uses one native numeric thread. Candidates within a fold remain serial
-so compatible candidates can share matrix preparation.
+`jobs=1` is the default and runs folds serially. Larger positive values permit
+separate fold worker processes, bounded by the number of unfinished folds. In
+the Python interface, `jobs=-1` permits all logical processors, subject to that
+same bound; the CLI accepts positive `--jobs` values. Each CV worker limits each
+detected BLAS/OpenMP pool to one native thread. Candidates within a fold remain
+serial so compatible candidates can share matrix preparation. This is not a
+one-CPU limit for the entire search.
 
 Each active fold may require its own dense kernel and solver workspace. Choose
 `jobs` according to available memory as well as processors. Parallel execution
 has not been benchmarked for this example. Small folds can spend more time
 starting workers than they save through concurrent fitting.
+
+`final_native_threads` is a positive integer with default `1`; the CLI spelling
+is `--final-native-threads`. For example, add `--final-native-threads 4` to request
+four native threads per detected pool for full-data scaling, the fresh final
+fit and its diagnostics. It does not change the fold worker count or CV thread
+limits. The option controls library pools, not a process-wide or machine-wide
+CPU quota, physical-core affinity, or an automatic scheduling policy.
+
+The example verifies the requested final pool counts together with the same
+source and runtime identity used for CV. After final fitting it restores the
+CV limit, and on return or an exception it restores the caller's prior limits.
+An interrupted final fit is rerun from the beginning on resume; completed CV
+receipts remain reusable when compatible. Increasing the count can change
+floating-point reductions and fitted values. It can also consume more CPU time
+without reducing elapsed time, so no universal speedup or cross-thread bitwise
+agreement is promised.
 
 ## Supported scope
 
@@ -182,9 +226,14 @@ update equations.
 ## Extreme-input prediction qualification
 
 The example owns its training arrays to protect checkpoint consistency from
-caller mutation. On extreme unscaled RBF data, querying the caller's original
+caller mutation. With the default `rbf_computation='standard'`, on extreme
+unscaled RBF data, querying the caller's original
 training array can differ from an older model retaining that exact object,
-because the existing kernel implementation treats self and copied queries
+because the standard kernel implementation treats self and copied queries
 differently in floating-point arithmetic. See the
 [release validation scope](validation-1.3.10.md) for the reproduced case and
-matched-query controls. Universal bitwise prediction equivalence is not claimed.
+matched-query controls. Optional
+[direct RBF computation](kernel_dwd.md#optional-direct-rbf-computation) addresses
+that demonstrated kernel-construction discrepancy. Joint affine scoring alone
+cannot repair kernel-entry errors. Universal bitwise prediction equivalence
+is not claimed.

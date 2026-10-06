@@ -472,6 +472,82 @@ class ResumableKernelCVTests(unittest.TestCase):
         self.assertIsNotNone(result['best_clf'])
         self.assert_work(result, 0, 4, True)
 
+    def test_joint_affine_interruption_replays_only_completed_folds(self):
+        model = self.model(affine_computation='joint')
+        original = example._fit_and_score
+        calls = []
+
+        def interrupted(*args, **kwargs):
+            calls.append(True)
+            if len(calls) == 2:
+                raise KeyboardInterrupt('interrupted joint affine candidate')
+            return original(*args, **kwargs)
+
+        with patch.object(example, '_fit_and_score', interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_example(clf=model)
+        saved = {path: path.read_bytes() for path in self.receipts()}
+        self.assertEqual(len(saved), 1)
+        resumed = self.run_example(clf=model, resume=True)
+        fresh = self.run_example('fresh-joint', clf=model)
+        self.assert_work(resumed, 3, 1, True)
+        self.assertTrue(all(path.read_bytes() == value for path, value in saved.items()))
+        self.assertEqual(resumed['best_clf'].affine_computation_, 'joint')
+        self.assertEqual(resumed['best_params'], fresh['best_params'])
+        assert_array_equal(resumed['agg_results']['mean_test_score'],
+                           fresh['agg_results']['mean_test_score'])
+        assert_array_equal(resumed['best_clf'].decision_function(self.query),
+                           fresh['best_clf'].decision_function(self.query))
+
+    def test_changed_affine_policy_rejects_checkpoint_reuse_before_fitting(self):
+        for original_policy, changed_policy in (('standard', 'joint'), ('joint', 'standard')):
+            with self.subTest(original_policy=original_policy):
+                name = 'affine-' + original_policy
+                self.run_example(name, clf=self.model(affine_computation=original_policy),
+                                 refit_best=False)
+                with patch.object(KernGDWD, 'fit', side_effect=AssertionError('unexpected fit')):
+                    with self.assertRaises(CheckpointError):
+                        self.run_example(name, clf=self.model(affine_computation=changed_policy),
+                                         refit_best=False, resume=True)
+
+    def test_extended_exact_recovery_survives_interruption_and_refit(self):
+        model = self.model(exact_recovery='extended')
+        original = example._fit_and_score
+        calls = []
+
+        def interrupted(*args, **kwargs):
+            calls.append(True)
+            if len(calls) == 2:
+                raise KeyboardInterrupt('interrupted extended-recovery candidate')
+            return original(*args, **kwargs)
+
+        with patch.object(example, '_fit_and_score', interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_example(clf=model)
+        saved = {path: path.read_bytes() for path in self.receipts()}
+        self.assertEqual(len(saved), 1)
+        resumed = self.run_example(clf=model, resume=True)
+        fresh = self.run_example('fresh-extended', clf=model)
+        self.assert_work(resumed, 3, 1, True)
+        self.assertTrue(all(path.read_bytes() == value for path, value in saved.items()))
+        self.assertEqual(resumed['best_clf'].exact_recovery_, 'extended')
+        self.assertEqual(resumed['best_params'], fresh['best_params'])
+        assert_array_equal(resumed['agg_results']['mean_test_score'],
+                           fresh['agg_results']['mean_test_score'])
+        assert_array_equal(resumed['best_clf'].decision_function(self.query),
+                           fresh['best_clf'].decision_function(self.query))
+
+    def test_changed_exact_recovery_rejects_checkpoint_reuse_before_fitting(self):
+        for original_policy, changed_policy in (('standard', 'extended'), ('extended', 'standard')):
+            with self.subTest(original_policy=original_policy):
+                name = 'recovery-' + original_policy
+                self.run_example(name, clf=self.model(exact_recovery=original_policy),
+                                 refit_best=False)
+                with patch.object(KernGDWD, 'fit', side_effect=AssertionError('unexpected fit')):
+                    with self.assertRaises(CheckpointError):
+                        self.run_example(name, clf=self.model(exact_recovery=changed_policy),
+                                         refit_best=False, resume=True)
+
     def test_reference_random_initialization_resumes_exactly_after_unpublished_fit(self):
         model = self.model('reference', initialization='auto', random_state=83)
         expected = run_cv(model, self.X, self.y, self.params,
