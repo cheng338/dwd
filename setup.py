@@ -50,7 +50,7 @@ class StrictBuildExt(build_ext):
 portable = os.environ.get('DWD_BUILD_ACCEL', '1') == '0'
 extensions = [] if portable else [Extension(
     'dwd._residual_accel',
-    sources=['dwd/residual_bridge.c', 'dwd/residual_core.c'],
+    sources=['dwd/residual_bridge.c', 'dwd/residual_core.c', 'dwd/dense_score_core.c'],
     define_macros=[('Py_LIMITED_API', '0x030B0000')],
     py_limited_api=True,
     optional=True,

@@ -47,6 +47,37 @@ the ensemble package. The numerical code uses the same read-only kernel and
 O(n) additional output storage; workers do not copy the Gram matrix or create
 child processes.
 
+## Dense accurate scores
+
+The same extension provides a separate `score_rows` entry for bounded dense
+tiles already requiring accurate kernel scoring. It uses the previous
+`frexp`/Dekker/`ldexp` product order and feeds every high product, followed by
+every low product, into the finite `fsum` reduction. It does not replace this
+calculation with an ordinary dot product, change a numerical bound or alter the
+model. The residual evaluator above remains separate and unchanged.
+For normal binary64 values whose scaled result remains normal, exponent-field
+changes perform the exact normalization/scaling; zero, subnormal and exceptional
+cases retain the library `frexp`/`ldexp` path and its rounding points.
+
+The score path initially requires Windows CPython 3.12 on x86-64 with
+binary64 round-to-nearest arithmetic and gradual underflow. Other operating
+systems retain the existing Python calculation until their native builds are
+qualified. This restriction applies only to the new score entry; the existing
+residual runtime guard is unchanged. It handles the
+existing C/F-contiguous float64 kernels through bounded contiguous tiles, with
+at most eight rows and O(n_training) scratch. It releases the GIL without
+starting additional threads. Single-row tails, unsupported layouts/dtypes,
+custom arithmetic hooks, active NumPy `call`/`log` handlers and missing or older
+extensions keep the original Python path. A native refusal or scratch failure
+releases its temporary storage before retrying the original evaluation and
+error ordering.
+
+This is an internal execution optimization, with no new estimator setting.
+The shared helper is used by prediction and by some fitting/validation score
+calculations. Sparse scores and the optional joint-affine calculation retain
+their existing arithmetic. Benefits depend on how many dense rows require
+accurate scoring; ordinarily accepted dot products do not use this entry.
+
 ## Building and installing
 
 An accelerated wheel is platform specific and is tagged

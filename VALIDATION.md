@@ -1,11 +1,63 @@
 # Validation
 
+## Version 1.3.12: dense accurate scoring
+
+The native dense-score entry preserves the previous ordered expanded products
+and summation, with exact normal-number exponent operations and a library
+fallback for exceptional ranges. The residual evaluator, mathematical model,
+score screen and estimator defaults are unchanged. See the
+[implementation limits](docs/compiled_residual.md#dense-accurate-scores).
+
+The earlier integration passed 13 new test methods, including 105 exponent-boundary combinations;
+88 existing relevant tests passed, with two wider-dtype tests skipped on the
+Windows platform. Separate isolated arithmetic checks passed 10,626 scaling,
+187 helper and 157 summation cases. All 60 saved DWD/ensemble models reproduced
+score and label bytes through the installed fix. Seven fresh fits matched
+score/label bytes, 96 checked fitted arrays and recorded top-level stopping
+controls; this does not claim equality of every nested diagnostic field.
+
+The following timing used the preceding private build, before the Windows-only
+eligibility predicate was added. Windows arithmetic is unchanged; the final
+release wheels were not retimed. At unchanged selected parameters, the affected
+MNIST 2/3 ensemble prediction
+mean fell from 96.707 to 63.084 ms (34.8%) across ten saved training draws. The
+other five full-kernel/ensemble cases showed only small timing fluctuations.
+The matched Windows Ryzen 9 9955HX/AOCL comparison used one native thread,
+prediction batches of 1,024, balanced repeated warm calls and whole-block
+background screening. All 30 final blocks were accepted from 32 attempts;
+rejected blocks were retained. Observed background thresholds were at most one
+aggregate CPU core and 0.05 core for other detected numerical processes.
+Those counters do not prove exclusive CPU use or quantify interference in a
+single-thread call. No Intel or Ubuntu performance result is claimed.
+
+The main release remains Python 3.11+. CPython 3.10 support is confined to the
+separate portable wheel and its reproducible compatibility source bundle.
+The new native score entry is limited to conventional Windows CPython 3.12/x86-64;
+unsupported runtimes and inputs retain the prior Python calculation.
+
+The final 1.3.12 installed-artifact checks ran 115 targeted test methods per
+wheel: 113 passed with the Windows CPython 3.12 native wheel (two wider-dtype
+skips), and 99 passed with both the Python 3.12 portable and CPython 3.10
+companion wheels (16 native/wider-dtype skips each). This includes the final
+14-method dense-score module, with its explicit operating-system guard.
+Three public-fit smoke checks passed per wheel. The rebuilt extension is
+byte-identical to the validated private extension. These are targeted release
+checks, separate from the earlier integration and historical full-suite runs.
+
+Offline selection with all three DWD wheels available selected the CPython
+3.10 companion on Python 3.10 and the standard ABI wheel on Windows Python
+3.11/3.12. The simulated Linux Python 3.11 target selected the standard
+portable wheel. The Python 3.11 target checks do not constitute execution on
+a Python 3.11 interpreter or on Linux.
+
+## Version 1.3.11 validation record
+
 Version 1.3.11 packages the changes below, developed and validated individually
 after 1.3.10. The per-change records retain their original scope and timing
 limitations. For 1.3.10 evidence, see the separate
 [validation scope and timing follow-up](docs/validation-1.3.10.md).
 
-## Main release verification
+## 1.3.11 main release verification
 
 The main release requires Python 3.11 or later. It retains the original
 stable-ABI build policy and standard-library TOML test import. Python 3.10

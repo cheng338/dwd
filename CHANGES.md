@@ -6,6 +6,17 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 1.3.12 — 2026-10-06
+
+- Execute eligible dense accurate-score tiles in the existing optional C
+  extension. Preserve the previous ordered mantissa splitting, separately
+  scaled high/low products and high-then-low summation, without changing the
+  score screen, solver or fitted model. The initial native score path requires
+  Windows CPython 3.12 on x86-64; unsupported inputs, custom arithmetic hooks, older
+  extensions and exceptional states retain the original Python evaluation.
+  This also applies where fitting uses the shared score helper. See the
+  [implementation and fallback scope](docs/compiled_residual.md#dense-accurate-scores).
+
 ## 1.3.11 — 2026-10-06
 
 - Add optional `final_native_threads=1` and `--final-native-threads` to the

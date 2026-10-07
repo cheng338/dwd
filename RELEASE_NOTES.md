@@ -1,37 +1,40 @@
-# DWD 1.3.11 — October 6, 2026
+# DWD 1.3.12 — October 6, 2026
 
-This release packages the numerical safeguards, optional precision settings and
-workflow improvements developed since 1.3.10. The DWD objective, practical
-unregularized intercept, regularization convention and default stopping settings
-are preserved.
+This release reduces Python overhead in dense accurate kernel scoring. Eligible
+tiles use a separate entry in the existing optional C extension, preserving the
+mantissa split, separately scaled high/low products and high-then-low summation.
+Exact exponent-field operations avoid library calls for normal results; other
+ranges retain the library operations. The DWD model, coefficients, intercept,
+solver acceptance checks, precision screen and estimator defaults are unchanged.
 
-- Add opt-in direct RBF computation, joint affine scoring and extended exact
-  recovery. Keep their standard defaults and existing mathematical acceptance
-  checks; the optional policies can change rounded results and increase cost.
-- Recover representable objectives after intermediate overflow, reuse eligible
-  current gradients for optimality stopping, and release completed prediction
-  kernel blocks before constructing the next batch.
-- Strengthen resumable accelerator identity and add an explicit final-refit
-  native-thread option, retaining existing CV and final-thread defaults.
+The new score path is automatic on conventional Windows CPython 3.12/x86-64 with the
+extension available. Missing or older extensions, unsupported layouts/dtypes,
+custom arithmetic hooks, active NumPy call/log handlers and exceptional states
+retain the original Python path. Single-row tails and error ordering are
+preserved. The existing residual evaluator is unchanged. Because the score
+helper is shared, fitting and validation can also use the new execution path.
 
-The main release requires Python 3.11 or later. Its Windows AMD64 native wheel
-is `dwd-1.3.11-cp311-abi3-win_amd64.whl`; the portable alternative is
-`dwd-1.3.11-py3-none-any.whl` and has the same Python requirement. See the
-[installation instructions](README.md#installation), [changelog](CHANGES.md)
-and [validation scope](VALIDATION.md). The historical 1.3.10 timing investigation
-did not establish a persistent package regression; its qualifications remain
-in the separate [1.3.10 record](docs/validation-1.3.10.md).
+For the affected MNIST 2/3 ensemble at its unchanged selected parameters,
+matched prediction timing decreased from 96.707 to 63.084 ms (34.8%). The other
+five DWD/ensemble cases showed only small fluctuations. These Windows AMD/AOCL
+results are workload-specific, with recorded background-load screening; they
+are not a general speedup claim. Timing used the preceding private build,
+before the Windows-only eligibility predicate; Windows arithmetic is unchanged,
+and the final release wheels were not retimed. Saved scores/labels and fresh-fit controls
+matched the previous implementation. See [validation](VALIDATION.md).
 
-Wheel compatibility and residual arithmetic are separate: CPython 3.11 can
-load the Windows `cp311-abi3` extension but uses DWD's portable compensated
-residual check. The guarded compiled or built-in `math.sumprod` paths remain
-eligible only on conventional CPython 3.12; a portable wheel there can still
-use `math.sumprod`. NumPy/SciPy BLAS acceleration is independent. The separate
-`cp310-none-any` compatibility asset is portable and restricted to CPython 3.10;
-its source overlay is distributed separately from the main source archive.
+The main release requires Python 3.11+. Windows AMD64 wheels use
+`dwd-1.3.12-cp311-abi3-win_amd64.whl`; `dwd-1.3.12-py3-none-any.whl` omits the
+extension. The ABI permits loading on supported CPython 3.11+ versions, while
+the residual and dense-score runtime gates remain narrower. CPython 3.11 uses
+portable residual and score calculations; a portable wheel on CPython 3.12 can
+still use guarded built-in `math.sumprod` residuals. NumPy/SciPy BLAS remains
+independent. The separately built `cp310-none-any` companion and reproducible
+compatibility source bundle remain restricted to CPython 3.10; main source is
+not changed to accommodate that interpreter.
 
 This is a fork of slicersalt/dwd, originally implemented by Iain Carmichael,
 with upstream maintenance by David Allemang and Kitware. Subsequent fork
-development is guided by Chang Cheng. Original credits and the MIT license are
-retained. Earlier [1.3.9 release notes](docs/history/RELEASE_NOTES-1.3.9.md) remain
-available as a historical record.
+development is guided by Chang Cheng. Original credits and the MIT license
+are retained. See the [changelog](CHANGES.md), [installation](README.md#installation)
+and [previous release notes](docs/history/RELEASE_NOTES-1.3.11.md).

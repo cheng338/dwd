@@ -9,6 +9,7 @@ import numpy as np
 from scipy.sparse import issparse
 
 from ._compensated_residual import _gradual_underflow, _products, _fsum, _split_operand
+from ._compiled_scores import try_expanded_dense_rows
 
 
 def _inputs(K, alpha):
@@ -63,6 +64,10 @@ def _expanded_dense_rows(K, alpha, indices, split_alpha, result, *, batch_enable
     must not replace an earlier row's summation error. Allocation failure also
     disables batching for the remaining rows in this call.
     """
+    native = try_expanded_dense_rows(
+        K, alpha, indices, split_alpha, result, batch_enabled=batch_enabled)
+    if native is not None:
+        return native
     # Wider floating dtypes can warn or fail when cast to binary64. Keep
     # their original row-by-row conversion and error ordering on all platforms.
     if K.dtype.kind == 'f' and K.dtype.itemsize > 8:
