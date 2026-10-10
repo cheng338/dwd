@@ -1,40 +1,46 @@
-# DWD 1.3.12 — October 6, 2026
+# DWD 1.3.13 — October 9, 2026
 
-This release reduces Python overhead in dense accurate kernel scoring. Eligible
-tiles use a separate entry in the existing optional C extension, preserving the
-mantissa split, separately scaled high/low products and high-then-low summation.
-Exact exponent-field operations avoid library calls for normal results; other
-ranges retain the library operations. The DWD model, coefficients, intercept,
-solver acceptance checks, precision screen and estimator defaults are unchanged.
+This release corrects rounding-sized accuracy ties in cross-validation and
+adds diagnostic records for investigating difficult fits. The DWD objective,
+free intercept, fitting arithmetic, numerical acceptance checks and estimator
+defaults are unchanged.
 
-The new score path is automatic on conventional Windows CPython 3.12/x86-64 with the
-extension available. Missing or older extensions, unsupported layouts/dtypes,
-custom arithmetic hooks, active NumPy call/log handlers and exceptional states
-retain the original Python path. Single-row tails and error ordering are
-preserved. The existing residual evaluator is unchanged. Because the score
-helper is shared, fitting and validation can also use the new execution path.
+For explicitly named `scoring='accuracy'`, `run_cv` now ranks candidates using
+exact correct/sample-count proportions with equal fold weights. A mathematical
+tie selects the first candidate. Custom scorers retain their existing scalar
+aggregation. This can change the selected candidate when the previous rounded
+means incorrectly distinguished an accuracy tie; it performs no additional
+fitting or prediction.
 
-For the affected MNIST 2/3 ensemble at its unchanged selected parameters,
-matched prediction timing decreased from 96.707 to 63.084 ms (34.8%). The other
-five DWD/ensemble cases showed only small fluctuations. These Windows AMD/AOCL
-results are workload-specific, with recorded background-load screening; they
-are not a general speedup claim. Timing used the preceding private build,
-before the Windows-only eligibility predicate; Windows arithmetic is unchanged,
-and the final release wheels were not retimed. Saved scores/labels and fresh-fit controls
-matched the previous implementation. See [validation](VALIDATION.md).
+The resumable kernel example uses the same exact accuracy comparison and saves
+the counts, final objective, independent stopping flags, residuals and compact
+solver summaries. Missing diagnostics remain unknown. Receipt schema 2 and
+its aggregation identity require a new run directory for earlier checkpoints;
+existing records are not silently converted. See the
+[example guide](docs/resumable_cv.md#accuracy-counts-and-diagnostics).
+
+The new optional `dwd.profiling.residual_profile()` context observes guarded
+native residual dispatch, compiled-helper results, scalar calls, refusals and
+elapsed time. A bounded native return is distinct from solver acceptance.
+Profiles are separate from estimator state and caches, and cover only the
+current thread and asyncio task. The context reads clocks and records counters
+when enabled; it is not an overhead-free timing method. See the
+[profiling guide](docs/compiled_residual.md#optional-residual-profiling) and
+[validation scope](VALIDATION.md).
 
 The main release requires Python 3.11+. Windows AMD64 wheels use
-`dwd-1.3.12-cp311-abi3-win_amd64.whl`; `dwd-1.3.12-py3-none-any.whl` omits the
-extension. The ABI permits loading on supported CPython 3.11+ versions, while
-the residual and dense-score runtime gates remain narrower. CPython 3.11 uses
-portable residual and score calculations; a portable wheel on CPython 3.12 can
-still use guarded built-in `math.sumprod` residuals. NumPy/SciPy BLAS remains
-independent. The separately built `cp310-none-any` companion and reproducible
-compatibility source bundle remain restricted to CPython 3.10; main source is
-not changed to accommodate that interpreter.
+`dwd-1.3.13-cp311-abi3-win_amd64.whl`; `dwd-1.3.13-py3-none-any.whl` omits the
+optional extension. The extension, strict compiler flags and narrower numerical
+runtime guards are unchanged. An ABI-compatible interpreter does not
+necessarily use native numerical acceleration. NumPy/SciPy BLAS is independent.
+
+The separate CPython 3.10 companion remains at
+[version 1.3.12](https://github.com/cheng338/dwd/releases/tag/v1.3.12) and does not
+include these changes. Its refresh is deferred; this release does not change
+main source to accommodate Python 3.10.
 
 This is a fork of slicersalt/dwd, originally implemented by Iain Carmichael,
 with upstream maintenance by David Allemang and Kitware. Subsequent fork
 development is guided by Chang Cheng. Original credits and the MIT license
 are retained. See the [changelog](CHANGES.md), [installation](README.md#installation)
-and [previous release notes](docs/history/RELEASE_NOTES-1.3.11.md).
+and [previous release notes](docs/history/RELEASE_NOTES-1.3.12.md).

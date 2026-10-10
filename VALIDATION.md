@@ -1,5 +1,34 @@
 # Validation
 
+## Version 1.3.13: optional residual profiling
+
+The `residual_profile()` context passed 16 focused tests and 52 existing
+native-residual, bound, compiled-helper and adaptive-order regressions.
+The checks cover scalar and compiled routes, strided/read-only inputs,
+partial work before refusals, caught and propagated exceptions, nested
+contexts, independent threads/tasks and copied contexts after scope exit.
+Disabled instrumentation reads no clocks. A static comparison found the
+original arithmetic AST unchanged after removing observation-only code.
+The compiled sources, native extension and solver files are unchanged.
+
+Four full-kernel MNIST (1,7) fits ran with profiling off/on/on/off at the
+saved training rows, parameters and 3,000-iteration limit. All four reproduced
+the saved coefficients, intercepts, objective histories and checked training
+scores and predictions bit for bit. Each profiled fit recorded 3,000 compiled
+helper calls and no scalar `sumprod` calls; native-call counts matched the
+solver's existing counters. Bounded native returns remain distinct from the
+solver's subsequent acceptance decisions. Two complete 45-pair ensemble fits
+also preserved scientific state with profiling off and on.
+
+The sequential Windows CPython 3.12/AOCL hard-case fits used one native thread.
+Mean fit times were 42.020 seconds without profiling and 42.126 seconds with
+profiling. Whole-interval background CPU observations were retained, but do
+not exclude short bursts. These limited observations do not establish a
+universal overhead estimate or a speed improvement. The checks did not read
+official test arrays or replace dissertation timings, and do not turn an
+iteration-limited result into a convergence claim. See the
+[profiling scope and usage](docs/compiled_residual.md#optional-residual-profiling).
+
 ## Version 1.3.12: dense accurate scoring
 
 The native dense-score entry preserves the previous ordered expanded products

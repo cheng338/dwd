@@ -340,7 +340,7 @@ class ResumableKernelCVTests(unittest.TestCase):
                     encoding='utf-8'))
                 manifest = json.loads((self.root / 'run' / 'identity.json').read_text(
                     encoding='utf-8'))['payload']
-                self.assertEqual(saved['schema'], 1)
+                self.assertEqual(saved['schema'], 2)
                 self.assertEqual(saved['identity_sha256'], manifest['identity_sha256'])
                 self.assertEqual(saved['best_params'], result['best_params'])
                 self.assertEqual(saved['best_params_identity'], stable(result['best_params']))
@@ -634,10 +634,12 @@ class ResumableKernelCVTests(unittest.TestCase):
         receipt = self.receipts()[-1]
         original = receipt.read_bytes()
         payload = json.loads(original)['payload']
-        mutations = [dict(schema=True), dict(fold_index=99),
+        mutations = [dict(schema=True), dict(schema=1), dict(fold_index=99),
                      dict(candidate_index=99), dict(train_count=999),
                      dict(parameter_sha256='0' * 64),
                      dict(train_score=1.01), dict(test_score=True),
+                     dict(test_correct=True), dict(train_correct=-1),
+                     dict(test_correct=payload['test_correct'] + 1),
                      dict(runtime=-1.), dict(diagnostics={})]
         for mutation in mutations:
             with self.subTest(mutation=mutation):

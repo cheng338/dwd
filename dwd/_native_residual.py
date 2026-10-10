@@ -12,12 +12,14 @@ https://doi.org/10.1137/030601818
 """
 import math
 import sys
+import time
 import types
 
 import numpy as np
 
 from ._compensated_residual import _fsum, _gradual_underflow
 from ._compiled_residual import compiled_values
+from .profiling import _active_profile
 
 
 _MIN_OPERAND = 2.**-200
@@ -100,6 +102,23 @@ def _array_error_bound(computed, absolute_sum_upper, constants):
 
 
 def native_compensated_residual(K, shift, rhs, x, s, target_sum):
+    """Return guarded residuals and bounds, or decline with ``None``.
+
+    Optional :func:`dwd.profiling.residual_profile` observations do not alter
+    arithmetic or numerical gates. The six-argument solver interface is
+    unchanged; a bounded return is not a solver acceptance decision.
+
+    A bounded return is ``(residual, constraint, scores, residual_bounds,
+    constraint_bound, score_bounds)``. Unsupported arithmetic or uncertain
+    precision returns ``None`` for the portable compensated routine.
+    """
+    profile = _active_profile()
+    if profile is None:
+        return _native_compensated_residual(K, shift, rhs, x, s, target_sum)
+    return profile._run(_native_compensated_residual, K, shift, rhs, x, s, target_sum)
+
+
+def _native_compensated_residual(K, shift, rhs, x, s, target_sum, *, _sample=None):
     """Return residual, constraint, scores, and their three error allowances.
 
     The six outputs are ``(residual, constraint, scores, residual_bounds,
@@ -117,21 +136,32 @@ def native_compensated_residual(K, shift, rhs, x, s, target_sum):
     fma. At most O(n) additional storage is used, with no new dense matrix.
     """
     if not _native_supported() or not _round_to_nearest():
+        if _sample is not None:
+            _sample.route = 'unsupported'
+            _sample.decline_reason = 'runtime_or_rounding'
         return None
     try:
         eta = _gradual_underflow()
         # Do not silently allocate a second dense float64 Gram matrix.
         if not isinstance(K, np.ndarray) or K.dtype != np.dtype(float) or K.ndim != 2:
+            if _sample is not None:
+                _sample.decline_reason = 'kernel_type_or_shape'
             return None
         x, rhs = np.asarray(x, dtype=float), np.asarray(rhs, dtype=float)
         if x.ndim != 1 or rhs.shape != x.shape:
+            if _sample is not None:
+                _sample.decline_reason = 'vector_shape'
             return None
         n = len(x)
         if n == 0 or n + 3 > _MAX_TERMS or K.shape != (n, n):
+            if _sample is not None:
+                _sample.decline_reason = 'dimensions_or_term_limit'
             return None
         shift, s, target_sum = float(shift), float(s), float(target_sum)
         if not (_safe_operand(x) and _safe_operand(rhs)
                 and _safe_operand(np.array([shift, s, target_sum]))):
+            if _sample is not None:
+                _sample.decline_reason = 'operands'
             return None
 
         # The faithful fsum contract already used by the portable routine gives
@@ -139,8 +169,23 @@ def native_compensated_residual(K, shift, rhs, x, s, target_sum):
         absolute_x = _up(_up(_fsum(np.abs(x).tolist())))
         score_constants = _bound_constants(n, eta)
         residual_constants = _bound_constants(n + 3, eta)
-        compiled = compiled_values(K, x, rhs, shift, s)
+        if _sample is None:
+            compiled = compiled_values(K, x, rhs, shift, s)
+        else:
+            # Timing is confined to the opt-in observation path. The same
+            # dispatcher is called once, with its original positional inputs.
+            _sample.route = 'compiled_dispatch'
+            _sample.compiled_outcome = 'raised'
+            started = time.perf_counter()
+            try:
+                compiled = compiled_values(K, x, rhs, shift, s)
+            finally:
+                _sample.compiled_seconds = time.perf_counter() - started
+            _sample.compiled_outcome = ('declined' if compiled is None
+                                        else 'values_returned')
         if compiled is None:
+            if _sample is not None:
+                _sample.route = 'scalar_fallback'
             # Retain the scalar sumprod fallback, including its original product
             # order and per-row acceptance checks.
             positive_x = x.tolist()
@@ -150,9 +195,15 @@ def native_compensated_residual(K, shift, rhs, x, s, target_sum):
             residual_bounds, score_bounds = np.empty(n), np.empty(n)
             for i, row in enumerate(K):
                 if not _safe_operand(row):
+                    if _sample is not None:
+                        _sample.decline_reason = 'row_operands'
                     return None
                 row_terms = row.tolist()
+                if _sample is not None:
+                    _sample.scalar_started += 1
                 score = math.sumprod(row_terms, positive_x)
+                if _sample is not None:
+                    _sample.scalar_completed += 1
                 row_maximum = float(np.max(np.abs(row)))
                 score_sum_upper = _mul(row_maximum, absolute_x)
                 score_error = _error_bound(score, score_sum_upper, score_constants)
@@ -160,18 +211,28 @@ def native_compensated_residual(K, shift, rhs, x, s, target_sum):
                 # least the portable enlarged faithful-sum precision budget.
                 faithful_budget = _up(4 * _EPS * abs(score) + (2 * n + 6) * eta)
                 if not math.isfinite(score) or not math.isfinite(score_error) or score_error > faithful_budget:
+                    if _sample is not None:
+                        _sample.decline_reason = 'score_precision'
                     return None
                 row_terms.extend([float(rhs[i]), -s, -shift])
                 augmented_x[-1] = float(x[i])
+                if _sample is not None:
+                    _sample.scalar_started += 1
                 value = math.sumprod(row_terms, augmented_x)
+                if _sample is not None:
+                    _sample.scalar_completed += 1
                 total_upper = _add(_add(_add(score_sum_upper, abs(float(rhs[i]))), abs(s)),
                                    _mul(abs(shift), abs(float(x[i]))))
                 allowance = _error_bound(value, total_upper, residual_constants)
                 if not math.isfinite(value) or not math.isfinite(allowance):
+                    if _sample is not None:
+                        _sample.decline_reason = 'residual_precision'
                     return None
                 scores[i], score_bounds[i] = score, score_error
                 residual[i], residual_bounds[i] = value, allowance
         else:
+            if _sample is not None:
+                _sample.route = 'compiled_values'
             # These are fresh, disjoint arrays from the compiled call. Reuse
             # them instead of copying the same scores/residuals row by row.
             scores, residual, row_maxima = compiled
@@ -182,6 +243,8 @@ def native_compensated_residual(K, shift, rhs, x, s, target_sum):
                     4 * _EPS * np.abs(scores) + (2 * n + 6) * eta, np.inf)
                 if (not np.isfinite(scores).all() or not np.isfinite(score_bounds).all()
                         or np.any(score_bounds > faithful_budget)):
+                    if _sample is not None:
+                        _sample.decline_reason = 'score_precision'
                     return None
                 # Preserve the three outward additions and the separately
                 # rounded shifted-coefficient product from the scalar formula.
@@ -191,13 +254,19 @@ def native_compensated_residual(K, shift, rhs, x, s, target_sum):
                 total_upper = np.nextafter(total_upper + shifted_upper, np.inf)
                 residual_bounds = _array_error_bound(residual, total_upper, residual_constants)
                 if not np.isfinite(residual).all() or not np.isfinite(residual_bounds).all():
+                    if _sample is not None:
+                        _sample.decline_reason = 'residual_precision'
                     return None
             negative_x = (-x).tolist()
 
         constraint = _fsum([target_sum] + negative_x)
         constraint_bound = _up(4 * _EPS * abs(constraint) + 2 * eta)
         if not math.isfinite(constraint_bound):
+            if _sample is not None:
+                _sample.decline_reason = 'constraint_precision'
             return None
         return residual, constraint, scores, residual_bounds, constraint_bound, score_bounds
     except (FloatingPointError, ValueError, OverflowError, TypeError):
+        if _sample is not None:
+            _sample.decline_reason = 'arithmetic_exception'
         return None

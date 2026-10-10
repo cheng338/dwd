@@ -47,6 +47,48 @@ the ensemble package. The numerical code uses the same read-only kernel and
 O(n) additional output storage; workers do not copy the Gram matrix or create
 child processes.
 
+## Optional residual profiling
+
+Version 1.3.13 provides an opt-in context for diagnosing which guarded native
+residual route is used:
+
+```python
+from dwd.profiling import residual_profile
+
+with residual_profile() as profile:
+    model.fit(X_train, y_train)
+
+observations = profile.as_dict()
+```
+
+The profile records native calls, bounded returns, refusals, exceptions and
+scalar `sumprod` calls, including work completed before a refusal. It separates
+unsupported arithmetic, exits before dispatch, compiled-helper results and
+scalar fallback. `compiled_helper` describes the existing helper call; a refusal
+can mean a missing extension, a small input or an unsupported case. Its elapsed
+time is not a measurement of raw C arithmetic alone.
+
+A `bounded_return` means residuals and error allowances were returned. The
+solver still checks the original equations afterward. Use its existing
+`native_residual_acceptances` diagnostic for that later acceptance decision.
+The profiler excludes portable residual work after a native refusal and does
+not measure prediction scoring or the entire fit. Route times partition the
+native-call time; compiled-helper time is nested and must not be added again.
+
+Each context starts a new profile. Nested contexts collect separately, and the
+outer context resumes after the inner one exits. Exceptions propagate normally.
+Profiles observe only their own thread and asyncio task; child threads, tasks
+and process workers need their own contexts and explicit result collection.
+An empty parent profile does not establish that parallel workers performed no
+accurate checks. `as_dict()` returns a separate JSON-compatible snapshot.
+
+Profiling reads clocks and records counters, so use it for diagnosis rather
+than treating its times as an overhead-free benchmark. Outside an active
+context, the instrumentation reads no clocks and creates no per-call profile
+record. It changes no estimator parameter, arithmetic, tolerance or fitted
+state, and replaces no global numerical function. Profile results are not
+stored in fitted models or estimator caches.
+
 ## Dense accurate scores
 
 The same extension provides a separate `score_rows` entry for bounded dense

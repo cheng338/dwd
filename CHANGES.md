@@ -6,6 +6,27 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 1.3.13 — 2026-10-09
+
+- Add optional `dwd.profiling.residual_profile()` to observe guarded residual
+  dispatch, compiled-helper results, scalar calls, refusals and elapsed time.
+  Profiles are local to the current execution context; nested scopes collect
+  separately. A bounded native return is distinct from solver acceptance.
+  Preserve numerical arithmetic, acceptance bounds and estimator defaults.
+  See the [profiling guide](docs/compiled_residual.md#optional-residual-profiling).
+- Compare named accuracy scores using exact correct/sample-count proportions
+  in `run_cv` and the resumable kernel example. Preserve equal fold weights,
+  first-candidate tie selection, and custom-scorer behavior. Record counts and
+  reduced mean fractions without additional fitting or prediction. This fixes
+  rounding-sized differences between mathematical accuracy ties; it can change
+  the selected tied candidate without changing estimator mathematics.
+- Extend the resumable example's compact diagnostics with the final objective,
+  independent stopping flags, residuals and bounded solver/certificate/work
+  summaries. Missing facts remain unknown; fitted models and histories are
+  not saved. Receipt schema 2 and its aggregation identity require a new run
+  directory for checkpoints from earlier source versions. See the
+  [accuracy and diagnostic records](docs/resumable_cv.md#accuracy-counts-and-diagnostics).
+
 ## 1.3.12 — 2026-10-06
 
 - Execute eligible dense accurate-score tiles in the existing optional C

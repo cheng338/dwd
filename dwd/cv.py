@@ -4,9 +4,54 @@ from sklearn.utils import check_X_y
 from sklearn.model_selection import check_cv, ParameterGrid
 from time import time
 from copy import deepcopy
+from fractions import Fraction
+from numbers import Integral
 import numpy as np
 
 # TODO: make this use parallelism
+
+
+def _accuracy_correct(score, count):
+    """Recover an unweighted accuracy count without another prediction call.
+
+    Only use this for the explicitly named accuracy scorer. Round-trip checks
+    distinguish a valid count from an arbitrary scalar score.
+    """
+    if (isinstance(count, (bool, np.bool_)) or not isinstance(count, Integral)
+            or not 0 < count <= 2**52):
+        raise ValueError('Accuracy requires a positive, exactly represented sample count.')
+    value = float(score)
+    if not np.isfinite(value) or not 0 <= value <= 1:
+        raise ValueError('Accuracy must be finite and between zero and one.')
+    nearest = int(round(value * int(count)))
+    matches = [correct for correct in (nearest - 1, nearest, nearest + 1)
+               if 0 <= correct <= count
+               and float(Fraction(correct, int(count))) == value]
+    if len(matches) != 1:
+        raise ValueError('Accuracy does not identify an unweighted correct count '
+                         'for the recorded sample count.')
+    return matches[0]
+
+
+def _mean_accuracy(correct_counts, sample_counts):
+    """Average exact fold proportions; never replace them with pooled accuracy."""
+    if not correct_counts or len(correct_counts) != len(sample_counts):
+        raise ValueError('Accuracy counts require matching nonempty folds.')
+    proportions = []
+    for correct, count in zip(correct_counts, sample_counts):
+        if (isinstance(correct, (bool, np.bool_)) or not isinstance(correct, Integral)
+                or isinstance(count, (bool, np.bool_)) or not isinstance(count, Integral)
+                or count <= 0 or not 0 <= correct <= count):
+            raise ValueError('Invalid unweighted accuracy counts.')
+        proportions.append(Fraction(int(correct), int(count)))
+    return sum(proportions, Fraction()) / len(proportions)
+
+
+def _accuracy_means(folds, metric, n_settings):
+    prefix = metric.removesuffix('_score')
+    return [_mean_accuracy([fold[prefix + '_correct'][s] for fold in folds],
+                           [fold[prefix + '_count'][s] for fold in folds])
+            for s in range(n_settings)]
 
 
 def _validate_score(value, candidate, context, fold_index=None):
@@ -50,6 +95,8 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     scoring:
         Scorer name or callable accepted by sklearn.metrics.check_scoring.
         Must return a finite real scalar.
+        Explicit 'accuracy' uses exact equal-fold proportions for ranking;
+        other scorers retain their supplied scalar arithmetic.
 
     cv:
         Cross-validation splitter or fold count, interpreted by
@@ -72,6 +119,7 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
                      dtype='numeric')
 
     scorer = check_scoring(estimator=clf, scoring=scoring)
+    accuracy_scoring = isinstance(scoring, str) and scoring == 'accuracy'
 
     # init cross-validation generator
     cv = check_cv(cv, y=y, classifier=is_classifier(clf))
@@ -98,6 +146,7 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
                                        scorer=scorer,
                                        params=params,
                                        fold_index=f_idx,
+                                       _accuracy_scoring=accuracy_scoring,
                                        _fold_source=(X, train, test))
 
         all_cv_results.append(fold_results)
@@ -108,6 +157,12 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     for metric in metric_keys:
         agg_results['mean_' + metric] = []
         agg_results['std_' + metric] = []
+    accuracy_means = {}
+    if accuracy_scoring:
+        for metric in ('test_score', 'train_score'):
+            accuracy_means[metric] = _accuracy_means(all_cv_results, metric, n_settings)
+            agg_results['mean_' + metric + '_fraction'] = [
+                [value.numerator, value.denominator] for value in accuracy_means[metric]]
 
     for s in range(n_settings):
         for metric in metric_keys:
@@ -116,7 +171,8 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
             # all folds
             vals = [all_cv_results[f][metric][s] for f in range(n_folds)]
 
-            mean = np.mean(vals)
+            mean = (float(accuracy_means[metric][s]) if metric in accuracy_means
+                    else np.mean(vals))
             if metric in ('test_score', 'train_score'):
                 _validate_score(mean, all_param_settings[s],
                                 'mean ' + metric + ' across folds')
@@ -124,7 +180,8 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
             agg_results['std_' + metric].append(np.std(vals))
 
     # get the best tuning parameter setting
-    idx_best = np.argmax(agg_results['mean_test_score'])
+    idx_best = (max(range(n_settings), key=accuracy_means['test_score'].__getitem__)
+                if accuracy_scoring else np.argmax(agg_results['mean_test_score']))
     best_params = all_param_settings[idx_best]
     best_score = agg_results['mean_test_score'][idx_best]
 
@@ -140,7 +197,7 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
 
 
 def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
-                    *, fold_index=None, _fold_source=None):
+                    *, fold_index=None, _fold_source=None, _accuracy_scoring=False):
 
     # initalize classifier before cross validation
     cv_results = {'params': [],
@@ -148,6 +205,9 @@ def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
                   'test_score': [],
                   'runtime': [],
                   'init_time': 0.0}
+    if _accuracy_scoring:
+        cv_results.update({name: [] for name in
+                           ('train_correct', 'test_correct', 'train_count', 'test_count')})
 
     # Materialize each representation at most once per fold. A candidate may
     # select a precomputed kernel even when the constructor used a named kernel.
@@ -194,6 +254,11 @@ def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
         cv_results['runtime'].append(runtime)
         cv_results['train_score'].append(tr_score)
         cv_results['test_score'].append(tst_score)
+        if _accuracy_scoring:
+            for prefix, score, count in (('train', tr_score, len(y_train)),
+                                          ('test', tst_score, len(y_test))):
+                cv_results[prefix + '_correct'].append(_accuracy_correct(score, count))
+                cv_results[prefix + '_count'].append(count)
 
     return cv_results
 

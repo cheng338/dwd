@@ -7,8 +7,8 @@ reruns unfinished ones. The existing `dwd.cv.run_cv` API is unchanged.
 
 The example uses the estimator's existing fitting, scoring and matrix
 preparation. It retains the supplied solver settings, candidate ordering,
-arithmetic used to aggregate fold scores, and selection of the first candidate
-at an exact tie. It does not extend or refine the grid.
+equal weighting of fold scores, and selection of the first candidate at an
+exact accuracy tie. It does not extend or refine the grid.
 
 ## Command-line example
 
@@ -94,6 +94,11 @@ disabled, `scaler` is `None`. No fitted model is serialized in the checkpoint.
 
 ## Recovery and compatibility
 
+Receipt schema 2 records accuracy counts and an explicit aggregation policy.
+Checkpoints from earlier source versions require a new run directory; they
+are not upgraded by inferring missing counts or diagnostic facts. Existing
+checkpoint files remain untouched.
+
 Each saved evaluation belongs to a specific candidate and fold. Compatibility
 checks cover the data, materialized folds, candidate settings, scaling, source
 and numerical runtime. A changed search requires a new run directory. Existing
@@ -155,6 +160,31 @@ work summary.
 same order as `dwd.cv.run_cv`, including duplicate settings; an exact tie selects
 the first candidate. Termination diagnostics are saved for inspection and do
 not silently exclude a candidate with valid finite scores.
+
+## Accuracy counts and diagnostics
+
+Both this example and `dwd.cv.run_cv(..., scoring='accuracy')` compare the
+exact mean of each fold's correct/sample-count proportion. Folds retain equal
+weight even when they have unequal sizes; scores are not pooled across rows.
+The correct count is recovered from the known unweighted accuracy and sample
+count, with an exact round-trip check. This requires no second prediction.
+The generic `run_cv` behavior for custom or other named scorers is unchanged.
+
+Fold results include `train_correct`, `test_correct`, `train_count` and
+`test_count`. Aggregate results include reduced numerator/denominator pairs in
+`mean_train_score_fraction` and `mean_test_score_fraction`; ordinary mean fields
+contain the float conversion of those exact means. Standard deviations retain
+their existing floating-point calculation. Mathematical ties select the first
+candidate, even if a floating-point average would differ by one rounding unit.
+
+Diagnostics separately record the objective, iteration work, gradient and
+stationarity residuals, and the reported objective/optimality/stopping flags.
+`solver_summary` retains bounded scalar timing, recovery and certificate facts
+already reported by the solver. It does not save coefficient arrays or
+iteration histories. Missing attributes remain `None` or absent, never a
+fabricated zero or a convergence claim. Nested solver timing categories can
+overlap and must not be summed as independent costs. A zero dual endpoint
+retains its recorded kernel assumption and is not a PSD certificate.
 
 The `work_summary` describes only the current invocation:
 
