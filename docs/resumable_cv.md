@@ -62,6 +62,7 @@ result = run_resumable_cv(
     scale=False,
     refit_best=True,
     final_native_threads=1,
+    cv_native_threads=1,
 )
 ```
 
@@ -104,8 +105,9 @@ checks cover the data, materialized folds, candidate settings, scaling, source
 and numerical runtime. A changed search requires a new run directory. Existing
 checkpoints are not silently treated as a new run. You may change `jobs`,
 `refit_best` or `final_native_threads` when resuming with the same source and
-runtime. Final thread counts do not enter CV identity: CV always runs with one
-native thread per detected pool, and the requested final model is fitted afresh.
+runtime. Final thread counts do not enter CV identity because the requested
+final model is fitted afresh. `cv_native_threads` does enter CV identity:
+changing it requires a new run directory, including when all folds are saved.
 A corrupt or incompatible receipt stops the run
 before new CV fitting; it is not silently dropped. Source and runtime files
 must remain unchanged while the process is running.
@@ -125,6 +127,48 @@ or migrated.
 The final-thread option also changes the recorded example source identity.
 Checkpoints from an earlier example version still require its matching source
 and runtime, or a new run directory; this option does not relax that check.
+
+## Allocating CV workers and native threads
+
+`--cv-native-threads N` optionally changes the numerical-library thread limit
+inside each fold worker; the default remains one. Candidates within each fold
+still run sequentially so they can reuse the existing matrix preparation.
+For example, `--jobs 4 --cv-native-threads 4` allows four simultaneous folds
+with four native threads each. Five folds cannot occupy more than five fold
+workers. Fewer unfinished folds also reduce the active worker count on resume.
+Choose the product of workers and native threads to fit the CPU budget;
+additional threads do not guarantee a faster solver.
+These are numerical-library limits and nominal allocations, not a limit on all
+operating-system threads. In the Python interface, `jobs=-1` divides the detected
+logical CPU count by `cv_native_threads`, rounding down but allowing at least one
+worker, then caps it by unfinished folds and any supplied memory allowance.
+An explicit positive `jobs` value remains the caller's concurrency choice.
+Choose a native-thread count that itself fits the available CPU budget.
+
+Two optional arguments can further cap concurrency:
+`--cv-memory-budget-mib B --cv-worker-memory-mib W`. Both are required together.
+The worker count is at most `floor(B/W)`, and a budget smaller than one worker
+allowance is rejected. These are **caller-supplied planning allowances**, not
+automatically measured model peaks or operating-system memory limits. Estimate
+the largest fold's data copies, dense matrices, solver workspaces and scoring
+buffers, include headroom, and leave room outside `B` for the coordinator and
+other applications. A mistaken allowance can still exhaust memory. This cap
+applies to CV only; the final full-data fit needs its own memory assessment.
+
+The Python names are `cv_native_threads`, `cv_memory_budget_mib` and
+`cv_worker_memory_mib`. Worker and allowance settings may change on resume;
+the CV native-thread count may not. Completed receipt timings retain their
+original concurrency and should not be pooled as controlled timing benchmarks
+after a scheduling change. `work_summary.cv_resource_plan` records the current
+request, unfinished folds, effective workers, native-thread count and supplied
+memory allowances. It reports zero active workers on complete CV replay.
+The example restores the caller's thread limits after success or failure.
+
+`--final-native-threads` remains independent: it applies to fresh final scaling
+and fitting only. The final runtime is recorded separately. For fitting time,
+combine the reported final scaling and estimator-fit intervals when describing
+the complete preprocessing-plus-fit procedure; neither includes CV search or
+summary publication.
 
 The run directory contains `identity.json`, `generation.json` and completed
 evaluations under `receipts/fold-0000/candidate-000000.json`, with zero-based
@@ -208,13 +252,14 @@ from its receipts, including any matrix rebuilding after an interruption.
 
 ## Parallel execution
 
-`jobs=1` is the default and runs folds serially. Larger positive values permit
-separate fold worker processes, bounded by the number of unfinished folds. In
-the Python interface, `jobs=-1` permits all logical processors, subject to that
-same bound; the CLI accepts positive `--jobs` values. Each CV worker limits each
-detected BLAS/OpenMP pool to one native thread. Candidates within a fold remain
-serial so compatible candidates can share matrix preparation. This is not a
-one-CPU limit for the entire search.
+`jobs=1` and `cv_native_threads=1` are the defaults. Larger positive `jobs`
+values permit separate fold worker processes, bounded by unfinished folds and
+any supplied memory allowance. In the Python interface, `jobs=-1` divides the
+logical CPU count by the requested native threads per worker, with at least
+one worker before applying those bounds; the CLI accepts positive `--jobs`
+values. See [allocating CV resources](#allocating-cv-workers-and-native-threads)
+for the native-thread option, allowance calculation and limits of this plan.
+Candidates within each fold remain serial to share compatible matrix preparation.
 
 Each active fold may require its own dense kernel and solver workspace. Choose
 `jobs` according to available memory as well as processors. Parallel execution

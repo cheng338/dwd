@@ -707,11 +707,16 @@ original-equation residual can extend that private refinement budget to eight.
 These are corrections within an MM update, not extra MM iterations or a change
 to `max_iter`.
 
-For eligible optimized, unaccelerated Cholesky fits,
+For eligible optimized Cholesky fits, with or without `acceleration='restart'`,
 `residual_check_order='adaptive'` can assess the untouched state accurately before
 trying another correction after two discarded trials whose original states passed
-accurate assessment. The same acceptance checks apply. This opt-in order can
-change finite-iteration results; see the [1.3.9 changes](candidate_changes.md).
+accurate assessment. The same acceptance checks apply. The rules for restart
+proposals, objective-descent checks and restart decisions are unchanged. This opt-in order
+can change finite-iteration results. The original 1.3.9 feature supported only
+unaccelerated fits; version 1.3.14 adds the restart combination. See the
+[original feature scope](candidate_changes.md) and the
+[restart validation](../VALIDATION.md#version-1314-development-validation). The default remains
+`'refinement_first'`; healthy ordinary checks gain no skipped correction work.
 
 If reference spectral inverse-action refinement exhausts its allowance or
 stagnates at the same stored

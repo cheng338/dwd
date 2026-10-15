@@ -83,6 +83,43 @@ def _integer(value, name, minimum=None):
     return value
 
 
+def _memory_allowances(budget_mib, worker_mib):
+    """Validate caller-provided allowances, not estimates of model memory."""
+    if (budget_mib is None) != (worker_mib is None):
+        raise ValueError('cv_memory_budget_mib and cv_worker_memory_mib must be supplied together.')
+    if budget_mib is None:
+        return None, None
+    values = []
+    for name, value in (('cv_memory_budget_mib', budget_mib),
+                        ('cv_worker_memory_mib', worker_mib)):
+        if (isinstance(value, (bool, np.bool_)) or not isinstance(value, Real)
+                or not np.isfinite(value) or value <= 0):
+            raise ValueError(name + ' must be finite and positive.')
+        values.append(float(value))
+    if values[0] < values[1]:
+        raise ValueError('The CV memory budget must admit at least one worker allowance.')
+    return tuple(values)
+
+
+def _worker_plan(jobs, missing_folds, native_threads, budget_mib, worker_mib):
+    automatic_cpu_budget = (os.cpu_count() or 1) if jobs == -1 else None
+    requested = max(1, automatic_cpu_budget // native_threads) if jobs == -1 else jobs
+    workers = min(requested, missing_folds)
+    memory_cap = None
+    if budget_mib is not None:
+        # Exact integer ratios avoid rounding up an allowance boundary.
+        from fractions import Fraction
+        memory_cap = int(Fraction(budget_mib) // Fraction(worker_mib))
+        workers = min(workers, memory_cap)
+    return {'jobs': jobs, 'requested_workers': requested,
+            'automatic_cpu_budget': automatic_cpu_budget, 'unfinished_folds': missing_folds,
+            'workers': workers, 'native_threads_per_worker': native_threads,
+            'nominal_compute_threads': workers * native_threads,
+            'memory_budget_mib': budget_mib, 'worker_memory_mib': worker_mib,
+            'memory_worker_cap': memory_cap,
+            'memory_basis': 'caller_supplied_allowances' if budget_mib is not None else None}
+
+
 def _simple_parameters(value):
     """Exclude stateful, executable and opaque objects before building identity."""
     if value is None or isinstance(value, (str, bool, np.bool_, Integral)):
@@ -322,12 +359,13 @@ def _check_runtime(expected, *, check_inventory=True, native_threads=1):
 
 
 def _run_fold(clf, X, y, train, test, candidates, fold_index, existing,
-              run_dir, token, identity_hash, expected_runtime, scale):
+              run_dir, token, identity_hash, expected_runtime, scale, cv_native_threads=1):
     """A single worker owns a fold; candidates stay in their original order."""
     directory = io_path(run_dir)
     records = dict(existing)
-    with worker_lease(directory, token, fold_index), threadpool_limits(limits=1):
-        _check_runtime(expected_runtime)
+    guard_options = {} if cv_native_threads == 1 else {'native_threads': cv_native_threads}
+    with worker_lease(directory, token, fold_index), threadpool_limits(limits=cv_native_threads):
+        _check_runtime(expected_runtime, **guard_options)
         assert_generation(directory, token)
         X_train, X_test = X[train, :], X[test, :]
         y_train, y_test = y[train], y[test]
@@ -344,7 +382,7 @@ def _run_fold(clf, X, y, train, test, candidates, fold_index, existing,
             if candidate_index in records:
                 continue
             assert_generation(directory, token)
-            _check_runtime(expected_runtime, check_inventory=False)
+            _check_runtime(expected_runtime, check_inventory=False, **guard_options)
             model.set_params(**candidate)
             preparation_seconds = 0.0
             if not model._cv_cache_matches(X_train):
@@ -366,12 +404,12 @@ def _run_fold(clf, X, y, train, test, candidates, fold_index, existing,
                 'diagnostics': diagnostics}
             _validate_receipt(record, identity_hash, fold_index, candidate_index,
                               candidate, len(train), len(test))
-            _check_runtime(expected_runtime, check_inventory=False)
+            _check_runtime(expected_runtime, check_inventory=False, **guard_options)
             assert_generation(directory, token)
             write_receipt(_receipt_path(directory, fold_index, candidate_index), record)
             records[candidate_index] = record
             scaling_seconds = 0.0
-        _check_runtime(expected_runtime)
+        _check_runtime(expected_runtime, **guard_options)
         assert_generation(directory, token)
     return fold_index, records
 
@@ -412,7 +450,7 @@ def _aggregate(records_by_fold, candidates):
 
 def _work_summary(records, replayed, started, refit_seconds, final_scaling_seconds,
                    refit_best, workers, refit_diagnostics, final_native_threads,
-                   final_runtime):
+                   final_runtime, cv_native_threads=1):
     current = {key: 0.0 for key in ('preparation', 'fit', 'score', 'scaling')}
     historical = dict(current)
     mapping = {'preparation_seconds': 'preparation', 'runtime': 'fit',
@@ -434,7 +472,7 @@ def _work_summary(records, replayed, started, refit_seconds, final_scaling_secon
         'schema': _SCHEMA, 'scope': 'current_invocation',
         'executed_evaluations': new_count, 'replayed_evaluations': old_count,
         'fold_count': len(records), 'candidate_count': len(records[0]),
-        'fold_workers': workers, 'native_threads_per_worker': 1,
+        'fold_workers': workers, 'native_threads_per_worker': cv_native_threads,
         'current_seconds': current, 'historical_seconds': historical,
         'final_refit': {'performed': refit_best, 'fresh_model': refit_best,
                         'diagnostics': refit_diagnostics,
@@ -490,16 +528,20 @@ def _warn_summary(error):
 
 def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
                      jobs=1, resume=False, scale=False, refit_best=True,
-                     final_native_threads=1):
+                     final_native_threads=1, cv_native_threads=1,
+                     cv_memory_budget_mib=None, cv_worker_memory_mib=None):
     """Run fixed-grid binary kernel DWD CV, optionally reusing completed folds.
 
     ``params`` follows ``dwd.cv.run_cv``: a dictionary of values or value lists.
     Duplicate candidates remain distinct. Jobs run across folds only; each
-    worker uses one native thread and processes its candidate path serially.
-    ``jobs=-1`` allows all logical CPUs, capped by the number of unfinished folds.
+    worker uses ``cv_native_threads`` (default 1) and processes candidates serially.
+    ``jobs=-1`` divides logical CPU count by the native-thread count, allowing
+    at least one worker and capped by the number of unfinished folds.
     Scaling, when requested, is fitted using each training fold only.
     ``final_native_threads`` is a positive integer (default 1) used only for
-    full-data scaling and the fresh final fit. CV always uses one native thread.
+    full-data scaling and the fresh final fit. The optional paired memory
+    allowances cap simultaneous CV workers; they are supplied by the caller,
+    not measured memory limits or a guarantee against allocation failure.
     The caller's thread limits are restored before return. Changing native
     threads may change floating-point reductions; no faster fit is guaranteed.
 
@@ -522,6 +564,9 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
     if jobs == 0 or jobs < -1:
         raise ValueError('jobs must be positive or -1.')
     final_native_threads = _integer(final_native_threads, 'final_native_threads', 1)
+    cv_native_threads = _integer(cv_native_threads, 'cv_native_threads', 1)
+    cv_memory_budget_mib, cv_worker_memory_mib = _memory_allowances(
+        cv_memory_budget_mib, cv_worker_memory_mib)
     if scoring != 'accuracy' or not isinstance(scoring, str):
         raise ValueError('This example supports accuracy scoring only.')
     _validate_estimator(clf)
@@ -553,8 +598,11 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
     y.flags.writeable = False
     folds = _materialize_folds(cv, X, y)
     clf = clone(clf)
-    with threadpool_limits(limits=1):
-        expected_runtime = runtime_fingerprint(check_inventory=True)
+    guard_options = {} if cv_native_threads == 1 else {'native_threads': cv_native_threads}
+    fingerprint_options = ({} if cv_native_threads == 1 else
+                           {'expected_native_threads': cv_native_threads})
+    with threadpool_limits(limits=cv_native_threads):
+        expected_runtime = runtime_fingerprint(check_inventory=True, **fingerprint_options)
         identity = {
             'schema': _SCHEMA, 'example': 'resumable_kernel_cv',
             'estimator': stable(clf.get_params(deep=False)),
@@ -563,7 +611,7 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
             'accuracy_aggregation': 'exact_equal_fold_proportions_v1',
             'folds': [{'train': array_fingerprint(train), 'test': array_fingerprint(test)}
                       for train, test in folds],
-            'runtime': expected_runtime, 'native_threads': 1}
+            'runtime': expected_runtime, 'native_threads': cv_native_threads}
         with CheckpointRun(run_dir, identity, resume=resume) as checkpoint:
             checkpoint.assert_current()
             completed = _scan_receipts(checkpoint.directory, checkpoint.identity_hash,
@@ -571,23 +619,24 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
             replayed = [set(records) for records in completed]
             missing_folds = [f for f, records in enumerate(completed)
                              if len(records) < len(candidates)]
-            requested = (os.cpu_count() or 1) if jobs == -1 else jobs
-            workers = min(requested, len(missing_folds))
+            plan = _worker_plan(jobs, len(missing_folds), cv_native_threads,
+                                cv_memory_budget_mib, cv_worker_memory_mib)
+            workers = plan['workers']
             arguments = [
                 (clf, X, y, *folds[f], candidates, f, completed[f],
                  str(checkpoint.directory), checkpoint.token, checkpoint.identity_hash,
-                 expected_runtime, scale)
+                 expected_runtime, scale, cv_native_threads)
                 for f in missing_folds]
             if workers <= 1:
                 results = [_run_fold(*args) for args in arguments]
             else:
-                with parallel_config(backend='loky', inner_max_num_threads=1):
+                with parallel_config(backend='loky', inner_max_num_threads=cv_native_threads):
                     results = Parallel(n_jobs=workers)(delayed(_run_fold)(*args)
                                                        for args in arguments)
             for fold_index, records in results:
                 completed[fold_index] = records
             checkpoint.assert_current()
-            _check_runtime(expected_runtime)
+            _check_runtime(expected_runtime, **guard_options)
             aggregate, all_cv_results = _aggregate(completed, candidates)
             exact_means = _accuracy_means(all_cv_results, 'test_score', len(candidates))
             best_index = max(range(len(candidates)), key=exact_means.__getitem__)
@@ -599,12 +648,12 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
             refit_seconds = final_scaling_seconds = 0.0
             if refit_best:
                 expected_final_runtime = expected_runtime
-                if final_native_threads != 1:
+                if final_native_threads != cv_native_threads:
                     expected_final_runtime = deepcopy(expected_runtime)
                     for pool in expected_final_runtime['native_pools']:
                         pool['num_threads'] = final_native_threads
                 final_limits = (threadpool_limits(limits=final_native_threads)
-                                if final_native_threads != 1 else nullcontext())
+                                if final_native_threads != cv_native_threads else nullcontext())
                 with final_limits:
                     final_X = X
                     if scale:
@@ -615,7 +664,7 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
                     best_clf = clone(clf).set_params(**best_params)
                     checkpoint.assert_current()
                     if final_native_threads == 1:
-                        final_runtime = _check_runtime(expected_runtime, check_inventory=False)
+                        final_runtime = _check_runtime(expected_final_runtime, check_inventory=False)
                     else:
                         final_runtime = _check_runtime(
                             expected_final_runtime, check_inventory=False,
@@ -623,25 +672,30 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
                     fit_started = perf_counter()
                     best_clf.fit(final_X, y)
                     refit_seconds = perf_counter() - fit_started
-                    if final_native_threads != 1:
+                    if final_native_threads != 1 or cv_native_threads != 1:
+                        final_guard = ({} if final_native_threads == 1 else
+                                       {'native_threads': final_native_threads})
                         _check_runtime(expected_final_runtime, check_inventory=False,
-                                       native_threads=final_native_threads)
+                                       **final_guard)
                     try:
                         refit_diagnostics = _diagnostics(best_clf)
                     except Exception as error:
                         _warn_summary(error)
             checkpoint.assert_current()
-            _check_runtime(expected_runtime)
+            _check_runtime(expected_runtime, **guard_options)
             try:
                 summary = _work_summary(completed, replayed, started, refit_seconds,
                                          final_scaling_seconds, refit_best, workers,
                                          refit_diagnostics, final_native_threads,
-                                         final_runtime)
+                                         final_runtime, cv_native_threads=cv_native_threads)
+                summary['cv_resource_plan'] = plan
             except Exception as error:
                 _warn_summary(error)
                 summary = {
                     'schema': _SCHEMA, 'scope': 'current_invocation',
                     'coverage': 'unavailable', 'reporting_error': type(error).__name__,
+                    'native_threads_per_worker': cv_native_threads,
+                    'cv_resource_plan': plan,
                     'final_refit': {'performed': refit_best, 'fresh_model': refit_best,
                                     'diagnostics': refit_diagnostics,
                                     'native_threads_requested': final_native_threads,

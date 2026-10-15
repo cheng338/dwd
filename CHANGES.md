@@ -6,6 +6,24 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 1.3.14 — 2026-10-15
+
+- End maintenance of the separate Python 3.10 companion. Python 3.11 or later
+  remains required; historical release assets and validation records are retained.
+- Support the existing optional adaptive residual-check order with restart
+  acceleration in optimized Cholesky kernel MM. The default remains
+  `refinement_first`; residual acceptance, objective-descent rules, recovery
+  limits and stopping tolerances are unchanged. Different accepted states can
+  still change finite-iteration results.
+- Let the resumable CV example set native threads per fold explicitly, with
+  one thread remaining the default. Bind this setting to checkpoint identity
+  and restore the caller's thread limits on success or failure. Optional paired
+  memory allowances cap simultaneous fold workers; these are caller estimates,
+  not measured process limits. Record the actual allocation in work summaries.
+- Extend the CI matrix to Python 3.13 on Windows and Ubuntu, alongside Python
+  3.11 and 3.12, for the base and optional SOCP configurations. The compiled
+  helper's numerical runtime guards are unchanged.
+
 ## 1.3.13 — 2026-10-09
 
 - Add optional `dwd.profiling.residual_profile()` to observe guarded residual

@@ -411,8 +411,8 @@ def runtime_fingerprint(*, check_inventory=True, expected_native_threads=1):
     Their first call still identifies the full runtime. The coordinator checks
     the full inventory before and after each search, while every worker checks
     DWD source, loaded DLLs and example source around each fit.
-    The default enforces one-thread CV. A separately scoped final refit may
-    request another explicit count without relaxing any other identity check.
+    The default enforces one-thread CV. The example may request an explicit
+    CV or final-refit count without relaxing any other identity check.
     """
     global _RUNTIME_FILES, _RUNTIME_PACKAGE_FILES, _RUNTIME_PACKAGES, _RUNTIME_MODULES
     global _RUNTIME_DIGEST, _RUNTIME_NATIVE, _RUNTIME_ACCELERATOR

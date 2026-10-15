@@ -1,5 +1,60 @@
 # Validation
 
+## Version 1.3.14: development validation
+
+Before release packaging, the frozen development sources passed 59 DWD tests
+covering restarted/adaptive MM, residual ordering, CV native threads, memory
+planning, resume identity and restoration of caller thread limits. The paired
+ensemble-DWD sources passed 90 integration tests with this DWD source. There
+were no failures, errors or skips in those focused runs. They used Windows,
+conventional CPython 3.12.14 and AOCL; these source checks are separate from
+built-wheel and cross-version release checks.
+
+The resource tests cover successful, failed and interrupted work, final-refit
+failures, complete checkpoint replay, exact memory-ratio flooring, and mutation
+of thread limits inside callbacks. Defaults remain one CV worker and one native
+thread. Memory values are planning allowances supplied by the caller, not peak
+memory measurements or operating-system limits. CV native threads enter resume
+identity; final-fit threads retain their independent scope.
+
+Adaptive-order confirmation used four saved TCGA cases at both one and 16
+native threads, with two balanced default/adaptive pairs per case and thread
+count: 32 complete pipeline fits. Median paired adaptive/default fit-time ratios
+were:
+
+| Saved case | One native thread | 16 native threads |
+|---|---:|---:|
+| Ensemble DWD, difficult split 3 | 0.716 | 0.707 |
+| Ensemble DWD, difficult split 9 | 0.711 | 0.715 |
+| Ensemble DWD, healthy split 7 | 0.996 | 1.054 |
+| Full-kernel DWD, split 10 | 0.854 | 0.854 |
+
+These observations support retaining an option, not changing the default. The
+healthy 16-thread case was about 7 ms slower. All compared saved arrays matched:
+final coefficients, intercepts, histories, decisions, predictions, selected
+rows and subsets. Every learner retained its iteration count and final objective
+and passed the unchanged numerical requirements. This is not a direct comparison
+of every base learner's coefficient array or a general guarantee of identical
+finite-iteration states under both orders.
+
+For difficult ensemble split 3, native refinement trials fell from 1,155 to 46
+while compensated checks remained 1,177. For split 9, trials fell from 735 to 12
+while compensated checks remained 735. Required accurate checks were preserved;
+the avoided trials were speculative corrections that would have been discarded.
+
+An earlier 64-fit engineering comparison encountered concurrent numerical work
+and is excluded from the timing conclusions above. The 32 confirmation fits had
+no competing Python process or observer error in 50 ms observations; this does
+not exclude all OS or non-Python activity. Historical experiment timings were
+not replaced. No Intel or Ubuntu performance conclusion follows from these runs.
+
+The release CI configuration covers conventional Python 3.11, 3.12 and 3.13
+on Windows and Ubuntu with base and optional SOCP dependencies. A configured
+matrix is not itself evidence of a passed run, and the source results above do
+not certify a rebuilt wheel. The compiled helper retains its existing narrower
+numerical runtime guards. Python 3.10 companion maintenance has ended; references
+to its checks below describe historical releases only.
+
 ## Version 1.3.13: optional residual profiling
 
 The `residual_profile()` context passed 16 focused tests and 52 existing

@@ -41,7 +41,14 @@ def main(argv=None):
     parser.add_argument('--seed', type=_seed, default=42,
                         help='Estimator and shuffled stratified-fold seed (default: 42).')
     parser.add_argument('--jobs', type=_positive_int, default=1,
-                        help='Maximum simultaneous folds; each uses one native thread.')
+                        help='Maximum simultaneous folds (default: 1).')
+    parser.add_argument('--cv-native-threads', type=_positive_int, default=1,
+                        help='Native threads per CV worker (default: 1). Budget jobs times this value.')
+    parser.add_argument('--cv-memory-budget-mib', type=_positive_float,
+                        help='Optional total CV-worker memory allowance in MiB; requires --cv-worker-memory-mib.')
+    parser.add_argument('--cv-worker-memory-mib', type=_positive_float,
+                        help='Caller-estimated memory per CV worker in MiB, including headroom; '
+                             'requires --cv-memory-budget-mib. These allowances only cap worker count.')
     parser.add_argument('--final-native-threads', type=_positive_int, default=1,
                         help='Native thread limit for fresh final scaling and fitting only (default: 1).')
     parser.add_argument('--max-iter', type=_positive_int, default=100)
@@ -51,6 +58,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.folds < 2:
         parser.error('--folds must be at least two')
+    if (args.cv_memory_budget_mib is None) != (args.cv_worker_memory_mib is None):
+        parser.error('supply both --cv-memory-budget-mib and --cv-worker-memory-mib')
+    if (args.cv_memory_budget_mib is not None
+            and args.cv_memory_budget_mib < args.cv_worker_memory_mib):
+        parser.error('the CV memory budget must admit at least one worker allowance')
     if args.data.suffix.lower() != '.npz':
         parser.error('--data must be a .npz file')
     try:
@@ -64,7 +76,8 @@ def main(argv=None):
         {'lambd': args.lambd, 'kernel_kws': [{'gamma': gamma} for gamma in args.gamma]},
         args.run_dir, cv=StratifiedKFold(args.folds, shuffle=True, random_state=args.seed),
         jobs=args.jobs, resume=args.resume, scale=args.scale, refit_best=not args.cv_only,
-        final_native_threads=args.final_native_threads)
+        final_native_threads=args.final_native_threads, cv_native_threads=args.cv_native_threads,
+        cv_memory_budget_mib=args.cv_memory_budget_mib, cv_worker_memory_mib=args.cv_worker_memory_mib)
     print('Best CV accuracy:', result['best_score'])
     print('Selected parameters:', result['best_params'])
     print('Work summary:', result['work_summary'])

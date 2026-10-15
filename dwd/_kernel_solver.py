@@ -249,9 +249,9 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     if residual_check_order not in ('refinement_first', 'adaptive'):
         raise ValueError("residual_check_order must be 'refinement_first' or 'adaptive'.")
     if residual_check_order == 'adaptive' and (implementation != 'optimized'
-            or acceleration is not None or backend not in ('auto', 'cholesky')
+            or backend not in ('auto', 'cholesky')
             or (backend == 'auto' and K_eig is not None)):
-        raise ValueError('Adaptive residual ordering requires unaccelerated optimized Cholesky MM.')
+        raise ValueError('Adaptive residual ordering requires optimized Cholesky MM.')
     lambd, q = _scalar(lambd, 'lambd', positive=True), _scalar(q, 'q', positive=True)
     obj_tol, tol = _scalar(obj_tol, 'obj_tol'), _scalar(tol, 'tol', positive=True)
     max_iter = _integer(max_iter, 'max_iter')

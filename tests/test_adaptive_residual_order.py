@@ -265,7 +265,7 @@ class AdaptiveResidualApiTests(unittest.TestCase):
         invalid = [dict(residual_check_order='wrong'), dict(residual_check_order=None)]
         invalid += [dict(residual_check_order='adaptive', **choice) for choice in (
             dict(implementation='reference'), dict(backend='spectral'), dict(backend='lbfgs'),
-            dict(solver_mode='legacy'), dict(acceleration='restart'))]
+            dict(solver_mode='legacy'))]
         for factory in (KernGDWD, KernGDWDCV):
             for options in invalid:
                 with self.subTest(factory=factory.__name__, options=options), \
@@ -276,7 +276,7 @@ class AdaptiveResidualApiTests(unittest.TestCase):
     def test_solver_rejects_unsupported_routes_including_auto_with_eigenbasis(self):
         K = self.X @ self.X.T
         for options in (dict(backend='spectral'), dict(backend='lbfgs'),
-                        dict(implementation='reference'), dict(acceleration='restart'),
+                        dict(implementation='reference'),
                         dict(K_eig=eigh(K))):
             with self.subTest(options=tuple(options)):
                 with self.assertRaisesRegex(ValueError, 'Cholesky'):

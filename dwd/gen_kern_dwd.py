@@ -44,9 +44,9 @@ def _validate_residual_check_order(estimator):
     if estimator.residual_check_order not in ('refinement_first', 'adaptive'):
         raise ValueError("residual_check_order must be 'refinement_first' or 'adaptive'.")
     if estimator.residual_check_order == 'adaptive' and (estimator.implementation != 'optimized'
-            or estimator.acceleration is not None or estimator.solver_mode != 'schur'
+            or estimator.solver_mode != 'schur'
             or estimator.backend not in ('auto', 'cholesky')):
-        raise ValueError('Adaptive residual ordering requires unaccelerated optimized Cholesky MM.')
+        raise ValueError('Adaptive residual ordering requires optimized Cholesky MM.')
 
 
 class KernGDWD(KernelClfMixin, BaseEstimator):
@@ -181,13 +181,14 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         do not support this option. Spectral backend requests remain spectral.
 
     residual_check_order : {'refinement_first', 'adaptive'}, default='refinement_first'
-        Explicit scheduling option for unaccelerated optimized Cholesky MM.
+        Explicit scheduling option for optimized Cholesky MM, including
+        acceleration='restart'.
         Adaptive first observes two discarded refinement trials whose original
         states pass the accurate residual checks, then probes those same checks
         before trying a correction. A declined or failed probe falls back to
         refinement. Accuracy gates and recovery budgets are unchanged, but a
         different accepted coefficient state can change finite-iteration results.
-        Reference, explicit spectral, L-BFGS, legacy and accelerated routes do
+        Reference, explicit spectral, L-BFGS and legacy routes do
         not support adaptive ordering. Automatic spectral recovery, if needed,
         uses refinement_first; anchor recovery retains its original checks.
     """
@@ -682,7 +683,8 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
 
     residual_check_order : {'refinement_first', 'adaptive'}, default='refinement_first'
         Forwarded to every candidate and the final refit. Adaptive ordering is
-        restricted to unaccelerated optimized Cholesky MM and may change
+        restricted to optimized Cholesky MM, including restart acceleration,
+        and may change
         finite-iteration results; see KernGDWD.
 
     """

@@ -38,17 +38,17 @@ Wang, B., and Zou, H. (2018).
 
 Python 3.11+ and scikit-learn 1.6+ are required. The base package depends on
 NumPy, SciPy, scikit-learn, and threadpoolctl. Download a compatible wheel from
-the [1.3.13 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.13).
+the [1.3.14 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.14).
 For conventional Windows AMD64 CPython 3.11 or later, install the native wheel:
 
 ```shell
-python -m pip install ./dwd-1.3.13-cp311-abi3-win_amd64.whl
+python -m pip install ./dwd-1.3.14-cp311-abi3-win_amd64.whl
 ```
 
 To omit the optional compiled helper, install the portable wheel (Python 3.11+):
 
 ```shell
-python -m pip install ./dwd-1.3.13-py3-none-any.whl
+python -m pip install ./dwd-1.3.14-py3-none-any.whl
 ```
 
 The helper retains its numerical runtime guards; the ABI tag does not promise
@@ -57,10 +57,8 @@ uses conventional CPython 3.12 with AOCL on Windows AMD64. These are not Ubuntu
 or Intel-hardware performance results. Other platforms and free-threaded Python
 remain outside those local checks.
 
-The separate CPython 3.10 companion remains at
-[version 1.3.12](https://github.com/cheng338/dwd/releases/tag/v1.3.12).
-It does not include the changes in 1.3.13. This release does not rebuild that
-companion or change main source to support Python 3.10.
+Python 3.10 is no longer supported. Previously released companion wheels
+remain available as historical artifacts and will not receive updates.
 
 The `cp311-abi3` tag describes extension loading compatibility, not which
 residual arithmetic DWD selects. Its guarded compiled and built-in
@@ -322,7 +320,16 @@ they have not been relabeled as new release results.
 
 # Release history
 
-Version 1.3.13, October 9, 2026. See the [current validation scope](VALIDATION.md).
+Version 1.3.14, October 15, 2026. See the [current validation scope](VALIDATION.md).
+
+## Changes in 1.3.14
+
+Optional adaptive residual checking now supports restart acceleration in
+optimized Cholesky kernel MM, preserving the acceptance checks and default
+ordering. The resumable CV example adds optional native-thread and memory
+planning controls while retaining one worker and one native thread by default.
+Python 3.10 companion maintenance has ended; main continues to require Python
+3.11+. See the [release notes](RELEASE_NOTES.md) for scope and compatibility.
 
 ## Changes in 1.3.13
 
@@ -331,7 +338,7 @@ preserving the first candidate at a mathematical tie. The resumable example
 records those counts and compact solver diagnostics; earlier checkpoints need
 a new run directory. Optional residual profiling reports dispatch routes and
 checking work without changing estimator mathematics or defaults. See the
-[release notes](RELEASE_NOTES.md) for scope and compatibility details.
+[release notes](docs/history/RELEASE_NOTES-1.3.13.md) for scope and compatibility details.
 
 ## Changes in 1.3.12
 
