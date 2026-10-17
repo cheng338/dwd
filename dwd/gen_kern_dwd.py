@@ -5,7 +5,8 @@ from copy import deepcopy
 from numbers import Integral, Real
 
 from sklearn.base import BaseEstimator
-from sklearn.utils import check_X_y, check_array, check_random_state
+from sklearn.utils import check_array, check_random_state
+from dwd._validation import check_real_X_y, contains_complex, require_real
 
 from dwd.utils import pm1, parameters_equal
 from dwd.gen_dwd import V, V_grad
@@ -251,6 +252,10 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         sample_weight : None
             Sample weights are not implemented. Every non-None value raises.
 
+        alpha_init, offset_init : optional
+            Finite real initial coefficients and intercept. Complex values,
+            including complex scalars inside object arrays, are unsupported.
+
         validation_data : (X_validation, y_validation) or None
             Explicit monitoring data, used only with stopping='validation'.
             For a precomputed kernel, X_validation is query-by-training.
@@ -268,7 +273,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
             raise NotImplementedError('Sample weights are not implemented for KernGDWD.')
         # Callers own K's correspondence to X. Supplied eigenpairs are also
         # checked numerically against K before any corrected MM iterations.
-        X, y = check_X_y(X, y, accept_sparse='csr',
+        X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
         self.classes_ = np.unique(y)
         if len(self.classes_) != 2:
@@ -479,7 +484,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
             return None
         if not isinstance(validation_data, (tuple, list)) or len(validation_data) != 2:
             raise ValueError('validation_data must be an (X_validation, y_validation) pair.')
-        X_val, y_val = check_X_y(*validation_data, accept_sparse='csr', dtype=np.float64)
+        X_val, y_val = check_real_X_y(*validation_data, accept_sparse='csr', dtype=np.float64)
         if not np.isin(y_val, self.classes_).all():
             raise ValueError('Validation labels must belong to the training classes.')
         if self.kernel != 'precomputed' and X_val.shape[1] != self.n_features_in_:
@@ -762,7 +767,7 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
             raise ValueError('KernGDWDCV does not create monitoring splits. Use a plain '
                              'KernGDWD with explicit validation_data inside an explicitly '
                              'constructed training/monitoring/CV procedure.')
-        X, y = check_X_y(X, y, accept_sparse='csr',
+        X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype='numeric')
 
         self.classes_ = np.unique(y)
@@ -869,6 +874,8 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
     """
 
     # argument checking and formatting
+    for name, value in (('lambd', lambd), ('q', q), ('obj_tol', obj_tol)):
+        require_real(value, name)
     if not np.isfinite(lambd) or lambd < 0:
         raise ValueError("Penalty term must be positive; got (lambd=%r)"
                          % lambd)
@@ -888,7 +895,7 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
     if sample_weight is not None:
         raise NotImplementedError('Sample weights are not implemented for kernel DWD.')
 
-    K, y = check_X_y(K, y, accept_sparse=False,
+    K, y = check_real_X_y(K, y, accept_sparse=False,
                      dtype=np.float64 if solver_mode == 'schur' else 'numeric')
 
     if K.shape[0] != K.shape[1]:
@@ -972,7 +979,7 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
             alpha = check_random_state(random_state).normal(size=n_samples)
             alpha /= np.linalg.norm(alpha)
     else:
-        if np.iscomplexobj(alpha_init):
+        if contains_complex(alpha_init):
             raise ValueError('alpha_init must be real.')
         alpha = np.asarray(alpha_init, dtype=float).copy()
         if alpha.shape != (n_samples,) or not np.isfinite(alpha).all():
@@ -981,8 +988,9 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
     if offset_init is None:
         offset = 0.0
     else:
-        if np.ndim(offset_init) != 0 or not np.isfinite(offset_init):
-            raise ValueError('offset_init must be a finite scalar.')
+        if (np.ndim(offset_init) != 0 or contains_complex(offset_init)
+                or not np.isfinite(offset_init)):
+            raise ValueError('offset_init must be a finite real scalar.')
         offset = float(offset_init)
 
     # store objective values

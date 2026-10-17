@@ -58,7 +58,11 @@ class ResourcePlanTests(unittest.TestCase):
             data = Path(directory) / 'train.npz'
             np.savez(data, X=np.ones((10, 2)), y=np.arange(10) % 2)
             with patch.object(command, 'run_resumable_cv', return_value={
-                    'best_score': 1., 'best_params': {}, 'work_summary': {}}) as run, redirect_stdout(io.StringIO()):
+                    'best_score': 1., 'best_params': {}, 'work_summary': {},
+                    'finite_grid_report': {
+                        'status': 'unavailable',
+                        'scope': 'best_among_supplied_candidates',
+                        'reporting_error': 'RuntimeError'}}) as run, redirect_stdout(io.StringIO()):
                 command.main(['--data', str(data), '--run-dir', str(Path(directory) / 'run'),
                               '--lambd', '.1', '--gamma', '.1', '--jobs', '4',
                               '--cv-native-threads', '4', '--cv-memory-budget-mib', '8000',
@@ -91,7 +95,11 @@ def run(path, **options):
                     stopping='fixed', max_iter=3)
     return cv.run_resumable_cv(model, X, y, {'lambd': [.05, .2]}, path,
                               cv=folds, scale=True, **options)
+# MKL can load its OpenMP runtime on the first numerical call. Initialize it
+# before the outer scope snapshots the pools whose limits it must restore.
+np.dot(np.ones((2, 2)), np.ones((2, 2)))
 with threadpool_limits(3):
+    assert all(pool['num_threads'] == 3 for pool in threadpool_info())
     serial = run(root / 'one', cv_native_threads=1)
     parallel = run(root / 'two', jobs=2, cv_native_threads=2,
                    cv_memory_budget_mib=4000, cv_worker_memory_mib=2000,

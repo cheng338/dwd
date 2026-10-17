@@ -8,6 +8,7 @@ they are numerical consistency checks, not interval-arithmetic certificates.
 """
 import numpy as np
 from scipy.linalg import eigh, LinAlgError
+from dwd._validation import contains_complex
 
 
 class EigenDecompositionError(FloatingPointError):
@@ -19,7 +20,7 @@ class EigenDecompositionError(FloatingPointError):
 
 
 def _matrix_statistics(A):
-    if np.iscomplexobj(A):
+    if contains_complex(A):
         raise ValueError('The eigendecomposition matrix must be real symmetric.')
     A = np.asarray(A, dtype=np.float64)
     if A.ndim != 2 or A.shape[0] != A.shape[1] or not len(A):
@@ -65,7 +66,7 @@ def _scaled_product(A, vectors, scale):
 def _validate_values(values, statistics):
     n = statistics['n']
     issues, details = [], {}
-    if np.iscomplexobj(values) or np.shape(values) != (n,):
+    if contains_complex(values) or np.shape(values) != (n,):
         return ['eigenvalues must be a real vector of length n'], details
     values = np.asarray(values, dtype=float)
     if not np.isfinite(values).all():
@@ -99,12 +100,12 @@ def _validate_values(values, statistics):
 def _validate_pairs(A, values, vectors, statistics):
     issues, details = _validate_values(values, statistics)
     n = len(A)
-    if np.iscomplexobj(vectors) or np.shape(vectors) != (n,n):
+    if contains_complex(vectors) or np.shape(vectors) != (n,n):
         return issues+['eigenvectors must be a real n by n matrix'], details
     vectors = np.asarray(vectors, dtype=float)
     if not np.isfinite(vectors).all():
         return issues+['eigenvectors contain nonfinite values'], details
-    if np.shape(values) != (n,) or np.iscomplexobj(values) or not np.isfinite(values).all():
+    if np.shape(values) != (n,) or contains_complex(values) or not np.isfinite(values).all():
         return issues, details
     # All columns are checked. A few selected eigenpairs missed the observed
     # EVR failure, whose defective columns were not at spectral extremes.

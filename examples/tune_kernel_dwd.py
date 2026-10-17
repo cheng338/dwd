@@ -6,6 +6,7 @@ import numpy as np
 from sklearn.model_selection import StratifiedKFold
 
 from dwd.gen_kern_dwd import KernGDWD
+from _grid_report import format_grid_report
 from resumable_kernel_cv import run_resumable_cv
 
 
@@ -78,7 +79,7 @@ def main(argv=None):
         jobs=args.jobs, resume=args.resume, scale=args.scale, refit_best=not args.cv_only,
         final_native_threads=args.final_native_threads, cv_native_threads=args.cv_native_threads,
         cv_memory_budget_mib=args.cv_memory_budget_mib, cv_worker_memory_mib=args.cv_worker_memory_mib)
-    print('Best CV accuracy:', result['best_score'])
+    print(format_grid_report(result['finite_grid_report']))
     print('Selected parameters:', result['best_params'])
     print('Work summary:', result['work_summary'])
     print('Results saved in:', args.run_dir.absolute())

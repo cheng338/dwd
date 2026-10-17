@@ -1,6 +1,6 @@
 from sklearn.base import clone, is_classifier
 from sklearn.metrics import check_scoring
-from sklearn.utils import check_X_y
+from dwd._validation import check_real_X_y
 from sklearn.model_selection import check_cv, ParameterGrid
 from time import time
 from copy import deepcopy
@@ -114,7 +114,7 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     if getattr(clf, 'stopping', None) == 'validation':
         raise ValueError('run_cv does not create validation-stopping splits. Use explicit '
                          'training/monitoring splits within each CV training fold.')
-    X, y = check_X_y(X, y,
+    X, y = check_real_X_y(X, y,
                      accept_sparse='csr',
                      dtype='numeric')
 

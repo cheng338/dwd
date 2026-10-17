@@ -1,5 +1,39 @@
 # Validation
 
+## Version 1.3.15: development validation
+
+Before release packaging, local Windows checks under conventional CPython 3.12
+passed 141 tests for complex-input rejection, existing numerical methods,
+eigendecomposition validation, API behavior, failed refits, compatibility and
+cross-validation. There were no failures, errors or skips. A separate set of
+16 valid-real comparisons exactly matched pre-change coefficients, intercepts,
+objective histories, scores and predictions. These comparisons covered linear
+and kernel DWD, Schur and legacy modes, float32 and float64 inputs, lists and
+real object-array initial coefficients. The baseline source identity was checked
+before the changes.
+
+The applied finite-grid reporting changes passed 71 tests: 62 reporting,
+resumable-CV and exact-accuracy checks, plus 9 standalone checkpoint and CLI
+checks. There were no failures, errors or skips. This is a separate test scope
+with overlap in the earlier 141-test run, not an additional count of unique
+tests. Reporting preserves duplicate candidate labels, exact fold accuracy,
+first-maximum selection and final refitting. Compact diagnostics retain existing
+counts without performing extra solver checks; unavailable counts remain
+unknown rather than becoming zero.
+
+These checks used the local `py12_df` environment with one native thread for
+small fixtures; the CV integration checks also included their existing
+two-worker regression. The first reporting integration attempt encountered
+Windows access errors in the sandbox's default temporary directory. It passed
+using a workspace temporary directory, without changing package behavior or
+system permissions. These runs are correctness checks, not a performance
+benchmark or evidence of zero overhead on all inputs.
+
+The development results do not establish that earlier real-data studies used
+complex inputs or that historical results were corrupted. They also do not
+certify newly built release artifacts or other Python, operating-system or
+hardware configurations. Built-wheel and CI validation are separate checks.
+
 ## Version 1.3.14: development validation
 
 Before release packaging, the frozen development sources passed 59 DWD tests

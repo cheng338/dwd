@@ -193,10 +193,24 @@ class AffineComputationTests(unittest.TestCase):
                         stopping='fixed', random_state=7, affine_computation='joint').fit(X, y)
         self.assertEqual(cv.affine_computation_, 'joint')
         self.assertEqual(cv.best_estimator_.affine_computation_, 'joint')
-        expected = cv.decision_function(X)
+        # Keep the query independent of stored training data on both sides of
+        # pickle: BLAS may round a self-product differently from a cross-product.
+        query = X.copy()
+        self.assertFalse(np.shares_memory(query, cv._Xfit))
+        expected = cv.decision_function(query)
+        predictions = cv.predict(query)
         cv.set_params(affine_computation='standard')
-        np.testing.assert_array_equal(cv.decision_function(X), expected)
-        np.testing.assert_array_equal(pickle.loads(pickle.dumps(cv)).decision_function(X), expected)
+        np.testing.assert_array_equal(cv.decision_function(query), expected)
+        restored = pickle.loads(pickle.dumps(cv))
+        for model in (cv, restored):
+            self.assertEqual(model.affine_computation_, 'joint')
+            self.assertEqual(model.best_estimator_.affine_computation_, 'joint')
+            np.testing.assert_array_equal(model.decision_function(query), expected)
+            np.testing.assert_array_equal(model.predict(query), predictions)
+        for name in ('_Xfit', 'dual_coef_', 'intercept_', 'classes_'):
+            np.testing.assert_array_equal(getattr(restored, name), getattr(cv, name))
+        np.testing.assert_array_equal(restored.best_estimator_.objective_history_,
+                                      cv.best_estimator_.objective_history_)
         folds = list(StratifiedKFold(2, shuffle=True, random_state=19).split(X, y))
         mixed = run_cv(self.model(max_iter=2), X, y,
                        {'affine_computation': ['standard', 'joint'], 'lambd': [.1, .2]},

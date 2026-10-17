@@ -5,7 +5,8 @@ from dwd._fit_state import fit_with_cleanup
 from numbers import Real
 
 from sklearn.base import BaseEstimator
-from sklearn.utils import check_X_y, check_array, check_random_state
+from sklearn.utils import check_array, check_random_state
+from dwd._validation import check_real_X_y, contains_complex
 
 from dwd.utils import pm1
 from dwd.cv import run_cv
@@ -109,7 +110,8 @@ class GenDWD(LinearClassifierMixin, BaseEstimator):
             consistency with that augmented Gram matrix; invalid pairs reject.
 
         beta_init, offset_init : optional
-            Explicit initial coefficients and intercept.
+            Finite real initial coefficients and intercept. Complex values,
+            including complex scalars inside object arrays, are unsupported.
 
         Returns
         -------
@@ -119,7 +121,7 @@ class GenDWD(LinearClassifierMixin, BaseEstimator):
 
         # formatting
         # TODO: figure out what we should actually check
-        X, y = check_X_y(X, y, accept_sparse='csr',
+        X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
 
         self.classes_ = np.unique(y)
@@ -287,7 +289,7 @@ class GenDWDCV(LinearClassifierMixin, BaseEstimator):
 
         # formatting
         # TODO: figure out what we should actually check
-        X, y = check_X_y(X, y, accept_sparse='csr',
+        X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype='numeric')
 
         self.classes_ = np.unique(y)
@@ -411,7 +413,7 @@ def solve_gen_dwd(X, y, lambd, q=1,
     if sample_weight is not None:
         raise NotImplementedError('Sample weights are not implemented for GenDWD.')
 
-    X, y = check_X_y(X, y,
+    X, y = check_real_X_y(X, y,
                      accept_sparse='csr',
                      dtype=np.float64 if solver_mode == 'schur' else 'numeric')
     if len(np.unique(y)) != 2:
@@ -430,7 +432,7 @@ def solve_gen_dwd(X, y, lambd, q=1,
         beta = (np.zeros(n_features) if use_zero else
                 check_random_state(random_state).normal(size=n_features))
     else:
-        if np.iscomplexobj(beta_init):
+        if contains_complex(beta_init):
             raise ValueError('beta_init must be real.')
         beta = np.asarray(beta_init, dtype=float).copy()
         if beta.shape != (n_features,) or not np.all(np.isfinite(beta)):
@@ -439,8 +441,9 @@ def solve_gen_dwd(X, y, lambd, q=1,
     if offset_init is None:
         offset = 0.0
     else:
-        if np.ndim(offset_init) != 0 or not np.isfinite(offset_init):
-            raise ValueError('offset_init must be a finite scalar.')
+        if (np.ndim(offset_init) != 0 or contains_complex(offset_init)
+                or not np.isfinite(offset_init)):
+            raise ValueError('offset_init must be a finite real scalar.')
         offset = float(offset_init)
 
     # precompute data

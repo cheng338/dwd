@@ -130,17 +130,32 @@ class StandaloneCheckpointTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, 2)
 
     def test_cli_uses_declared_grid_folds_and_seed_without_test_data(self):
+        from _grid_report import summarize_grid
+
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'train.npz'
             X = np.arange(48).reshape(12, 4); y = np.tile([0, 1], 6)
             np.savez(path, X=X, y=y)
+            candidates = [{'kernel_kws': {'gamma': gamma}, 'lambd': lambd}
+                          for gamma in (.3, .4) for lambd in (.1, .2)]
+            fold_results = [{'params': candidates, 'test_correct': [3, 2, 2, 1],
+                             'test_count': [6] * 4, 'test_score': [.5, 1 / 3, 1 / 3, 1 / 6]}
+                            for _ in range(2)]
+            report = summarize_grid(candidates, fold_results, candidates[0])
             with patch.object(command, 'run_resumable_cv', return_value={
-                    'best_score': .5, 'best_params': {}, 'work_summary': {}}) as run:
-                with contextlib.redirect_stdout(io.StringIO()):
+                    'best_score': .5, 'best_params': candidates[0], 'work_summary': {},
+                    'finite_grid_report': report}) as run:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
                     command.main(['--data', str(path), '--run-dir', str(Path(folder)/'run'),
                                   '--lambd', '.1', '.2', '--gamma', '.3', '.4',
                                   '--folds', '2', '--seed', '17', '--jobs', '2',
                                   '--scale', '--resume', '--cv-only'])
+                self.assertIn('Best among 4 supplied candidates:', output.getvalue())
+                self.assertIn('equal-fold CV accuracy 50.000000%', output.getvalue())
+                self.assertIn('selection retains the first exact maximum', output.getvalue())
+                self.assertIn('does not establish an optimum beyond', output.getvalue())
+                self.assertNotIn('Finite-grid report unavailable', output.getvalue())
                 args, kwargs = run.call_args
                 self.assertEqual(args[0].random_state, 17)
                 self.assertEqual(args[3], {'lambd': [.1, .2],

@@ -3,6 +3,7 @@ from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import tempfile
 import unittest
 
 import numpy as np
@@ -95,6 +96,78 @@ class AccuracyCountsTests(unittest.TestCase):
 
 
 class CompactDiagnosticTests(unittest.TestCase):
+    @staticmethod
+    def compact_linear_system(values):
+        examples = str(Path(__file__).resolve().parents[1] / 'examples')
+        if examples not in sys.path:
+            sys.path.insert(0, examples)
+        from resumable_kernel_cv import _diagnostics
+        model = SimpleNamespace(max_iter=3, diagnostics_={
+            'linear_system_diagnostics': values})
+        return _diagnostics(model)['solver_summary'].get('linear_system_diagnostics', {})
+
+    def test_residual_work_counts_preserve_zero_and_numpy_scalars(self):
+        counts = {
+            'compensated_residual_checks': np.int64(0),
+            'native_residual_checks': np.int32(2),
+            'ordinary_residual_checks': 17,
+            'ordinary_residual_acceptances': np.uint64(15),
+            'refinement_steps': 0,
+        }
+        observed = self.compact_linear_system(counts)
+        self.assertEqual(observed, {name: int(value) for name, value in counts.items()})
+        self.assertTrue(all(type(value) is int for value in observed.values()))
+
+    def test_missing_residual_work_counts_are_not_inferred(self):
+        # A total solve count cannot establish which residual paths were used.
+        self.assertEqual(self.compact_linear_system({'linear_solves': 17}),
+                         {'linear_solves': 17})
+        self.assertEqual(self.compact_linear_system({}), {})
+
+    def test_residual_work_arrays_and_unrecognized_fields_are_excluded(self):
+        values = {
+            'compensated_residual_checks': np.array([1, 2]),
+            'native_residual_checks': [1, 2],
+            'ordinary_residual_checks': {'total': 3},
+            'ordinary_residual_acceptances': np.array(2),
+            'refinement_steps': np.ones(1000),
+            'unrecognized_counter': 99,
+            'compensated_residual_seconds': np.float64(.5),
+        }
+        self.assertEqual(self.compact_linear_system(values),
+                         {'compensated_residual_seconds': .5})
+
+    def test_saved_residual_counts_survive_validated_resume_scan(self):
+        self.compact_linear_system({})  # Make the standalone example importable.
+        import resumable_kernel_cv as example
+        candidate = {'lambd': .1}
+        folds = [(np.arange(4), np.arange(4, 6))]
+        for counts in ({'compensated_residual_checks': 0,
+                        'native_residual_checks': 2,
+                        'ordinary_residual_checks': 17,
+                        'ordinary_residual_acceptances': 15,
+                        'refinement_steps': 0}, {}):
+            with self.subTest(counts=counts), tempfile.TemporaryDirectory() as root:
+                record = {
+                    'schema': example._SCHEMA, 'identity_sha256': 'fixed-identity',
+                    'fold_index': 0, 'candidate_index': 0,
+                    'parameter_sha256': example.digest(example.stable(candidate)),
+                    'train_count': 4, 'test_count': 2,
+                    'train_score': .75, 'test_score': .5,
+                    'train_correct': 3, 'test_correct': 1,
+                    'preparation_seconds': 0., 'runtime': .1,
+                    'score_seconds': .01, 'scaling_seconds': 0.,
+                    'diagnostics': example._diagnostics(SimpleNamespace(
+                        max_iter=3, diagnostics_={'linear_system_diagnostics': counts})),
+                }
+                # Check the stored/resumed form independently of extraction.
+                record['diagnostics']['solver_summary'] = (
+                    {'linear_system_diagnostics': counts} if counts else {})
+                example.write_receipt(example._receipt_path(Path(root), 0, 0), record)
+                completed = example._scan_receipts(
+                    Path(root), 'fixed-identity', folds, [candidate])
+                self.assertEqual(completed, [{0: record}])
+
     def test_missing_facts_stay_unknown_and_arrays_are_not_copied(self):
         examples = str(Path(__file__).resolve().parents[1] / 'examples')
         if examples not in sys.path:

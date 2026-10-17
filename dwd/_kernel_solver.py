@@ -10,6 +10,7 @@ from types import MappingProxyType
 from math import fsum
 
 import numpy as np
+from dwd._validation import contains_complex, require_real
 from ._objective_mean import objective_mean as _objective_mean
 from scipy.linalg import cho_factor, cho_solve, eigh, LinAlgError
 from scipy.linalg.lapack import dpocon
@@ -48,7 +49,7 @@ def _integer(value, name, minimum=0):
 
 
 def _matrix(K):
-    if np.iscomplexobj(K):
+    if contains_complex(K):
         raise ValueError('K must be real.')
     K = np.asarray(K, dtype=np.float64)
     if K.ndim != 2 or K.shape[0] != K.shape[1] or len(K) < 2:
@@ -269,10 +270,11 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         raise ValueError('Provide validation_data only with stopping="validation".')
     K, symmetry, norm_bound = _matrix(K)
     n = len(K)
+    require_real(y, 'y')
     y = np.asarray(y, dtype=float)
     if y.shape != (n,) or not np.isfinite(y).all() or set(np.unique(y)) != {-1., 1.}:
         raise ValueError('y must match K and contain both -1 and +1.')
-    if alpha_init is not None and np.iscomplexobj(alpha_init):
+    if alpha_init is not None and contains_complex(alpha_init):
         raise ValueError('alpha_init must be real.')
     alpha = np.zeros(n) if alpha_init is None else np.asarray(alpha_init, dtype=float).copy()
     if alpha.shape != (n,) or not np.isfinite(alpha).all():
@@ -281,11 +283,13 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         _check_initial_quadratic(K, alpha))
     if offset_init is None:
         offset = 0.
-    elif np.ndim(offset_init) != 0 or np.iscomplexobj(offset_init) or not np.isfinite(offset_init):
+    elif np.ndim(offset_init) != 0 or contains_complex(offset_init) or not np.isfinite(offset_init):
         raise ValueError('offset_init must be a finite real scalar.')
     else:
         offset = float(offset_init)
     if validation is not None:
+        require_real(validation[0], 'Validation kernel')
+        require_real(validation[1], 'Validation labels')
         val_K, val_y = np.asarray(validation[0], float), np.asarray(validation[1], float)
         if (val_K.ndim != 2 or val_K.shape[1] != n or not len(val_K)
                 or val_y.shape != (len(val_K),) or not np.isfinite(val_K).all()

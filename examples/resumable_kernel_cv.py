@@ -26,6 +26,11 @@ from dwd.cv import (DoL2LoD, _validate_score, _accuracy_correct, _accuracy_means
 from dwd.gen_kern_dwd import KernGDWD
 
 try:
+    from ._grid_report import safe_summarize_grid
+except ImportError:
+    from _grid_report import safe_summarize_grid
+
+try:
     from ._cv_checkpoint import (
         CheckpointError, CheckpointBusyError, CheckpointRun, stable, digest,
         array_fingerprint, runtime_fingerprint, io_path, write_receipt, write_json_atomic,
@@ -61,6 +66,9 @@ _SOLVER_FIELDS = {
                          'primal_objective_and_gap_are_estimates', 'kernel_assumption',
                          'dual_quadratic_method', 'fallback_reason'),
     'linear_system_diagnostics': ('linear_recoveries', 'linear_solves',
+                                  'compensated_residual_checks', 'native_residual_checks',
+                                  'ordinary_residual_checks', 'ordinary_residual_acceptances',
+                                  'refinement_steps',
                                   'added_objective_regularization',
                                   'native_refinement_trials', 'native_refinement_discarded',
                                   'native_refinement_acceptances', 'native_refinement_seconds',
@@ -506,6 +514,7 @@ def _publish_summaries(directory, identity_hash, result, candidates):
             'best_score': float(result['best_score']),
             'agg_results': _json_values(result['agg_results']),
             'all_cv_results': _json_values(result['all_cv_results']),
+            'finite_grid_report': result['finite_grid_report'],
             'final_refit': result['work_summary']['final_refit']}
     except Exception as error:
         _warn_summary(error)
@@ -703,7 +712,9 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
             result = {'best_params': best_params, 'best_score': best_score,
                       'best_clf': best_clf, 'scaler': scaler,
                       'agg_results': aggregate, 'all_cv_results': all_cv_results,
-                      'work_summary': summary}
+                      'work_summary': summary,
+                      'finite_grid_report': safe_summarize_grid(
+                          candidates, all_cv_results, best_params)}
             _publish_summaries(checkpoint.directory, checkpoint.identity_hash, result,
                                 candidates)
             return result

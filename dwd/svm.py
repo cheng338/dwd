@@ -7,7 +7,7 @@ from sklearn.base import BaseEstimator  # , TransformerMixin, ClassifierMixin
 from dwd.linear_model import LinearClassifierMixin
 from dwd._fit_state import fit_with_cleanup
 from dwd.utils import pm1
-from sklearn.utils import check_X_y
+from dwd._validation import check_real_X_y
 
 
 def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
@@ -53,7 +53,7 @@ def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
         raise NotImplementedError('Sample weights are not implemented for SVM.')
     if not isinstance(C, Real) or not np.isfinite(C) or C <= 0:
         raise ValueError('C must be finite and strictly positive.')
-    X, y = check_X_y(X, y, accept_sparse='csr', dtype='numeric')
+    X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
     if np.unique(y).size != 2:
         raise ValueError('SVM requires exactly two classes.')
     y = pm1(y)
@@ -94,7 +94,7 @@ class SVM(LinearClassifierMixin, BaseEstimator):
 
     @fit_with_cleanup
     def fit(self, X, y, sample_weight=None):
-        X, y = check_X_y(X, y, accept_sparse='csr', dtype='numeric')
+        X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
         self.classes_ = np.unique(y)
         self.n_features_in_ = X.shape[1]
 

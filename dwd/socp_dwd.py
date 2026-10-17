@@ -4,7 +4,7 @@ from numbers import Real
 import numpy as np
 
 from sklearn.base import BaseEstimator
-from sklearn.utils import check_X_y
+from dwd._validation import check_real_X_y
 from sklearn.metrics.pairwise import euclidean_distances
 from sklearn.utils.validation import check_is_fitted
 
@@ -59,7 +59,7 @@ class DWD(LinearClassifierMixin, BaseEstimator):
         -------
         self : object
         """
-        X, y = check_X_y(X, y, accept_sparse='csr', dtype='numeric')
+        X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
         self.classes_ = np.unique(y)
         if self.classes_.size != 2:
             raise ValueError('DWD requires exactly two classes.')
@@ -145,7 +145,7 @@ def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
     if sample_weight is not None:
         raise NotImplementedError
 
-    X, y = check_X_y(X, y,
+    X, y = check_real_X_y(X, y,
                      accept_sparse='csr',
                      dtype='numeric')
     if np.unique(y).size != 2:
@@ -221,7 +221,7 @@ def auto_dwd_C(X, y, const=100):
         The constanted used to determine C. Originally suggested to be 100.
 
     """
-    X, y = check_X_y(X, y, accept_sparse='csr', dtype='numeric')
+    X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
     labels = np.unique(y)
     if len(labels) != 2:
         raise ValueError('Automatic DWD C requires exactly two classes.')

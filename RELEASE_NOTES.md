@@ -1,62 +1,78 @@
-# DWD 1.3.14 — October 15, 2026
+# DWD 1.3.15 — October 17, 2026
 
-This release extends optional adaptive residual checking to restarted kernel
-MM and adds explicit resource controls to the resumable CV example. The DWD
-objective, free intercept, residual acceptance, restart rules, recovery limits
-and stopping tolerances are unchanged. Estimator and example defaults remain
-unchanged.
+This release rejects invalid complex inputs before conversion or optimization
+and improves reporting in the resumable CV example. The DWD objective, free
+intercept, real-input solver arithmetic, numerical acceptance checks, stopping
+tolerances and defaults are unchanged.
 
-## Optional adaptive checking with restarted MM
+## Real-input validation
 
-Eligible optimized Cholesky fits can combine `residual_check_order='adaptive'`
-with `acceleration='restart'`. The existing adaptive policy can avoid a
-speculative correction after repeated evidence that accurate checking already
-accepts the untouched state. Every returned state still passes the original
-numerical requirements. Reference, explicit spectral, legacy and L-BFGS paths
-remain ineligible. The default is still `residual_check_order='refinement_first'`.
+Complex starting intercepts and complex values hidden in object arrays are
+rejected consistently, including zero-imaginary complex values. The checks
+cover initial coefficients, class labels and supplied eigendecompositions,
+including nested object arrays. Invalid supplied eigenpairs are rejected rather
+than silently replaced by recomputed pairs. Failed fits retain the existing
+cleanup of fitted state.
 
-The retained option improved complete fitting time on the tested difficult
-cases, but offered no consistent benefit on a healthy case. Changing the order
-can choose a different valid finite-iteration state; universal bitwise equality
-or speed improvement is not promised. See the [kernel guide](docs/kernel_dwd.md)
-and [validation record](VALIDATION.md#version-1314-development-validation).
+Normal numeric arrays use dtype checks; object arrays require inspection of
+their entries. This corrects input validation and does not promise a performance
+speedup or zero validation overhead. These malformed-input regressions do not
+imply that earlier real-data studies used complex inputs.
 
-## Optional CV resource controls
+## Resumable CV diagnostics and grid reporting
 
-The resumable kernel example accepts `cv_native_threads` / `--cv-native-threads`,
-defaulting to one native thread per fold. Optional paired
-`cv_memory_budget_mib` and `cv_worker_memory_mib` values cap simultaneous fold
-workers using caller-supplied planning estimates. They are not measured peaks,
-live memory admission or operating-system memory limits. The Python interface's
-`jobs=-1` accounts for native threads before applying fold and memory caps;
-explicit positive `jobs` values remain the caller's choice.
+The example retains existing ordinary, native and compensated residual-check
+counts, ordinary acceptances and refinement-step counts in its compact
+diagnostics and completed-fold receipts. Missing counts remain unknown. No
+additional solver checks are performed.
 
-CV native threads enter checkpoint identity, so changing that setting requires
-a new run directory. Worker counts and memory allowances may change during a
-compatible resume. Final fitting remains separately controlled by
-`final_native_threads` and needs its own memory assessment. Caller thread limits
-are restored on success or failure. Source identity changes in this release
-also prevent silently reusing checkpoints from older example sources. See the
-[resumable CV guide](docs/resumable_cv.md#parallel-execution).
+The report identifies the winner as best among the supplied candidates. It
+includes exact ties, the gap to the next ranked candidate, the gap to the next
+strictly lower score, and numeric parameter positions within conditional slices
+that hold other parameters fixed. These positions describe the supplied grid;
+they do not establish convergence or a global optimum.
+
+Candidate order, duplicate candidate labels, exact equally weighted fold
+accuracy, first-maximum selection and final refitting are preserved. Reporting
+does not expand or refine the grid, merge candidates or reuse additional fits.
+If report construction fails, the successful CV result remains available with
+a notice that the report is unavailable. See the
+[resumable CV guide](docs/resumable_cv.md).
+
+The changed example source enters checkpoint identity. Checkpoints from older
+example sources require their matching source and runtime, or a new run
+directory with the current example. Existing checkpoints are not migrated.
+
+## Validation scope
+
+Local development checks passed 141 tests for input validation and existing
+numerical/API behavior, plus 16 valid-real comparisons that exactly matched
+pre-change coefficients, intercepts, objective histories, scores and predictions.
+A separate reporting/example run passed 71 tests. These test sets have overlapping
+coverage and are not presented as one count of distinct tests.
+
+The checks used Windows and conventional CPython 3.12, with one native thread
+for small fixtures and the existing two-worker CV regression. They establish
+behavior within the tested scope, not a universal timing or cross-platform
+claim. Built-artifact and CI checks are separate from these development results;
+see the [validation record](VALIDATION.md#version-1315-development-validation).
 
 ## Python support and distribution
 
-Python 3.11+ is required. Windows AMD64 wheels use
-`dwd-1.3.14-cp311-abi3-win_amd64.whl`; `dwd-1.3.14-py3-none-any.whl` omits the
-optional extension. The extension sources, strict compiler flags and numerical
-runtime guards are unchanged. Loading an ABI-compatible extension does not
-enable all accelerated paths: the qualified residual and accurate-score paths
-retain their narrower runtime conditions. NumPy/SciPy BLAS is independent.
+Python 3.11+ remains required. The Windows AMD64 native wheel is
+`dwd-1.3.15-cp311-abi3-win_amd64.whl`; `dwd-1.3.15-py3-none-any.whl` omits the
+optional compiled helper. Extension sources, compiler flags and numerical
+runtime guards are unchanged. An ABI-compatible extension does not enable
+accelerated paths outside their qualified runtime conditions; NumPy/SciPy BLAS
+is independent.
 
-Python 3.10 companion maintenance has ended. Historical companion assets and
-their validation records remain available; no Python 3.10 wheel is produced
-for this release. Main functions were not changed to accommodate Python 3.10.
-The CI matrix now includes Python 3.11, 3.12 and 3.13 on Windows and Ubuntu,
-with base and optional SOCP configurations. Source, built-artifact and CI
-checks have distinct scopes; see [validation](VALIDATION.md).
+Python 3.10 companion maintenance has ended. Historical assets and validation
+records remain available; this release does not produce a Python 3.10 wheel.
+The configured CI matrix covers Python 3.11, 3.12 and 3.13 on Windows and Ubuntu,
+with base and optional SOCP configurations.
 
 This is a fork of slicersalt/dwd, originally implemented by Iain Carmichael,
 with upstream maintenance by David Allemang and Kitware. Subsequent fork
 development is guided by Chang Cheng. Original credits and the MIT license
 are retained. See the [changelog](CHANGES.md), [installation](README.md#installation)
-and [previous release notes](docs/history/RELEASE_NOTES-1.3.13.md).
+and [previous release notes](docs/history/RELEASE_NOTES-1.3.14.md).

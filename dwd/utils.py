@@ -1,5 +1,6 @@
 import numpy as np
 from collections.abc import Mapping
+from dwd._validation import require_real
 
 
 def parameters_equal(left, right):
@@ -50,6 +51,7 @@ def pm1(y):
         by np.unique(y)[1].
     """
     y = np.array(y).reshape(-1)
+    require_real(y, 'y')
     labels = np.unique(y)
 
     # check binary

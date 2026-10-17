@@ -87,9 +87,9 @@ default is unchanged. See [extended exact recovery](kernel_dwd.md#optional-exten
 for its small-kernel scope and work limits.
 
 The return dictionary contains `best_params`, `best_score`, `best_clf`, `scaler`,
-`agg_results`, `all_cv_results` and `work_summary`. `best_clf` is `None` when
-`refit_best=False`; `scaler` is also `None` in that case. When scaling is
-enabled and the model is refitted, apply the returned `scaler` to new feature
+`agg_results`, `all_cv_results`, `work_summary` and `finite_grid_report`.
+`best_clf` is `None` when `refit_best=False`; `scaler` is also `None` in that case.
+When scaling is enabled and the model is refitted, apply the returned `scaler` to new feature
 rows before calling the returned model's prediction methods. With scaling
 disabled, `scaler` is `None`. No fitted model is serialized in the checkpoint.
 
@@ -127,6 +127,12 @@ or migrated.
 The final-thread option also changes the recorded example source identity.
 Checkpoints from an earlier example version still require its matching source
 and runtime, or a new run directory; this option does not relax that check.
+
+The finite-grid reporting update changes `resumable_kernel_cv.py`, whose source
+hash is part of checkpoint identity. A checkpoint created before this update
+cannot be resumed with the updated example. Use the matching earlier source
+and runtime to continue that run, or start a new run directory. Existing
+receipts are preserved and are not migrated to the new source identity.
 
 ## Allocating CV workers and native threads
 
@@ -192,18 +198,50 @@ not reload an earlier model.
 ## Reading the results
 
 After a successful invocation, `cv-results.json` records the selected parameters,
-CV scores and final-fit diagnostics, and `work-summary.json` records the current
-work summary. These files are conveniences for inspection; resume uses the
-checked evaluation receipts. A summary-file write failure produces a warning
+CV scores, `finite_grid_report` and final-fit diagnostics. `work-summary.json`
+records the current work summary. These files are conveniences for inspection;
+resume uses the checked evaluation receipts. A summary-file write failure produces a warning
 and does not discard the returned fitting result. If work-summary calculation
 fails, its coverage is marked unavailable while the numerical result is
-returned. The CLI also prints the selected parameters, mean CV accuracy and
-work summary.
+returned. The CLI also prints the selected parameters, a readable finite-grid
+report and the work summary.
 
 `best_score` is the largest mean validation accuracy. Candidates remain in the
 same order as `dwd.cv.run_cv`, including duplicate settings; an exact tie selects
 the first candidate. Termination diagnostics are saved for inspection and do
 not silently exclude a candidate with valid finite scores.
+
+### Interpreting the finite-grid winner
+
+The winner is best among the supplied candidates. The report does not establish
+an optimum outside that grid or claim that a search has converged. It does not
+add candidates, change selection, trigger extra fits or alter final refitting.
+The first candidate attaining the largest exact, equally weighted fold accuracy
+remains selected; duplicate parameter labels retain their original indices.
+
+`finite_grid_report` records the exact number of tied best candidates and two
+score gaps. The gap to the second candidate is zero when the top score is tied,
+including repeated candidate labels. The gap to the next strictly lower
+distinct score describes separation from the next lower score; it is `None`
+when no such score exists. A singleton grid has neither gap. The `all_flat`
+flag requires at least two candidates, all with identical mean accuracy. Exact
+numerator/denominator fields accompany the reported accuracy and gaps.
+
+Numeric positions are assessed within conditional slices that hold every other
+supplied parameter exactly fixed. For example, a `kernel_kws.gamma` endpoint
+is relative to candidates with the same lambda and other kernel settings,
+not every gamma appearing anywhere in the grid. Distinct floating-point values
+are not rounded together, and candidate labels are not merged. A singleton
+slice means only one distinct numeric value was supplied in that slice; it is
+not evidence of an endpoint optimum. Missing, categorical
+or unsupported coordinates are reported as unknown rather than replaced by
+assumed defaults.
+
+Tie and coordinate detail lists are limited to ten entries, with total counts
+and truncation flags retained. Full candidate labels and fold results remain
+in `all_cv_results`. If reporting fails, the report is marked unavailable and
+the valid numerical result is still returned. The report is observational;
+completed evaluation receipts remain the authority for checkpoint recovery.
 
 ## Accuracy counts and diagnostics
 

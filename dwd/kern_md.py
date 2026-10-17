@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.base import BaseEstimator
-from sklearn.utils import check_array, check_X_y
+from sklearn.utils import check_array
+from dwd._validation import check_real_X_y, require_real
 
 from dwd.kernel_utils import KernelClfMixin
 from dwd._fit_state import fit_with_cleanup
@@ -21,7 +22,7 @@ class KernMD(KernelClfMixin, BaseEstimator):
 
     @fit_with_cleanup
     def fit(self, X, y):
-        X, y = check_X_y(X, y, dtype='numeric')
+        X, y = check_real_X_y(X, y, dtype='numeric')
         self.classes_ = np.unique(y)
         self.n_features_in_ = X.shape[1]
         self._Xfit = X  # Store K so we can compute predictions
@@ -61,6 +62,7 @@ def kern_md(K, y, naive_bayes=False):
     """
     K = check_array(K, dtype='numeric')
     y = np.asarray(y)
+    require_real(y, 'y')
     labels = np.unique(y)
     if K.shape[0] != K.shape[1] or y.ndim != 1 or len(y) != K.shape[0]:
         raise ValueError('K must be square with one row per label.')

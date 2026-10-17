@@ -391,7 +391,11 @@ class FinalRefitThreadTests(unittest.TestCase):
         common[1] = str(self.path / 'data.npz')
         for extra, expected in (([], 1), (['--final-native-threads', '2', '--cv-only'], 2)):
             with self.subTest(extra=extra), patch.object(command, 'run_resumable_cv', return_value={
-                    'best_score': .5, 'best_params': {}, 'work_summary': {}}) as called, redirect_stdout(io.StringIO()):
+                    'best_score': .5, 'best_params': {}, 'work_summary': {},
+                    'finite_grid_report': {
+                        'status': 'unavailable',
+                        'scope': 'best_among_supplied_candidates',
+                        'reporting_error': 'RuntimeError'}}) as called, redirect_stdout(io.StringIO()):
                 command.main(common + extra)
             self.assertEqual(called.call_args.kwargs['final_native_threads'], expected)
 

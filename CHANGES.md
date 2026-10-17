@@ -6,6 +6,20 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 1.3.15 — 2026-10-17
+
+- Reject complex starting intercepts and complex values hidden in object arrays
+  in initial coefficients, class labels and supplied eigendecompositions before
+  conversion or optimization. Failed fits leave no usable fitted state; valid
+  real inputs retain the same solver arithmetic and stopping rules.
+- Preserve existing residual-check and refinement-step counts in the resumable
+  CV example's compact diagnostics and validated receipts. Missing counts remain
+  unknown; no additional solver checks are performed.
+- Qualify the resumable CV example's winner as best among the supplied
+  candidates, with exact tie counts, score gaps and numeric positions within
+  matching conditional slices. Preserve first-maximum selection, duplicate
+  candidate labels and final refitting; do not expand or refine the grid.
+
 ## 1.3.14 — 2026-10-15
 
 - End maintenance of the separate Python 3.10 companion. Python 3.11 or later

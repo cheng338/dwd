@@ -25,6 +25,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples'
 if str(EXAMPLES) not in sys.path:
     sys.path.insert(0, str(EXAMPLES))
 import resumable_kernel_cv as example
+import _grid_report as grid_report
 from _cv_checkpoint import CheckpointError, stable, write_receipt
 
 
@@ -348,6 +349,8 @@ class ResumableKernelCVTests(unittest.TestCase):
                 self.assertEqual(saved['best_score'], result['best_score'])
                 self.assertEqual(saved['agg_results'], result['agg_results'])
                 self.assertEqual(saved['all_cv_results'], result['all_cv_results'])
+                self.assertEqual(saved['finite_grid_report'], result['finite_grid_report'])
+                self.assertEqual(result['finite_grid_report']['status'], 'available')
                 self.assertEqual(saved['final_refit'], result['work_summary']['final_refit'])
                 self.assertEqual(work, result['work_summary'])
                 self.assertNotIn('best_clf', saved)
@@ -419,12 +422,72 @@ class ResumableKernelCVTests(unittest.TestCase):
         self.assertIsNot(first['best_clf'], second['best_clf'])
         assert_array_equal(first['best_clf'].dual_coef_, second['best_clf'].dual_coef_)
         self.assertEqual(first['all_cv_results'], second['all_cv_results'])
+        self.assertEqual(first['finite_grid_report'], second['finite_grid_report'])
+        self.assertEqual(second['finite_grid_report']['candidate_count'], 2)
+        self.assertEqual(second['finite_grid_report']['fold_count'], 2)
         self.assertEqual(before, {path: path.read_bytes() for path in self.receipts()})
         self.assert_work(second, 0, 4, True)
         for key in ('preparation', 'fit', 'score'):
             self.assertEqual(second['work_summary']['current_seconds'][key], 0.)
             self.assertEqual(second['work_summary']['historical_seconds'][key],
                              first['work_summary']['current_seconds'][key])
+
+    def test_finite_grid_report_failure_preserves_fit_receipts_and_later_replay(self):
+        first = self.run_example(scale=True)
+        before = {path: path.read_bytes() for path in self.receipts()}
+        identity_path = self.root / 'run' / 'identity.json'
+        identity_before = identity_path.read_bytes()
+        first_query = first['scaler'].transform(self.query)
+        first_scores = first['best_clf'].decision_function(first_query)
+        first_predictions = first['best_clf'].predict(first_query)
+        original_fit = KernGDWD.fit
+        fit_sizes = []
+
+        def observed_fit(model, X, y, *args, **kwargs):
+            fit_sizes.append(len(y))
+            return original_fit(model, X, y, *args, **kwargs)
+
+        with patch.object(grid_report, 'summarize_grid',
+                          side_effect=RuntimeError('private reporting sentinel')) as failed, \
+                patch.object(example, '_fit_and_score', side_effect=AssertionError('CV rerun')), \
+                patch.object(KernGDWD, 'fit', observed_fit):
+            result = self.run_example(scale=True, resume=True)
+        self.assertEqual(failed.call_count, 1)
+        self.assertEqual(fit_sizes, [len(self.y)])
+        self.assertIsNot(result['best_clf'], first['best_clf'])
+        self.assertEqual(result['finite_grid_report'], {
+            'status': 'unavailable', 'scope': 'best_among_supplied_candidates',
+            'reporting_error': 'RuntimeError'})
+        self.assertEqual(result['best_params'], first['best_params'])
+        self.assertEqual(result['best_score'], first['best_score'])
+        self.assertEqual(result['all_cv_results'], first['all_cv_results'])
+        self.assertEqual(result['agg_results'], first['agg_results'])
+        assert_array_equal(result['best_clf'].dual_coef_, first['best_clf'].dual_coef_)
+        assert_array_equal(result['best_clf'].intercept_, first['best_clf'].intercept_)
+        result_query = result['scaler'].transform(self.query)
+        assert_array_equal(result['best_clf'].decision_function(result_query), first_scores)
+        assert_array_equal(result['best_clf'].predict(result_query), first_predictions)
+        self.assertEqual(before, {path: path.read_bytes() for path in self.receipts()})
+        self.assertEqual(identity_before, identity_path.read_bytes())
+        self.assert_work(result, 0, 4, True)
+        saved_path = self.root / 'run' / 'cv-results.json'
+        saved = json.loads(saved_path.read_text(encoding='utf-8'))
+        self.assertEqual(saved['finite_grid_report'], result['finite_grid_report'])
+        self.assertNotIn('private reporting sentinel', saved_path.read_text(encoding='utf-8'))
+
+        # An unavailable convenience report never prevents receipt reuse. A
+        # later report can be regenerated with every estimator fit prohibited.
+        with patch.object(KernGDWD, 'fit', side_effect=AssertionError('unexpected fit')), \
+                patch.object(example, '_run_fold', side_effect=AssertionError('unexpected CV work')):
+            replayed = self.run_example(scale=True, resume=True, refit_best=False)
+        self.assertEqual(replayed['finite_grid_report'], first['finite_grid_report'])
+        self.assertEqual(replayed['best_params'], first['best_params'])
+        self.assertEqual(replayed['all_cv_results'], first['all_cv_results'])
+        self.assertEqual(before, {path: path.read_bytes() for path in self.receipts()})
+        self.assertEqual(identity_before, identity_path.read_bytes())
+        self.assert_work(replayed, 0, 4, False)
+        saved = json.loads(saved_path.read_text(encoding='utf-8'))
+        self.assertEqual(saved['finite_grid_report'], first['finite_grid_report'])
 
     def test_interrupted_candidate_is_rerun_and_completed_candidates_are_replayed(self):
         original = example._fit_and_score
@@ -683,6 +746,18 @@ class ResumableKernelCVTests(unittest.TestCase):
         self.assertEqual(result['best_score'], .5)
         self.assertEqual(result['best_clf'].lambd, .2)
         self.assertEqual(result['best_clf'].q, 2.)
+        report = result['finite_grid_report']
+        self.assertEqual(report['status'], 'available')
+        self.assertEqual(report['scope'], 'best_among_supplied_candidates')
+        self.assertEqual(report['best_index'], 0)
+        self.assertEqual(report['best_params'], candidates[0])
+        self.assertEqual(report['candidate_count'], len(candidates))
+        self.assertEqual(report['tied_best_count'], len(candidates))
+        self.assertEqual(report['tied_best_indices'], list(range(len(candidates))))
+        self.assertTrue(report['all_flat'])
+        self.assertEqual(report['best_score_exact'], {'numerator': 1, 'denominator': 2})
+        for fold in result['all_cv_results']:
+            self.assertEqual(fold['params'], candidates)
 
     def test_nonfinite_and_nonscalar_scores_are_not_checkpointed(self):
         for index, value in enumerate((float('nan'), float('inf'),
