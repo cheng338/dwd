@@ -1,6 +1,6 @@
 # Validation
 
-## Version 1.3.16: recovery, literal diagnostics and legacy warnings
+## Version 1.3.17: recovery, literal diagnostics and legacy warnings
 
 Eligible typed failures in restarted kernel MM can take one fresh spectral
 retry from the original initialization. The retry preserves the objective,
@@ -36,9 +36,9 @@ supplement this existing coverage. Strict Sphinx documentation checks also
 passed. These are correctness and integration checks, not new performance
 benchmarks or hosted CI results.
 
-## Version 1.3.16: automatic policies and bounded internal reuse
+## Version 1.3.17: automatic policies and bounded internal reuse
 
-Version 1.3.16 defaults new kernel estimators to automatic
+Version 1.3.17 defaults new kernel estimators to automatic
 affine scoring and residual ordering. Corrected Schur fits resolve affine
 scoring to joint evaluation; eligible optimized Cholesky fits resolve residual
 ordering to adaptive checks. Explicit historical policies remain available,

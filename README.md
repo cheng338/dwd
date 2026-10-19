@@ -38,17 +38,17 @@ Wang, B., and Zou, H. (2018).
 
 Python 3.11+ and scikit-learn 1.6+ are required. The base package depends on
 NumPy, SciPy, scikit-learn, and threadpoolctl. Download a compatible wheel from
-the [1.3.16 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.16).
+the [1.3.17 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.17).
 For conventional Windows AMD64 CPython 3.11 or later, install the native wheel:
 
 ```shell
-python -m pip install ./dwd-1.3.16-cp311-abi3-win_amd64.whl
+python -m pip install ./dwd-1.3.17-cp311-abi3-win_amd64.whl
 ```
 
 To omit the optional compiled helper, install the portable wheel (Python 3.11+):
 
 ```shell
-python -m pip install ./dwd-1.3.16-py3-none-any.whl
+python -m pip install ./dwd-1.3.17-py3-none-any.whl
 ```
 
 The helper retains its numerical runtime guards; the ABI tag does not promise
@@ -62,7 +62,7 @@ Python 3.10 is no longer supported. Previously released companion wheels
 remain available as historical artifacts and will not receive updates.
 
 The `cp311-abi3` tag describes extension loading compatibility, not which
-residual arithmetic DWD selects. Version 1.3.16 qualifies the
+residual arithmetic DWD selects. Version 1.3.17 qualifies the
 compiled residual and dense accurate-score paths on conventional Windows
 x86-64 CPython 3.11 through 3.13. All arithmetic guards remain active.
 The separate built-in `math.sumprod` residual path retains CPython 3.12 support
@@ -93,7 +93,7 @@ from PyPI may retrieve a different upstream release. See
 Version 1.3.11 includes the optional `rbf_computation='direct'`,
 `affine_computation='joint'` and `exact_recovery='extended'` described below.
 Those were opt-in when introduced; the 1.3.10 wheels do not provide them.
-Version 1.3.16 makes automatic affine scoring and residual ordering the
+Version 1.3.17 makes automatic affine scoring and residual ordering the
 defaults for new kernel fits, as described below. Explicit historical policies
 remain available; models fitted and saved with earlier versions retain their
 recorded scoring behavior.
@@ -336,9 +336,9 @@ they have not been relabeled as new release results.
 
 # Release history
 
-Version 1.3.16, October 19, 2026. See the [current validation scope](VALIDATION.md).
+Version 1.3.17, October 19, 2026. See the [current validation scope](VALIDATION.md).
 
-## Changes in 1.3.16
+## Changes in 1.3.17
 
 New kernel fits use automatic joint affine scoring and eligible adaptive
 residual ordering, with explicit historical policies still available. Guarded

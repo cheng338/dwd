@@ -165,14 +165,42 @@ class WorkerScopeTests(unittest.TestCase):
         pools=[];failure=RuntimeError('actual fit callback')
         def callback(state):
             scope=s._SCOPE.get()
-            if scope.executor is not None:
-                pools.append(scope.executor)
-                raise failure
+            self.assertIsNotNone(scope)
+            existing=scope.executor
+            # Ordinary solver checks need not enter compiled recovery on every
+            # BLAS/runtime. Exercise a real compiled call in its live scope.
+            first=c.compiled_values(*self.args)
+            self.assertIsNotNone(first)
+            pool=scope.executor
+            self.assertIsNotNone(pool)
+            if existing is not None:self.assertIs(pool,existing)
+            second=c.compiled_values(*self.args)
+            self.assertIs(scope.executor,pool)
+            self.assertEqual(bits(first),bits(second))
+            pools.append(pool)
+            raise failure
         model=KernGDWD(kernel='rbf',kernel_kws={'gamma':1e-7},lambd=1e-10,
                        max_iter=4,stopping='fixed',callback=callback)
         with self.assertRaises(RuntimeError) as caught:model.fit(X,y)
         self.assertIs(caught.exception,failure);self.assertTrue(pools)
         for pool in pools:self.assert_drained(pool)
+        self.assertFalse(hasattr(model,'dual_coef_'));self.assertIsNone(s._SCOPE.get())
+    def test_actual_estimator_callback_without_pool_clears_fitted_state(self):
+        from dwd.gen_kern_dwd import KernGDWD
+        from sklearn.preprocessing import StandardScaler
+        rng=np.random.default_rng(381);X=StandardScaler().fit_transform(rng.normal(size=(256,8)));y=np.tile([-1,1],128)
+        self.budget.return_value=1
+        scopes=[];failure=RuntimeError('serial fit callback')
+        def callback(state):
+            scope=s._SCOPE.get()
+            self.assertIsNotNone(scope);self.assertIsNone(scope.executor)
+            scopes.append(scope)
+            raise failure
+        model=KernGDWD(kernel='rbf',kernel_kws={'gamma':1e-7},lambd=1e-10,
+                       max_iter=4,stopping='fixed',callback=callback)
+        with self.assertRaises(RuntimeError) as caught:model.fit(X,y)
+        self.assertIs(caught.exception,failure);self.assertEqual(len(scopes),1)
+        self.assertTrue(scopes[0].closed);self.assertIsNone(scopes[0].executor)
         self.assertFalse(hasattr(model,'dual_coef_'));self.assertIsNone(s._SCOPE.get())
 
 if __name__=='__main__':unittest.main()

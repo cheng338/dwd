@@ -6,7 +6,10 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
-## 1.3.16 — 2026-10-19
+## 1.3.17 — 2026-10-19
+
+- Make the worker-cleanup regression deterministic across numerical backends;
+  production solver behavior is unchanged.
 
 - Allow an eligible numerical failure in restarted kernel MM to take one fresh
   spectral retry from the original initialization. Preserve typed failure

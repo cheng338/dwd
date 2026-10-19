@@ -1,4 +1,4 @@
-# DWD 1.3.16 — October 19, 2026
+# DWD 1.3.17 — October 19, 2026
 
 This release makes guarded joint affine scoring and eligible adaptive residual
 ordering the defaults for new kernel fits. It also extends qualified native
@@ -69,6 +69,10 @@ Sphinx checks also passed. See [VALIDATION.md](VALIDATION.md) for the dates,
 environment and evidence boundaries. These prior checks are separate from the
 release artifact checks and hosted CI; no universal speedup is claimed.
 
+The worker-cleanup regression now deterministically exercises its intended
+worker-pool path across numerical backends. This is a test-fixture correction;
+production solver behavior is unchanged.
+
 CI verifies installed wheel payloads and execution outside the package source
 tree. An existing matrix leg supplies portable coverage. Push CI runs on branches,
 avoiding a duplicate matrix for release tags while retaining pull-request and
@@ -76,7 +80,7 @@ manual runs. Changed example and dependency sources require fresh checkpoints
 under the existing strict identity checks; historical receipts are not migrated.
 
 Python 3.11+ remains required. The Windows AMD64 native wheel is
-`dwd-1.3.16-cp311-abi3-win_amd64.whl`; `dwd-1.3.16-py3-none-any.whl` omits the
+`dwd-1.3.17-cp311-abi3-win_amd64.whl`; `dwd-1.3.17-py3-none-any.whl` omits the
 optional helper. Extension-loading compatibility does not guarantee numerical
 path eligibility. NumPy/SciPy BLAS acceleration is independent. Python 3.10
 companion maintenance remains ended; historical assets are retained.
