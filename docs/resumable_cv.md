@@ -71,13 +71,14 @@ for classifiers. To use shuffled folds, supply a `StratifiedKFold` with an
 explicit integer `random_state`. The realized train/validation indices are
 included in the checkpoint identity.
 
-To use optional joint affine scoring, set
-`KernGDWD(..., affine_computation='joint')` in the Python interface. The policy
+New estimators default to `affine_computation='auto'`, which selects joint
+affine scoring in corrected Schur mode. Set `affine_computation='standard'`
+for the previous scoring route, or `'joint'` explicitly. The policy
 is recorded with estimator and candidate parameters; changing it requires a
 new run directory. Completed evaluations retain the chosen arithmetic when
 resumed, and the selected estimator uses it in the final refit. The source
 identity also includes the affine scoring helper. See
-[the precision option](kernel_dwd.md#optional-joint-affine-scoring) for costs
+[affine scoring](kernel_dwd.md#optional-joint-affine-scoring) for costs
 and numerical scope.
 
 `KernGDWD(..., exact_recovery='extended')` selects the optional larger recovery

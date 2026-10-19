@@ -2,7 +2,9 @@ name: Package tests
 
 on:
   push:
+    branches: ["**"]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   tests:
@@ -13,10 +15,16 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python-version: ['3.11', '3.12', '3.13']
         dependencies: [base, socp]
+        include:
+          - os: ubuntu-latest
+            python-version: '3.12'
+            dependencies: base
+            backend: portable
     env:
       OPENBLAS_NUM_THREADS: '1'
       OMP_NUM_THREADS: '1'
       MKL_NUM_THREADS: '1'
+      DWD_BUILD_ACCEL: ${{ matrix.backend == 'portable' && '0' || '1' }}
       MPLBACKEND: Agg
     steps:
       - uses: actions/checkout@v7.0.1
@@ -27,25 +35,27 @@ jobs:
         run: |
           python -m venv .venv
           python -c "import os,pathlib; p=pathlib.Path('.venv')/('Scripts' if os.name=='nt' else 'bin'); f=open(os.environ['GITHUB_PATH'],'a'); f.write(str(p.resolve())+os.linesep); f.close()"
-      - name: Install base package and plotting tests
+      - name: Build the wheel to be tested
+        run: python -m pip wheel --no-deps --wheel-dir .ci-wheels .
+      - name: Install the exact base wheel and plotting tests
         if: matrix.dependencies == 'base'
-        run: python -m pip install '.[test-base]'
+        run: python -I -B tests/ci_artifacts.py install --wheel-dir .ci-wheels --extras test-base
       - name: Confirm optional solver is absent
         if: matrix.dependencies == 'base'
         run: python -I -c "import importlib.util; assert importlib.util.find_spec('cvxpy') is None"
-      - name: Install package and optional conic tests
+      - name: Install the exact wheel and optional conic tests
         if: matrix.dependencies == 'socp'
-        run: python -m pip install '.[test]'
-      - name: Require the installed package and compiled extension
+        run: python -I -B tests/ci_artifacts.py install --wheel-dir .ci-wheels --extras test
+      - name: Prepare tests outside the package source tree
         run: >-
-          python -I -B -c "import importlib.metadata as metadata,json,pathlib,sys,dwd;
-          from dwd import _residual_accel, _compiled_residual;
-          prefix=pathlib.Path(sys.prefix).resolve(); package=pathlib.Path(dwd.__file__).resolve();
-          extension=pathlib.Path(_residual_accel.__file__).resolve();
-          assert package.is_relative_to(prefix), package;
-          assert extension.parent == package.parent and extension.is_relative_to(prefix), extension;
-          assert _compiled_residual._ACCEL is _residual_accel;
-          assert dwd.__version__ == metadata.version('dwd');
-          print(json.dumps({'python':sys.executable,'package':str(package),'extension':str(extension),'version':dwd.__version__}))"
+          python -I -B tests/ci_artifacts.py bundle
+          --destination "${{ runner.temp }}/dwd-installed-tests"
+      - name: Require the exact installed wheel and expected backend
+        working-directory: ${{ runner.temp }}/dwd-installed-tests
+        run: >-
+          python -I -B tests/ci_artifacts.py check
+          --dwd-wheel-dir "${{ github.workspace }}/.ci-wheels"
+          --backend "${{ matrix.backend == 'portable' && 'portable' || 'native' }}"
       - name: Run the complete bundled test suite
+        working-directory: ${{ runner.temp }}/dwd-installed-tests
         run: python -I -B -m unittest discover -s tests -v

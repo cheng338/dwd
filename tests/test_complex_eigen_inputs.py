@@ -97,7 +97,12 @@ class ComplexEigenInputTests(unittest.TestCase):
                     with warnings.catch_warnings(record=True) as caught:
                         warnings.simplefilter('always')
                         model.fit(data, self.y, **{parameter: supplied})
-                    self.assertEqual(caught, [])
+                    if isinstance(model, KernGDWD) and model.solver_mode == 'legacy':
+                        self.assertEqual(len(caught), 1)
+                        self.assertIs(caught[0].category, FutureWarning)
+                        self.assertIn("solver_mode='legacy' uses historical kernel update equations", str(caught[0].message))
+                    else:
+                        self.assertEqual(caught, [])
                     assert_array_equal(model.decision_function(data), expected_scores)
                     assert_array_equal(model.objective_history_, expected_history)
 

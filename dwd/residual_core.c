@@ -18,6 +18,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #pragma STDC FP_CONTRACT OFF
@@ -50,16 +51,19 @@ static DoubleLength dl_split(double x)
     return (DoubleLength) {hi, lo};
 }
 
-static DoubleLength dl_mul(double x, double y)
+static DoubleLength dl_mul_prepared(DoubleLength xx, DoubleLength yy)
 {
-    /* CPython: Dekker (5.12) and mul12(). */
-    DoubleLength xx = dl_split(x);
-    DoubleLength yy = dl_split(y);
+    /* CPython: Dekker (5.12) and mul12(), with unchanged operation order. */
     double p = xx.hi * yy.hi;
     double q = xx.hi * yy.lo + xx.lo * yy.hi;
     double z = p + q;
     double zz = p - z + q + xx.lo * yy.lo;
     return (DoubleLength) {z, zz};
+}
+
+static DoubleLength dl_mul(double x, double y)
+{
+    return dl_mul_prepared(dl_split(x), dl_split(y));
 }
 
 static TripleLength tl_add_product(DoubleLength pr, TripleLength total)
@@ -140,7 +144,9 @@ static int supported_arithmetic(void)
  * Return 0 on success; 1 invalid argument; 2 operand outside guarded domain;
  * 3 nonfinite arithmetic; 4 unsupported floating arithmetic. Outputs may be
  * partially filled on a failure and MUST be discarded by the caller.
- * No allocations, global mutable state, or changes to rounding/thread modes.
+ * Coefficient preparation uses at most n*sizeof(DoubleLength) temporary bytes
+ * per call. Allocation failure keeps the original unprepared arithmetic.
+ * No global mutable state or changes to rounding/thread modes.
  */
 DWD_EXPORT int dwd_sumprod_rows(
     const void *K, ptrdiff_t K_row_stride, ptrdiff_t K_col_stride,
@@ -162,23 +168,38 @@ DWD_EXPORT int dwd_sumprod_rows(
         if (!safe_operand(read_double(x, (ptrdiff_t)j * x_stride)))
             return 2;
 
+    /* The domain scan above retains its original order. Empty intervals need
+     * no preparation; malloc failure is a performance fallback, not an error. */
+    DoubleLength *prepared = NULL;
+    if (row_start != row_stop) {
+        prepared = malloc(n * sizeof(*prepared));
+        if (prepared != NULL)
+            for (size_t j = 0; j < n; ++j)
+                prepared[j] = dl_split(read_double(x, (ptrdiff_t)j * x_stride));
+    }
+    int status = 0;
     for (size_t i = row_start; i < row_stop; ++i) {
         double rhs_i = read_double(rhs, (ptrdiff_t)i * rhs_stride);
         double x_i = read_double(x, (ptrdiff_t)i * x_stride);
-        if (!safe_operand(rhs_i))
-            return 2;
+        if (!safe_operand(rhs_i)) {
+            status = 2;
+            goto cleanup;
+        }
         TripleLength score = tl_zero, residual = tl_zero;
         double maximum = 0.0;
         for (size_t j = 0; j < n; ++j) {
             double a = read_double(K, (ptrdiff_t)i * K_row_stride
                                       + (ptrdiff_t)j * K_col_stride);
             double b = read_double(x, (ptrdiff_t)j * x_stride);
-            if (!safe_operand(a))
-                return 2;
+            if (!safe_operand(a)) {
+                status = 2;
+                goto cleanup;
+            }
             double absolute = fabs(a);
             if (absolute > maximum)
                 maximum = absolute;
-            DoubleLength product = dl_mul(a, b);
+            DoubleLength product = prepared != NULL
+                ? dl_mul_prepared(dl_split(a), prepared[j]) : dl_mul(a, b);
             score = tl_add_product(product, score);
             residual = tl_add_product(negative_product(a, b, product), residual);
         }
@@ -188,12 +209,16 @@ DWD_EXPORT int dwd_sumprod_rows(
         residual = tl_fma(-shift, x_i, residual);
         double score_value = tl_to_d(score);
         double residual_value = tl_to_d(residual);
-        if (!isfinite(score_value) || !isfinite(residual_value))
-            return 3;
+        if (!isfinite(score_value) || !isfinite(residual_value)) {
+            status = 3;
+            goto cleanup;
+        }
         size_t out = i - row_start;
         scores[out] = score_value;
         residuals[out] = residual_value;
         row_max_abs[out] = maximum;
     }
-    return 0;
+cleanup:
+    free(prepared);
+    return status;
 }

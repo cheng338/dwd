@@ -27,6 +27,7 @@ from ._accelerated_mm import RestartedMM
 from ._kernel_scores import compensated_kernel_matvec, adaptive_kernel_matvec
 from ._kernel_mm_recovery import KernelMMRecovery
 from ._kernel_recovery import ConstrainedSolveFailure, MMRecoveryExhausted
+from ._residual_worker_scope import scoped_residual_workers
 
 
 def _scalar(value, name, *, positive=False):
@@ -218,6 +219,7 @@ class _RequestedStop(Exception):
     pass
 
 
+@scoped_residual_workers
 def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                  offset_init=None, max_iter=100, obj_tol=1e-5,
                  stopping='objective', tol=1e-6, backend='auto',
@@ -233,6 +235,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     only for internally constructed kernels of a known PSD family.
     Numerical stopping checks max(RKHS gradient 2-norm, |intercept gradient|)
     against ``tol``. The default remains the upstream absolute objective rule.
+    This functional API retains refinement_first as its residual-order default.
+    Explicit auto resolves only after the actual supplied eigenbasis is known.
     """
     started = perf_counter()
     if not isinstance(exact_recovery, str) or exact_recovery not in ('standard', 'extended'):
@@ -247,12 +251,10 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         raise ValueError("acceleration must be None or 'restart'.")
     if acceleration is not None and (implementation != 'optimized' or backend == 'lbfgs'):
         raise ValueError('Acceleration is supported only for optimized MM, not reference or L-BFGS.')
-    if residual_check_order not in ('refinement_first', 'adaptive'):
-        raise ValueError("residual_check_order must be 'refinement_first' or 'adaptive'.")
-    if residual_check_order == 'adaptive' and (implementation != 'optimized'
-            or backend not in ('auto', 'cholesky')
-            or (backend == 'auto' and K_eig is not None)):
-        raise ValueError('Adaptive residual ordering requires optimized Cholesky MM.')
+    requested_residual_check_order = residual_check_order
+    from dwd._residual_order import resolve_residual_check_order
+    residual_check_order = resolve_residual_check_order(residual_check_order,
+        implementation=implementation, backend=backend, K_eig=K_eig)
     lambd, q = _scalar(lambd, 'lambd', positive=True), _scalar(q, 'q', positive=True)
     obj_tol, tol = _scalar(obj_tol, 'obj_tol'), _scalar(tol, 'tol', positive=True)
     max_iter = _integer(max_iter, 'max_iter')
@@ -311,7 +313,9 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                    'fallback_reason': None, 'cholesky_setup_seconds': 0.,
                    'spectral_setup_seconds': 0., 'eigenvalue_check_seconds': 0.,
                    'implementation': implementation, 'acceleration': acceleration,
-                   'residual_check_order': residual_check_order}
+                   'residual_check_order': residual_check_order,
+                   'initial_residual_check_order': residual_check_order,
+                   'requested_residual_check_order': requested_residual_check_order}
     diagnostics.update(initial_details)
     U = values = system = None
     if backend in ('spectral', 'lbfgs') or K_eig is not None:
@@ -550,14 +554,19 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
             'mm_function_recovery_attempted': bool(mm_recovery.info['attempted']),
             'mm_function_recovery_accepted_actions': int(mm_recovery.info['accepted_actions']),
             'mm_function_certificate_status': str(mm_recovery.info.get('certificate_status')),
+            'acceleration_counts': dict(accelerator.info) if accelerator is not None else {},
         })
 
     def accelerated_proximal_step(rhs):
-        nonlocal last_proximal_uses_certified_columns
-        # rhs already includes the extrapolated intercept. A certified action
-        # therefore checks and returns its absolute offset with old_offset=0.
+        nonlocal last_proximal_uses_certified_columns, constrained_recovery_origin
+        # Preserve typed retry eligibility without changing acceptance gates.
         if mm_recovery.active:
-            result = mm_recovery.step(rhs, 0.)
+            try:
+                result = mm_recovery.step(rhs, 0.)
+            except FloatingPointError as recovery_error:
+                if constrained_recovery_origin is not None:
+                    raise exhausted_constrained_recovery(recovery_error) from recovery_error
+                raise
             last_proximal_uses_certified_columns = True
             return result
         try:
@@ -565,7 +574,15 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
             last_proximal_uses_certified_columns = False
             return coefficients, b, system.last_product.copy()
         except FloatingPointError as exc:
-            result = mm_recovery.step(rhs, 0., str(exc))
+            if (backend == 'cholesky' and implementation == 'optimized'
+                    and isinstance(exc, ConstrainedSolveFailure)):
+                constrained_recovery_origin = str(exc)
+            try:
+                result = mm_recovery.step(rhs, 0., str(exc))
+            except FloatingPointError as recovery_error:
+                if constrained_recovery_origin is not None:
+                    raise exhausted_constrained_recovery(recovery_error) from recovery_error
+                raise
             last_proximal_uses_certified_columns = True
             return result
 

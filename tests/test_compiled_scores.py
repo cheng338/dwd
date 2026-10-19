@@ -61,7 +61,7 @@ class CompiledScoreDispatchTests(unittest.TestCase):
         self.assertBitsEqual(actual, expected)
 
     def test_independent_runtime_guard_and_replaced_math_fsum(self):
-        for version in ((3, 11), (3, 13)):
+        for version in ((3, 10), (3, 14)):
             with patch.object(compiled.sys, 'version_info', version):
                 self.assertFalse(compiled._supported())
         with patch.object(compiled.platform, 'machine', return_value='ARM64'):
@@ -189,7 +189,7 @@ _ENTRY = getattr(loader._ACCEL, 'score_rows', None)
 
 
 @unittest.skipUnless(_ENTRY is not None and compiled._supported(),
-                     'Requires the new compiled scorer on CPython 3.12 x86-64.')
+                     'Requires the compiled scorer on qualified Windows CPython x86-64.')
 class NativeScoreArithmeticTests(unittest.TestCase):
     def assertBitsEqual(self, actual, expected):
         self.assertEqual(actual.dtype, expected.dtype)

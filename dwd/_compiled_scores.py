@@ -7,6 +7,7 @@ used by dense accurate scoring. No solver or acceptance policy changes here.
 import math
 import platform
 import sys
+import sysconfig
 import types
 
 import numpy as np
@@ -17,13 +18,15 @@ from . import _compensated_residual as _arithmetic
 
 _PRODUCTS = _arithmetic._products
 _FSUM = _arithmetic._fsum
+_GIL_DISABLED = sysconfig.get_config_var('Py_GIL_DISABLED')
 
 
 def _supported():
-    """Limit the new entry to the validated Windows CPython/x86-64 runtime."""
+    """Limit the entry to qualified Windows CPython 3.11-3.13 x86-64 runtimes."""
     return (sys.implementation.name == 'cpython'
             and sys.platform == 'win32'
-            and sys.version_info[:2] == (3, 12)
+            and sys.version_info[:2] in ((3, 11), (3, 12), (3, 13))
+            and (sys.version_info[:2] != (3, 13) or _GIL_DISABLED in (None, 0))
             and platform.machine().lower() in ('amd64', 'x86_64')
             and sys.maxsize > 2**32
             and sys.float_info.radix == 2 and sys.float_info.mant_dig == 53
@@ -85,26 +88,44 @@ def try_expanded_dense_rows(K, alpha, indices, split_alpha, result, *, batch_ena
     width = len(alpha)
     capacity = min(scores._SCORE_TILE_MAX_ROWS,
                    max(1, scores._SCORE_TILE_BYTES // (128 * width)))
-    for start in range(0, len(indices), capacity):
-        selected = indices[start:start + capacity]
-        if len(selected) == 1:
-            index = int(selected[0])
-            result[index] = scores._expanded_row(K, alpha, False, index, _split_b=split_alpha)
-            continue
-        tile = output = None
-        refused = False
-        try:
-            tile = np.ascontiguousarray(K[selected], dtype=np.float64)
-            output = np.empty(len(selected), dtype=np.float64)
-            status = entry(tile, alpha, *split_alpha, output)
-            if status:
+    # Allocate only when an eligible multi-row tile needs native arithmetic.
+    scratch_tile = scratch_output = tile = output = None
+    try:
+        for start in range(0, len(indices), capacity):
+            selected = indices[start:start + capacity]
+            if len(selected) == 1:
+                # Release native scratch before taking the original scalar path.
+                scratch_tile = scratch_output = tile = output = None
+                index = int(selected[0])
+                result[index] = scores._expanded_row(K, alpha, False, index, _split_b=split_alpha)
+                continue
+            refused = False
+            try:
+                if scratch_tile is None:
+                    rows = min(capacity, len(indices))
+                    scratch_tile = np.empty((rows, width), dtype=np.float64)
+                    scratch_output = np.empty(rows, dtype=np.float64)
+                tile = scratch_tile[:len(selected)]
+                output = scratch_output[:len(selected)]
+                if type(selected) is range and selected.step == 1:
+                    np.copyto(tile, K[selected.start:selected.stop])
+                else:
+                    # Bounded row copies also avoid a whole-matrix temporary
+                    # when gathering selected rows from an F-order kernel.
+                    for local, index in enumerate(selected):
+                        np.copyto(tile[local], K[int(index)])
+                status = entry(tile, alpha, *split_alpha, output)
+                if status:
+                    refused = True
+                else:
+                    result[selected] = output
+            except (MemoryError, FloatingPointError, OverflowError):
                 refused = True
-            else:
-                result[selected] = output
-        except (MemoryError, FloatingPointError, OverflowError):
-            refused = True
-        # Leave the exception scope so traceback references release scratch too.
-        tile = output = None
-        if refused:
-            return None
-    return batch_enabled
+            # Leave the exception scope before releasing scratch and retrying.
+            tile = output = None
+            if refused:
+                scratch_tile = scratch_output = None
+                return None
+        return batch_enabled
+    finally:
+        scratch_tile = scratch_output = tile = output = None

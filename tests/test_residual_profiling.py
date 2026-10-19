@@ -142,7 +142,7 @@ class ProfileContextTests(unittest.TestCase):
         self.assertEqual(result['counts']['scalar_sumprod_calls_started'], 0)
 
 
-@unittest.skipUnless(native._native_supported(), 'Requires audited CPython native sumprod.')
+@unittest.skipUnless(native._native_supported(), 'Requires qualified native residual arithmetic.')
 class ProfileNumericalTests(unittest.TestCase):
     def assert_bits_equal(self, actual, expected):
         self.assertEqual(len(actual), len(expected))
@@ -151,6 +151,7 @@ class ProfileNumericalTests(unittest.TestCase):
             self.assertEqual(a.shape, b.shape)
             self.assertEqual(a.tobytes(), b.tobytes())
 
+    @unittest.skipUnless(native._scalar_supported(), 'Requires qualified scalar sumprod.')
     def test_scalar_result_and_bounds_are_bitwise_unchanged(self):
         args = inputs(7)
         with patch.object(native, 'compiled_values', return_value=None):
@@ -186,6 +187,7 @@ class ProfileNumericalTests(unittest.TestCase):
                 self.assertEqual(snapshots, [np.asarray(args[i]).tobytes() for i in (0, 2, 3)])
                 self.assertGreaterEqual(result['wall_seconds'], result['compiled_helper']['wall_seconds'])
 
+    @unittest.skipUnless(native._scalar_supported(), 'Requires qualified scalar sumprod.')
     def test_partial_scalar_work_is_counted_at_exact_decline_position(self):
         args = inputs(3)
         args[0][-1, 0] = np.nan
@@ -200,6 +202,7 @@ class ProfileNumericalTests(unittest.TestCase):
         self.assertEqual(result['counts']['scalar_sumprod_calls_completed'], 4)
         self.assertEqual(result['decline_reasons'], {'row_operands': 1})
 
+    @unittest.skipUnless(native._scalar_supported(), 'Requires qualified scalar sumprod.')
     def test_score_precision_decline_preserves_partial_work_and_original_call(self):
         args = (np.ones((2, 2)), .01, np.ones(2), np.array([1e7, -1e7]), 0., 0.)
         with patch.object(native, 'compiled_values', return_value=None):
@@ -224,8 +227,9 @@ class ProfileNumericalTests(unittest.TestCase):
 
     def test_scalar_raised_call_is_started_but_not_completed(self):
         with patch.object(native, '_native_supported', return_value=True), \
+                patch.object(native, '_scalar_supported', return_value=True), \
                 patch.object(native, 'compiled_values', return_value=None), \
-                patch.object(native.math, 'sumprod', side_effect=ValueError('numerical failure')):
+                patch.object(native.math, 'sumprod', side_effect=ValueError('numerical failure'), create=True):
             with residual_profile() as profile:
                 self.assertIsNone(native.native_compensated_residual(*inputs(2)))
         result = profile.as_dict()

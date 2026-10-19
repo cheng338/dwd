@@ -42,7 +42,8 @@ class NativeResidualTests(unittest.TestCase):
     def test_native_bounds_cover_exact_rationals_at_many_scales(self):
         rng = np.random.default_rng(674892)
         accepted = 0
-        for n in (1, 2, 7, 31):
+        sizes = (1, 2, 7, 31) if native._scalar_supported() else (8, 9, 17, 31)
+        for n in sizes:
             for kexp in (-180, -20, 0, 20, 180):
                 for xexp in (-180, -20, 0, 20, 180):
                     K = np.ldexp(rng.uniform(-1, 1, (n, n)), kexp)
@@ -72,23 +73,25 @@ class NativeResidualTests(unittest.TestCase):
     @unittest.skipUnless(native._native_supported(), 'Requires audited CPython native sumprod.')
     def test_operand_boundaries_are_accepted_with_strict_numpy_errors(self):
         for value in (native._MIN_OPERAND, native._MAX_OPERAND):
-            args = (np.array([[value]]), value, np.array([value]),
-                    np.array([value]), value, value)
+            n = 1 if native._scalar_supported() else 8
+            args = (np.full((n, n), value), value, np.full(n, value),
+                    np.full(n, value), value, value)
             with np.errstate(all='raise'):
                 result = native.native_compensated_residual(*args)
             self.assertIsNotNone(result)
             self.assert_exact_bounds(args, result)
 
     def test_unsupported_runtime_or_missing_builtin_falls_back(self):
-        for version in ((3, 11), (3, 13), (3, 14)):
+        for version in ((3, 10), (3, 14)):
             with patch.object(native.sys, 'version_info', version):
                 self.assertFalse(native._native_supported())
                 self.assertIsNone(native.native_compensated_residual(*self.args))
         with patch.object(native.sys, 'implementation', types.SimpleNamespace(name='pypy')):
             self.assertFalse(native._native_supported())
         with patch.object(native.math, 'sumprod', None, create=True):
-            self.assertFalse(native._native_supported())
-            self.assertIsNone(native.native_compensated_residual(*self.args))
+            self.assertFalse(native._scalar_supported())
+            with patch.object(native, 'compiled_values', return_value=None):
+                self.assertIsNone(native.native_compensated_residual(*self.args))
 
     def test_nonstandard_rounding_and_unavailable_subnormals_fall_back(self):
         with patch.object(native, '_native_supported', return_value=True):
@@ -123,6 +126,7 @@ class NativeResidualTests(unittest.TestCase):
 
     def test_native_sumprod_failures_and_nonfinite_returns_fall_back(self):
         with patch.object(native, '_native_supported', return_value=True), patch.object(
+                native, '_scalar_supported', return_value=True), patch.object(
                 native, 'compiled_values', return_value=None):
             for failure in (OverflowError, ValueError, FloatingPointError, TypeError):
                 with patch.object(native.math, 'sumprod', side_effect=failure, create=True):
@@ -142,6 +146,7 @@ class NativeResidualTests(unittest.TestCase):
             return exact_sumprod(a, b)
 
         with patch.object(native, '_native_supported', return_value=True), patch.object(
+                native, '_scalar_supported', return_value=True), patch.object(
                 native, 'compiled_values', return_value=None), patch.object(
                 native.math, 'sumprod', side_effect=record_sumprod, create=True):
             result = native.native_compensated_residual(*self.args)
@@ -160,6 +165,7 @@ class NativeResidualTests(unittest.TestCase):
         # forward bound is useful but cannot meet the faithful-zero budget.
         args = (np.ones((2, 2)), .01, np.ones(2), np.array([1e7, -1e7]), 0., 0.)
         with patch.object(native, '_native_supported', return_value=True), patch.object(
+                native, '_scalar_supported', return_value=True), patch.object(
                 native.math, 'sumprod', side_effect=exact_sumprod, create=True):
             self.assertIsNone(native.native_compensated_residual(*args))
 

@@ -140,7 +140,7 @@ class TestRetryDispatch(unittest.TestCase):
 
     def test_explicit_backends_and_other_modes_do_not_restart(self):
         variants = [dict(backend=b) for b in ("cholesky", "spectral", "lbfgs")]
-        variants += [dict(implementation="reference"), dict(acceleration="restart"),
+        variants += [dict(implementation="reference"),
                      dict(callback=lambda _: None), dict(K_eig=object())]
         for options in variants:
             with self.subTest(options=options):
@@ -154,6 +154,13 @@ class TestRetryDispatch(unittest.TestCase):
                 else:
                     self.fail("An ineligible failure must propagate")
                 self.assertEqual(solve.call_count, 1)
+
+    def test_explicit_restart_acceleration_preserves_retry_contract(self):
+        expected = result()
+        solve = Mock(side_effect=[failure(), expected])
+        self.assertIs(self.call(solve, acceleration="restart"), expected)
+        self.assertEqual(solve.call_count, 2)
+        self.assertEqual(solve.call_args_list[1].kwargs["acceleration"], "restart")
 
     def test_untrusted_kernel_does_not_restart(self):
         solve = Mock(side_effect=failure())

@@ -8,6 +8,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils import check_array
 from dwd._fit_state import fit_with_cleanup
 
+_PREDICTION_BATCH_DEFAULT = object()
+
 
 class KernelClfMixin(ClassifierMixin):
     """
@@ -45,7 +47,11 @@ class KernelClfMixin(ClassifierMixin):
         K: array-like, shape (n_samples_train, n_samples_test)
         """
 
-        if self.kernel == 'precomputed':
+        # Older serialized models and other users of this mixin may not have
+        # a fitted kernel specification. KernGDWD records one during fitting.
+        kernel = getattr(self, 'kernel_', self.kernel)
+        kernel_kws = getattr(self, 'kernel_kws_', self.kernel_kws)
+        if kernel == 'precomputed':
             # Public sklearn convention: queries by training observations.
             # Internally this mixin multiplies K.T by training coefficients.
             X = check_array(X, dtype='numeric', accept_sparse='csr')
@@ -53,37 +59,37 @@ class KernelClfMixin(ClassifierMixin):
                 raise ValueError('A precomputed query kernel must have one column per training observation.')
             return X.T
 
-        elif callable(self.kernel):
+        elif callable(kernel):
             # Matrix-level callable(X_train, X_query, **kernel_kws), matching
             # KernGDWD's documented callback contract.
-            K = self.kernel(self._Xfit, X, **(self.kernel_kws or {}))
+            K = kernel(self._Xfit, X, **(kernel_kws or {}))
             K = check_array(K, dtype='numeric', accept_sparse='csr')
             if K.shape != (self._Xfit.shape[0], X.shape[0]):
                 raise ValueError('A callable kernel must return training-by-query values.')
             return K
 
-        elif isinstance(self.kernel, str):
-            if (self.kernel == 'rbf' and
+        elif isinstance(kernel, str):
+            if (kernel == 'rbf' and
                     getattr(self, 'kernel_computation_', None) == 'direct_v1'):
                 from ._direct_rbf import accurate_rbf
-                gamma = (self.kernel_kws or {}).get('gamma')
+                gamma = (kernel_kws or {}).get('gamma')
                 if isinstance(gamma, bool):
                     gamma = float(gamma)
                 return accurate_rbf(self._Xfit, X,
                                     gamma=gamma)
-            if (self.kernel == 'rbf' and
+            if (kernel == 'rbf' and
                     getattr(self, 'kernel_computation_', None) == 'norm_sum'):
                 from ._rbf import norm_sum_rbf
                 return norm_sum_rbf(
-                    self._Xfit, X, gamma=(self.kernel_kws or {}).get('gamma'),
+                    self._Xfit, X, gamma=(kernel_kws or {}).get('gamma'),
                     self_kernel=X is self._Xfit)
             return pairwise_kernels(X=self._Xfit,
                                     Y=X,
-                                    metric=self.kernel,
-                                    **(self.kernel_kws or {}))
+                                    metric=kernel,
+                                    **(kernel_kws or {}))
         raise ValueError('kernel must be a named kernel, matrix callable, or precomputed.')
 
-    def decision_function(self, X):
+    def decision_function(self, X, *, prediction_batch_size=_PREDICTION_BATCH_DEFAULT):
         """Predict confidence scores for samples.
         Return the functional decision value K(query, training) @ alpha + b.
         It is not divided by the RKHS norm to obtain a geometric distance.
@@ -91,6 +97,9 @@ class KernelClfMixin(ClassifierMixin):
         ----------
         X : array_like or sparse matrix, shape (n_samples, n_features)
             Samples.
+        prediction_batch_size : positive int or None, optional
+            Override the query batch limit for this call without changing the
+            estimator. Omission uses its current setting; None disables batching.
         Returns
         -------
         array, shape=(n_samples,) if n_classes == 2 else (n_samples, n_classes)
@@ -100,11 +109,14 @@ class KernelClfMixin(ClassifierMixin):
         """
 
         check_is_fitted(self, ['dual_coef_', 'intercept_', 'classes_', '_Xfit'])
+        original_X = X
         X = check_array(X, dtype=np.float64 if getattr(self, 'solver_mode', None) == 'schur'
                         else 'numeric', accept_sparse='csr')
-        if self.kernel != 'precomputed' and X.shape[1] != self._Xfit.shape[1]:
+        if getattr(self, 'kernel_', self.kernel) != 'precomputed' and X.shape[1] != self._Xfit.shape[1]:
             raise ValueError('Feature count differs from training data.')
-        batch_size = getattr(self, 'prediction_batch_size', None)
+        batch_size = (getattr(self, 'prediction_batch_size', None)
+                      if prediction_batch_size is _PREDICTION_BATCH_DEFAULT
+                      else prediction_batch_size)
         if batch_size is not None and (isinstance(batch_size, (bool, np.bool_)) or
                 not isinstance(batch_size, (int, np.integer)) or batch_size <= 0):
             raise ValueError('prediction_batch_size must be a positive integer or None.')
@@ -114,9 +126,24 @@ class KernelClfMixin(ClassifierMixin):
         else:
             # Bound the query kernel allocation; training coefficients stay fixed.
             scores = np.empty((X.shape[0], self.dual_coef_.shape[0]), dtype=float)
+            direct_kernel = None
+            if getattr(self, 'kernel_computation_', None) == 'direct_v1':
+                # Imported only during prediction, after both classes exist.
+                from .gen_kern_dwd import _direct_prediction_kernel
+                direct_kernel = _direct_prediction_kernel(self)
+            prepared_norm_kernel = None
+            if direct_kernel is None:
+                from ._prediction_norms import prepare_norm_kernel
+                prepared_norm_kernel = prepare_norm_kernel(self, X, original_X)
             for start in range(0, X.shape[0], batch_size):
                 stop = min(start + batch_size, X.shape[0])
-                K = self._compute_kernel(X[start:stop])
+                query = X[start:stop]
+                if direct_kernel is not None:
+                    K = direct_kernel(query)
+                elif prepared_norm_kernel is not None:
+                    K = prepared_norm_kernel(query)
+                else:
+                    K = self._compute_kernel(query)
                 scores[start:stop] = self._kernel_decision_product(K)
                 del K
         return scores.ravel() if scores.shape[1] == 1 else scores
@@ -172,6 +199,13 @@ class KernelClfMixin(ClassifierMixin):
         else:
             indices = scores.argmax(axis=1)
         return self.classes_[indices]
+
+
+# Definition-time identities are intentionally independent of mutable class
+# attributes, so class-level replacements cannot be mistaken for originals.
+_ORIGINAL_COMPUTE_KERNEL = KernelClfMixin._compute_kernel
+_ORIGINAL_KERNEL_DECISION_PRODUCT = KernelClfMixin._kernel_decision_product
+_ORIGINAL_DECISION_FUNCTION = KernelClfMixin.decision_function
 
 
 class KernelScaler(TransformerMixin, BaseEstimator):

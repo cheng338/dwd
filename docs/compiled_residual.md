@@ -19,17 +19,50 @@ When compiled values are available, the Python layer evaluates those bounds
 on arrays with the same outward rounding points. The C core additionally checks
 its arithmetic domain and rounding behavior.
 Uncertain or unsupported evaluations retain the prior Python/native or portable
-fallback. No numerical tolerance is relaxed. The current native-screen runtime
-gate remains conventional CPython 3.12. On Windows, CPython 3.11 can install
-and load the `cp311-abi3` wheel, but DWD still uses its portable compensated
-residual check; the same residual guard excludes CPython 3.13 and later.
-On CPython 3.12, omitting the extension can still leave the guarded built-in
-`math.sumprod` residual path available. The wheel ABI and DWD's residual
+fallback. No numerical tolerance is relaxed. The compiled residual path is
+qualified on conventional Windows x86-64 CPython 3.11 through 3.13. Its
+self-contained C arithmetic does not call the interpreter's `math.sumprod`.
+The separate scalar `math.sumprod` path preserves its CPython 3.12 eligibility
+and is also qualified on conventional Windows x86-64 CPython 3.13. Omitting the
+extension on those runtimes can still leave the guarded builtin path available.
+Python 3.13's builtin was tested directly with the extension disabled; qualifying
+the C core alone would not establish this fallback's numerical behavior.
+Python 3.11 has no `math.sumprod`, so a missing or declining extension returns
+to portable compensated arithmetic. The wheel
+ABI and DWD's residual
 arithmetic guard are separate from NumPy/SciPy BLAS acceleration.
+
+The additional scalar qualification used ordinary Windows x86-64 CPython
+3.13.15, exact-rational residual bounds, unsafe arithmetic-mode refusals and
+fitting comparisons against portable compensated evaluation. The relevant
+extended-arithmetic and `math_sumprod_impl` source sections in the official
+CPython 3.12.15 and 3.13.15 sources were identical. This does not qualify
+free-threaded builds, other Python versions or additional 3.13 platforms.
 
 The adapted arithmetic source includes the complete Python Software Foundation
 license in `dwd/CPYTHON-LICENSE.txt`. Original DWD attribution and its MIT license
 remain intact.
+
+## Shared operand refusals
+
+The compiled evaluator and the scalar `math.sumprod` route use the same finite
+operand range: zero, or a nonzero magnitude between `2**-200` and `2**200`,
+inclusive. If the original compiled evaluator reports that an operand is outside
+this range, the scalar route cannot accept the same values. The dispatcher skips
+that redundant scalar attempt and returns control to the existing portable
+compensated evaluation.
+
+This automatic shortcut requires the original compiled helper and dispatcher,
+an exact NumPy array, the original scalar operand check and unchanged magnitude
+limits. Custom hooks, array subclasses, a missing helper and other refusal
+reasons retain the existing fallback sequence. Inputs must remain unchanged
+during evaluation, as required by the existing numerical routines. Every submitted
+worker task completes and its exceptions propagate before a refusal is returned. Error
+bounds, solver acceptance checks, tolerances and estimator settings are unchanged.
+
+The saving depends on how much scalar work would otherwise precede the refusal.
+This is an internal optimization for that case, with no new estimator option
+and no general claim of faster fitting or prediction.
 
 ## Threads and memory
 
@@ -46,6 +79,29 @@ threaded inside this check. This does not introduce another CV engine or change
 the ensemble package. The numerical code uses the same read-only kernel and
 O(n) additional output storage; workers do not copy the Gram matrix or create
 child processes.
+
+The original compiled evaluator prepares the high and low parts of each
+coefficient once per native chunk, then uses those parts in the existing
+ordered accumulation. Its temporary allocation is 16 bytes per coefficient
+per active chunk. Allocation failure uses the previous arithmetic directly;
+range checks, rounding checks and acceptance bounds remain unchanged.
+
+Eligible threaded evaluations reuse a lazily created worker pool within one
+`solve_kernel` invocation. The pool is owned by the calling process and thread,
+and is joined when that invocation exits, including exceptional exits.
+Different fits, recovery attempts and ensemble learners do not share it.
+Changed helpers, unsupported operand types or unsupported rounding modes keep
+the existing dispatch path. There is no new public option for these internal
+optimizations.
+
+Long checks divide each worker's rows into bounded native calls. The dispatcher
+returns to Python between chunks and polls threaded completion, allowing pending
+interruptions to be observed on Windows as well as other platforms. A failure,
+refusal or interruption stops remaining chunks; every submitted worker task finishes before
+returning, and partial output is discarded. One row remains indivisible, so this
+is not a hard wall-clock cancellation guarantee. Small checks retain a single
+native call. Chunking preserves the arithmetic order within each row and does
+not change the numerical acceptance rules.
 
 ## Optional residual profiling
 
@@ -67,6 +123,10 @@ unsupported arithmetic, exits before dispatch, compiled-helper results and
 scalar fallback. `compiled_helper` describes the existing helper call; a refusal
 can mean a missing extension, a small input or an unsupported case. Its elapsed
 time is not a measurement of raw C arithmetic alone.
+
+A `compiled_operand_domain` refusal records this shared-domain shortcut. Its
+scalar call count is zero because the redundant scalar attempt was skipped;
+portable compensated work still occurs outside the native profile.
 
 A `bounded_return` means residuals and error allowances were returned. The
 solver still checks the original equations afterward. Use its existing
@@ -101,22 +161,24 @@ For normal binary64 values whose scaled result remains normal, exponent-field
 changes perform the exact normalization/scaling; zero, subnormal and exceptional
 cases retain the library `frexp`/`ldexp` path and its rounding points.
 
-The score path initially requires Windows CPython 3.12 on x86-64 with
+The score path requires conventional Windows CPython 3.11 through 3.13 on x86-64 with
 binary64 round-to-nearest arithmetic and gradual underflow. Other operating
 systems retain the existing Python calculation until their native builds are
-qualified. This restriction applies only to the new score entry; the existing
-residual runtime guard is unchanged. It handles the
+qualified. It handles the
 existing C/F-contiguous float64 kernels through bounded contiguous tiles, with
 at most eight rows and O(n_training) scratch. It releases the GIL without
 starting additional threads. Single-row tails, unsupported layouts/dtypes,
 custom arithmetic hooks, active NumPy `call`/`log` handlers and missing or older
 extensions keep the original Python path. A native refusal or scratch failure
 releases its temporary storage before retrying the original evaluation and
-error ordering.
+error ordering. Tile and output buffers are allocated lazily and reused within
+one eligible call. They are not shared across calls or stored on fitted models,
+and are released before scalar tails or fallback. The same selected rows and
+product order reach the C core; this reuse changes allocation, not arithmetic.
 
 This is an internal execution optimization, with no new estimator setting.
 The shared helper is used by prediction and by some fitting/validation score
-calculations. Sparse scores and the optional joint-affine calculation retain
+calculations. Sparse scores and the joint-affine calculation retain
 their existing arithmetic. Benefits depend on how many dense rows require
 accurate scoring; ordinarily accepted dot products do not use this entry.
 

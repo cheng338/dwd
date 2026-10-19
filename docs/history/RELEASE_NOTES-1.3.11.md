@@ -17,10 +17,10 @@ are preserved.
 The main release requires Python 3.11 or later. Its Windows AMD64 native wheel
 is `dwd-1.3.11-cp311-abi3-win_amd64.whl`; the portable alternative is
 `dwd-1.3.11-py3-none-any.whl` and has the same Python requirement. See the
-[installation instructions](README.md#installation), [changelog](CHANGES.md)
-and [validation scope](VALIDATION.md). The historical 1.3.10 timing investigation
+[installation instructions](../../README.md#installation), [changelog](../../CHANGES.md)
+and [validation scope](../../VALIDATION.md). The historical 1.3.10 timing investigation
 did not establish a persistent package regression; its qualifications remain
-in the separate [1.3.10 record](docs/validation-1.3.10.md).
+in the separate [1.3.10 record](../validation-1.3.10.md).
 
 Wheel compatibility and residual arithmetic are separate: CPython 3.11 can
 load the Windows `cp311-abi3` extension but uses DWD's portable compensated
@@ -33,5 +33,5 @@ its source overlay is distributed separately from the main source archive.
 This is a fork of slicersalt/dwd, originally implemented by Iain Carmichael,
 with upstream maintenance by David Allemang and Kitware. Subsequent fork
 development is guided by Chang Cheng. Original credits and the MIT license are
-retained. Earlier [1.3.9 release notes](docs/history/RELEASE_NOTES-1.3.9.md) remain
+retained. Earlier [1.3.9 release notes](RELEASE_NOTES-1.3.9.md) remain
 available as a historical record.

@@ -45,13 +45,16 @@ def array_fingerprint(value):
 
 
 def write_json_atomic(path, payload, *, replace=True):
+    # Finish serialization before creating a file that would need cleanup.
+    serialized = json.dumps(payload, sort_keys=True, allow_nan=False) + '\n'
     path = io_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    owned = False
     try:
         with temporary.open('x', encoding='utf-8', newline='\n') as stream:
-            json.dump(payload, stream, sort_keys=True, allow_nan=False)
-            stream.write('\n')
+            owned = True
+            stream.write(serialized)
             stream.flush()
             os.fsync(stream.fileno())
         if replace:
@@ -59,7 +62,16 @@ def write_json_atomic(path, payload, *, replace=True):
         else:
             # An exclusive hard link publishes the complete file atomically.
             os.link(temporary, path)
-    finally:
+    except BaseException:
+        # A cleanup failure must not replace a write failure or interruption.
+        if owned:
+            try:
+                temporary.unlink(missing_ok=True)
+            except BaseException:
+                pass
+        raise
+    else:
+        # After successful publication, an independent cleanup failure is real.
         try:
             temporary.unlink()
         except FileNotFoundError:

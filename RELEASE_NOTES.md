@@ -1,78 +1,88 @@
-# DWD 1.3.15 — October 17, 2026
+# DWD 1.3.16 — October 19, 2026
 
-This release rejects invalid complex inputs before conversion or optimization
-and improves reporting in the resumable CV example. The DWD objective, free
-intercept, real-input solver arithmetic, numerical acceptance checks, stopping
-tolerances and defaults are unchanged.
+This release makes guarded joint affine scoring and eligible adaptive residual
+ordering the defaults for new kernel fits. It also extends qualified native
+arithmetic, reduces repeated internal work, and strengthens recovery, prediction
+ownership and interruption handling. The DWD objectives, unregularized intercepts,
+solver tolerances, stopping defaults and numerical acceptance criteria are
+preserved. Floating-point scores and finite-iteration results can change.
 
-## Real-input validation
+## Numerical policies and recovery
 
-Complex starting intercepts and complex values hidden in object arrays are
-rejected consistently, including zero-imaginary complex values. The checks
-cover initial coefficients, class labels and supplied eigendecompositions,
-including nested object arrays. Invalid supplied eigenpairs are rejected rather
-than silently replaced by recomputed pairs. Failed fits retain the existing
-cleanup of fitted state.
+- `affine_computation='auto'` resolves to joint affine scoring in corrected
+  Schur mode and standard scoring in legacy mode. Explicit standard scoring
+  remains available, and saved models retain their fitted policy. A guarded
+  exact-zero shortcut avoids unnecessary rational summation without bypassing
+  difficult-margin or unsupported-arithmetic fallbacks.
+- `residual_check_order='auto'` selects adaptive checks on eligible optimized
+  Cholesky paths. Reference, spectral, L-BFGS, legacy and supplied-eigenbasis
+  auto routes retain their applicable historical order. Requested, initial and
+  effective policies remain observable through recovery.
+- An eligible typed numerical failure in restarted MM can take one fresh
+  spectral retry from the original initialization. Restart acceleration and
+  L-BFGS selection remain explicit; acceptance checks and tolerances are not
+  weakened, and arbitrary failures are not retried silently.
+- Explicit `literal_objective_diagnostics` evaluates the represented kernel
+  objective, coefficient/intercept gradients and a dual lower bound within
+  fixed arithmetic limits. It does not replace production acceptance or certify
+  an unrounded analytic kernel.
+- New valid legacy kernel fits emit `FutureWarning` after input validation.
+  Historical update equations and prediction from saved models remain available.
+  Direct RBF computation and extended exact recovery also remain explicit options.
 
-Normal numeric arrays use dtype checks; object arrays require inspection of
-their entries. This corrects input validation and does not promise a performance
-speedup or zero validation overhead. These malformed-input regressions do not
-imply that earlier real-data studies used complex inputs.
+## Internal computation and fitted-model behavior
 
-## Resumable CV diagnostics and grid reporting
+- The guarded compiled residual and dense accurate-score paths are qualified
+  on conventional Windows x86-64 CPython 3.11 through 3.13. The separate scalar
+  `math.sumprod` route retains CPython 3.12 support and qualifies conventional
+  Windows x86-64 CPython 3.13. Every arithmetic guard and portable fallback remains.
+- Eligible native paths prepare coefficient splits once per bounded chunk,
+  reuse solver-scoped residual workers and call-local dense-score buffers, and
+  avoid a redundant scalar attempt after the original compiled helper refuses
+  an operand outside their shared domain. Allocation failure, custom helpers
+  and unsupported arithmetic retain the corresponding fallback.
+- Eligible dense RBF prediction reuses training norms within one call. Direct
+  RBF prediction validates its fitted basis once per eligible call while keeping
+  query checks, sparse canonicalization and custom behavior. No persistent
+  prediction cache is introduced.
+- `KernGDWD` owns retained dense or sparse training features and snapshots kernel
+  parameters. Later caller edits no longer alter an already fitted predictor;
+  refitting uses the newly requested parameters.
+- `KernGDWDCV` honors post-fit `prediction_batch_size` changes. Both kernel
+  estimators accept a per-call decision-function batch override without changing
+  the fitted model.
+- Compiled residual work is bounded and completion is polled for interruption.
+  Workers are joined and partial outputs discarded. Checkpoint cleanup preserves
+  the original failure or interruption and serializes strict JSON before creating
+  a temporary file.
 
-The example retains existing ordinary, native and compensated residual-check
-counts, ordinary acceptances and refinement-step counts in its compact
-diagnostics and completed-fold receipts. Missing counts remain unknown. No
-additional solver checks are performed.
+## Validation and compatibility
 
-The report identifies the winner as best among the supplied candidates. It
-includes exact ties, the gap to the next ranked candidate, the gap to the next
-strictly lower score, and numeric parameter positions within conditional slices
-that hold other parameters fixed. These positions describe the supplied grid;
-they do not establish convergence or a global optimum.
+Prior application checks ran 57 focused tests on each of Python 3.11, 3.12 and
+3.13 with native and portable wheels, with no failures, errors or skips. They
+verified exact installed runtime payloads and actual native or portable execution.
+The earlier 960-method full suite, with four documented platform/runtime skips,
+was reused after checking the runtime sources and compiled helper; it was not
+presented as another full-suite run. Independent RBF primal/dual checks cover
+generalized loss, duplicate rows, imbalance and finite update budgets. Strict
+Sphinx checks also passed. See [VALIDATION.md](VALIDATION.md) for the dates,
+environment and evidence boundaries. These prior checks are separate from the
+release artifact checks and hosted CI; no universal speedup is claimed.
 
-Candidate order, duplicate candidate labels, exact equally weighted fold
-accuracy, first-maximum selection and final refitting are preserved. Reporting
-does not expand or refine the grid, merge candidates or reuse additional fits.
-If report construction fails, the successful CV result remains available with
-a notice that the report is unavailable. See the
-[resumable CV guide](docs/resumable_cv.md).
-
-The changed example source enters checkpoint identity. Checkpoints from older
-example sources require their matching source and runtime, or a new run
-directory with the current example. Existing checkpoints are not migrated.
-
-## Validation scope
-
-Local development checks passed 141 tests for input validation and existing
-numerical/API behavior, plus 16 valid-real comparisons that exactly matched
-pre-change coefficients, intercepts, objective histories, scores and predictions.
-A separate reporting/example run passed 71 tests. These test sets have overlapping
-coverage and are not presented as one count of distinct tests.
-
-The checks used Windows and conventional CPython 3.12, with one native thread
-for small fixtures and the existing two-worker CV regression. They establish
-behavior within the tested scope, not a universal timing or cross-platform
-claim. Built-artifact and CI checks are separate from these development results;
-see the [validation record](VALIDATION.md#version-1315-development-validation).
-
-## Python support and distribution
+CI verifies installed wheel payloads and execution outside the package source
+tree. An existing matrix leg supplies portable coverage. Push CI runs on branches,
+avoiding a duplicate matrix for release tags while retaining pull-request and
+manual runs. Changed example and dependency sources require fresh checkpoints
+under the existing strict identity checks; historical receipts are not migrated.
 
 Python 3.11+ remains required. The Windows AMD64 native wheel is
-`dwd-1.3.15-cp311-abi3-win_amd64.whl`; `dwd-1.3.15-py3-none-any.whl` omits the
-optional compiled helper. Extension sources, compiler flags and numerical
-runtime guards are unchanged. An ABI-compatible extension does not enable
-accelerated paths outside their qualified runtime conditions; NumPy/SciPy BLAS
-is independent.
-
-Python 3.10 companion maintenance has ended. Historical assets and validation
-records remain available; this release does not produce a Python 3.10 wheel.
-The configured CI matrix covers Python 3.11, 3.12 and 3.13 on Windows and Ubuntu,
-with base and optional SOCP configurations.
+`dwd-1.3.16-cp311-abi3-win_amd64.whl`; `dwd-1.3.16-py3-none-any.whl` omits the
+optional helper. Extension-loading compatibility does not guarantee numerical
+path eligibility. NumPy/SciPy BLAS acceleration is independent. Python 3.10
+companion maintenance remains ended; historical assets are retained.
 
 This is a fork of slicersalt/dwd, originally implemented by Iain Carmichael,
 with upstream maintenance by David Allemang and Kitware. Subsequent fork
-development is guided by Chang Cheng. Original credits and the MIT license
-are retained. See the [changelog](CHANGES.md), [installation](README.md#installation)
-and [previous release notes](docs/history/RELEASE_NOTES-1.3.14.md).
+development is guided by Chang Cheng. Original credits and the MIT license are
+retained. See the [changelog](CHANGES.md), [installation](README.md#installation)
+and [previous release notes](docs/history/RELEASE_NOTES-1.3.15.md).

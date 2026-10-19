@@ -1,4 +1,4 @@
-"""Optional affine evaluation must preserve fitted policy and default results."""
+"""Explicit affine policies preserve their numerical and fitted-state contracts."""
 
 from fractions import Fraction
 import pickle
@@ -43,7 +43,8 @@ class AffineComputationTests(unittest.TestCase):
 
     def model(self, **overrides):
         options = dict(kernel='linear', lambd=.1, q=1., max_iter=5,
-                       stopping='fixed', initialization='zero', random_state=7)
+                       stopping='fixed', initialization='zero', random_state=7,
+                       affine_computation='standard')
         options.update(overrides)
         return KernGDWD(**options)
 
@@ -80,7 +81,7 @@ class AffineComputationTests(unittest.TestCase):
             self.assertEqual(restored.affine_computation_, changed)
             self.assertEqual(restored.predict(self.query)[0], 7 if changed == 'joint' else -3)
 
-    def test_default_does_not_call_joint_helper_even_for_validation(self):
+    def test_explicit_standard_does_not_call_joint_helper_even_for_validation(self):
         with patch('dwd._affine_scores.affine_scores', side_effect=AssertionError('Unexpected joint scoring')):
             default = self.model().fit(self.X, self.y)
             standard = self.model(affine_computation='standard').fit(self.X, self.y)

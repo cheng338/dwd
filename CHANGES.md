@@ -6,6 +6,69 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 1.3.16 — 2026-10-19
+
+- Allow an eligible numerical failure in restarted kernel MM to take one fresh
+  spectral retry from the original initialization. Preserve typed failure
+  restrictions, numerical acceptance and tolerances; restart acceleration
+  remains an explicit option.
+- Add explicit, bounded `literal_objective_diagnostics` for the stored kernel
+  objective and coefficient/intercept gradients. Keep these diagnostics separate
+  from production acceptance and refuse inputs beyond their arithmetic limits.
+- Emit a `FutureWarning` after validation when starting a new legacy kernel fit.
+  Preserve legacy update equations and prediction from saved models.
+- Run push-triggered CI on branches, avoiding a duplicate matrix for release
+  tags while retaining pull-request and manual runs and the existing jobs.
+- Default new kernel estimators to `affine_computation='auto'`: use joint
+  affine scoring in corrected Schur mode and standard scoring in legacy mode.
+  Preserve explicit standard scoring, fitted policy ownership and old serialized
+  models. A guarded exact-zero shortcut avoids unnecessary rational summation;
+  uncertain margins and unsupported arithmetic retain the exact fallback.
+- Default estimator residual ordering to `auto`, selecting adaptive checks on
+  eligible optimized Cholesky paths. Preserve explicit orders and historical
+  ordering for reference, spectral, L-BFGS, legacy and supplied-eigenbasis auto
+  routes. Record requested, initial and effective policies through recovery.
+  Numerical acceptance and stopping settings are unchanged; finite results can differ.
+- Prepare native coefficient splits once per bounded chunk, with unchanged
+  arithmetic and an allocation-failure fallback. Reuse trusted residual workers
+  only within one solver invocation, draining them on exit or required fallback transitions.
+- Reuse training norms within eligible dense batched RBF prediction calls.
+  Keep the original route for custom helpers, sparse input and unsupported
+  layouts; no persistent prediction cache or new public option is introduced.
+- Repair five relative links in the archived 1.3.11 release notes.
+
+- Enable the existing guarded compiled residual and dense-score paths on
+  conventional Windows x86-64 CPython 3.11 through 3.13. Keep scalar
+  `math.sumprod` eligibility separate: preserve CPython 3.12 support and qualify
+  conventional Windows x86-64 CPython 3.13 after direct scalar validation. Other
+  runtimes use portable compensated arithmetic when the compiled path declines.
+- Reuse bounded dense-score tile buffers within each eligible call. Release
+  them before scalar tails or fallback, preserving row and arithmetic order.
+- Validate the fitted basis once per eligible direct-RBF prediction call,
+  retaining per-batch query checks, private sparse canonicalization and custom
+  method behavior. The underlying direct-RBF computation remains an explicit
+  option; no objective, solver tolerance or numerical acceptance rule changes.
+- Own the dense or sparse training features retained by `KernGDWD` and snapshot
+  its kernel parameters. Later caller edits or constructor changes no longer
+  alter an already fitted predictor; refitting uses the new parameters.
+- Honor post-fit `prediction_batch_size` changes in `KernGDWDCV`. Both kernel
+  estimators also accept a per-call decision-function batch override without
+  mutating the fitted model.
+- Bound compiled residual calls and poll threaded completion so interruption
+  can stop remaining chunks promptly. Join all workers and discard partial
+  outputs. Native row arithmetic, worker limits and acceptance checks are unchanged.
+- Skip a redundant scalar residual attempt when the original compiled helper
+  has already refused an operand outside their shared arithmetic domain. Keep
+  portable compensated fallback, custom-hook behavior, worker cleanup and
+  numerical acceptance unchanged; no new estimator option is introduced.
+- Preserve the original checkpoint failure or interruption when temporary-file
+  cleanup also fails; serialize strict JSON before creating the temporary file.
+- Verify exact installed wheel payloads and native/portable execution in CI,
+  running copied tests outside the package source tree. Use one existing matrix
+  leg for portable coverage without increasing the number of CI jobs.
+- Add independent RBF primal/dual objective checks for generalized loss,
+  duplicate rows, class imbalance and finite update budgets.
+
 ## 1.3.15 — 2026-10-17
 
 - Reject complex starting intercepts and complex values hidden in object arrays

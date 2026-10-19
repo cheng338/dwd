@@ -38,22 +38,23 @@ Wang, B., and Zou, H. (2018).
 
 Python 3.11+ and scikit-learn 1.6+ are required. The base package depends on
 NumPy, SciPy, scikit-learn, and threadpoolctl. Download a compatible wheel from
-the [1.3.15 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.15).
+the [1.3.16 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.16).
 For conventional Windows AMD64 CPython 3.11 or later, install the native wheel:
 
 ```shell
-python -m pip install ./dwd-1.3.15-cp311-abi3-win_amd64.whl
+python -m pip install ./dwd-1.3.16-cp311-abi3-win_amd64.whl
 ```
 
 To omit the optional compiled helper, install the portable wheel (Python 3.11+):
 
 ```shell
-python -m pip install ./dwd-1.3.15-py3-none-any.whl
+python -m pip install ./dwd-1.3.16-py3-none-any.whl
 ```
 
 The helper retains its numerical runtime guards; the ABI tag does not promise
 acceleration on every compatible Python version. Local numerical validation
-uses conventional CPython 3.12 with AOCL on Windows AMD64. These are not Ubuntu
+uses conventional CPython 3.12 with AOCL on Windows AMD64. Focused correctness
+checks also cover CPython 3.11 and 3.13 with OpenBLAS wheels. These are not Ubuntu
 or Intel-hardware performance results. Other platforms and free-threaded Python
 remain outside those local checks.
 
@@ -61,13 +62,15 @@ Python 3.10 is no longer supported. Previously released companion wheels
 remain available as historical artifacts and will not receive updates.
 
 The `cp311-abi3` tag describes extension loading compatibility, not which
-residual arithmetic DWD selects. Its guarded compiled and built-in
-`math.sumprod` residual paths are currently eligible only on conventional
-CPython 3.12. CPython 3.11 and 3.13+ use the portable compensated residual
-check even if the extension is installed. A portable wheel on CPython 3.12
-can still use guarded `math.sumprod`; it simply omits the optional extension.
-The dense accurate-score entry added in 1.3.12 also requires conventional
-Windows CPython 3.12 on x86-64; other runtimes keep Python score evaluation.
+residual arithmetic DWD selects. Version 1.3.16 qualifies the
+compiled residual and dense accurate-score paths on conventional Windows
+x86-64 CPython 3.11 through 3.13. All arithmetic guards remain active.
+The separate built-in `math.sumprod` residual path retains CPython 3.12 support
+and also qualifies conventional Windows x86-64 CPython 3.13. A portable wheel
+on those runtimes can still use guarded `math.sumprod`; it simply omits the
+optional extension. Python 3.11 lacks that builtin, so a missing or declining
+compiled helper uses portable compensated arithmetic. Other runtimes keep
+their existing guarded paths.
 These choices do not disable or select NumPy/SciPy BLAS acceleration.
 
 To install from the release checkout instead:
@@ -89,7 +92,11 @@ from PyPI may retrieve a different upstream release. See
 
 Version 1.3.11 includes the optional `rbf_computation='direct'`,
 `affine_computation='joint'` and `exact_recovery='extended'` described below.
-Their defaults remain unchanged; the 1.3.10 wheels do not provide these options.
+Those were opt-in when introduced; the 1.3.10 wheels do not provide them.
+Version 1.3.16 makes automatic affine scoring and residual ordering the
+defaults for new kernel fits, as described below. Explicit historical policies
+remain available; models fitted and saved with earlier versions retain their
+recorded scoring behavior.
 
 # Kernel DWD
 
@@ -111,7 +118,8 @@ print(model.objective_tolerance_met_, model.converged_, model.rkhs_gradient_norm
 ```
 
 The defaults are `implementation='optimized'`, `q=1`, `solver_mode='schur'`, `backend='auto'`,
-`acceleration=None`, `rbf_computation='standard'`, `affine_computation='standard'`,
+`acceleration=None`, `residual_check_order='auto'`, `rbf_computation='standard'`,
+`affine_computation='auto'`,
 `exact_recovery='standard'`, `initialization='auto'`, `stopping='objective'`,
 `obj_tol=1e-5`, and `max_iter=100`.
 The cap applies per attempt. For eligible fits using an internally constructed
@@ -120,6 +128,10 @@ initialization and objective; discarded work and total time are reported
 separately. See the
 [restart and stopping rules](docs/kernel_dwd.md#automatic-numerical-restart).
 Auto initialization is zero for optimized fits. The intercept is unregularized.
+Automatic residual ordering uses adaptive checks on eligible optimized
+Schur/Cholesky paths and preserves the applicable historical order elsewhere.
+Explicit `residual_check_order='refinement_first'` remains available.
+Restarted MM and L-BFGS remain explicit choices; the stopping default is unchanged.
 The parameter names remain `lambd`, `q`, and `kernel_kws`.
 
 For sensitive RBF inputs, `KernGDWD(kernel='rbf', rbf_computation='direct')`
@@ -130,12 +142,13 @@ objective. It can change rounded scores, fits and CV choices, and can cost
 substantially more. `KernGDWDCV` accepts the same option. See the
 [supported settings, benchmarks and precision limits](docs/kernel_dwd.md#optional-direct-rbf-computation).
 
-For scores sensitive to intercept cancellation,
-`KernGDWD(affine_computation='joint')` evaluates uncertain products and the
-intercept together before rounding. It preserves the expression `K @ alpha + b`,
+The default `affine_computation='auto'` uses joint scoring for corrected
+kernel fits: it evaluates uncertain products and the intercept together
+before rounding. It preserves the expression `K @ alpha + b`,
 the free intercept and the class tie rule. `KernGDWDCV` accepts the same option.
 It can change rounded scores, labels or validation choices and can be slower,
-especially for exact ties. The default remains `'standard'`. See
+especially for difficult cancellation. Explicit `'standard'` and legacy fits
+retain historical scoring; fitted and serialized models keep their policy. See
 [joint affine scoring](docs/kernel_dwd.md#optional-joint-affine-scoring).
 
 Choose `implementation='reference'` for the repaired Slicersalt algorithm: full
@@ -323,7 +336,24 @@ they have not been relabeled as new release results.
 
 # Release history
 
-Version 1.3.15, October 17, 2026. See the [current validation scope](VALIDATION.md).
+Version 1.3.16, October 19, 2026. See the [current validation scope](VALIDATION.md).
+
+## Changes in 1.3.16
+
+New kernel fits use automatic joint affine scoring and eligible adaptive
+residual ordering, with explicit historical policies still available. Guarded
+native arithmetic now covers conventional Windows x86-64 CPython 3.11 through
+3.13. Internal buffer, coefficient, worker and RBF-norm reuse reduce repeated
+work while retaining numerical guards and fallback paths.
+
+Eligible restarted-MM failures can take one typed spectral retry from the
+original initialization. New bounded literal-objective diagnostics are explicit,
+and new valid legacy fits emit a warning. Fitted training data and kernel
+parameters are owned by the model, post-fit prediction batching is honored, and
+interruption and checkpoint cleanup preserve their original failures. Objectives,
+free intercepts, stopping settings and numerical acceptance remain unchanged;
+changed scoring and check order can change finite-iteration results. See the
+[release notes](RELEASE_NOTES.md) for all changes and validation limits.
 
 ## Changes in 1.3.15
 
@@ -332,8 +362,8 @@ hidden in object arrays before conversion or optimization. The resumable CV
 example preserves existing residual-check counts and reports exact ties, score
 gaps and parameter positions within the supplied grid. Real-input solver
 arithmetic, numerical tolerances, defaults and first-maximum candidate selection
-are unchanged. See the [release notes](RELEASE_NOTES.md) for scope and checkpoint
-compatibility.
+are unchanged. See the [1.3.15 release notes](docs/history/RELEASE_NOTES-1.3.15.md)
+for scope and checkpoint compatibility.
 
 ## Changes in 1.3.14
 
@@ -466,7 +496,7 @@ ordinary fits that do not need compensated checks may see little change.
 
 The accelerated wheel contains a small optional C extension with no NumPy C API.
 Source builds use a local compiler when available; the existing Python checker
-remains available when compilation or loading is unavailable. The current native
-screen remains guarded to audited CPython 3.12 arithmetic. See
+remains available when compilation or loading is unavailable. That release
+qualified the native screen on CPython 3.12; current eligibility is described in
 [build and runtime details](docs/compiled_residual.md), [release notes](RELEASE_NOTES.md),
 and [validation](VALIDATION.md). The previous 1.3.3 repair remains intact.

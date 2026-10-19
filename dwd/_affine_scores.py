@@ -22,6 +22,53 @@ _ETA = float(np.finfo(float).smallest_subnormal)
 _TILE_BYTES = 1024 * 1024
 _TILE_MAX_ROWS = 8
 
+# Preserve observable helper replacements by declining the exact-zero shortcut.
+_TRUSTED_PRODUCTS = _products
+_TRUSTED_FSUM = _fsum
+_TRUSTED_MATH_FSUM = math.fsum
+_TRUSTED_SPLIT = _split_operand
+
+
+def _round_to_nearest_now():
+    """Probe the executing thread; never change its floating-point mode."""
+    one = float(1)
+    half = _EPS * .5
+    three_quarters = _EPS * .75
+    # Runtime operands avoid constant-folding. Positive/negative half ties
+    # distinguish upward/downward; the three-quarter probe also rejects chop.
+    return (one + half == one and -one - half == -one
+            and one + three_quarters == one + _EPS
+            and -one - three_quarters == -one - _EPS)
+
+
+def _zero_has_exact_products(K, alpha, sparse, index):
+    """Certify no product expansion lost bits while scaling its mantissas.
+
+    Binary64 frexp mantissas have denominators at most 2**53. Their exact
+    product, including the Dekker low term, lies on a 2**-106 grid. If the
+    combined frexp exponent is at least -968, scaling preserves that grid
+    at or above the minimum subnormal 2**-1074. A faithfully rounded fsum
+    of these exact expansions and b can then be zero only if the exact
+    represented sum is zero. This does not certify arbitrary BLAS results.
+    """
+    if (_products is not _TRUSTED_PRODUCTS or _fsum is not _TRUSTED_FSUM
+            or math.fsum is not _TRUSTED_MATH_FSUM
+            or _products.__globals__.get('_split_operand') is not _TRUSTED_SPLIT
+            or _split_operand is not _TRUSTED_SPLIT
+            or _exact_row is not _TRUSTED_EXACT_ROW
+            or not _round_to_nearest_now()):
+        return False
+    row, coefficients = _row_data(K, alpha, sparse, index)
+    row = np.asarray(row, dtype=float)
+    active = (row != 0.0) & (coefficients != 0.0)
+    if not np.any(active):
+        return True
+    # The completed _products call has already checked finiteness. Each
+    # exponent is small enough that their integer sum cannot overflow.
+    ae = np.frexp(row[active])[1]
+    be = np.frexp(coefficients[active])[1]
+    return bool(np.all(ae + be >= -968))
+
 
 def _intercept(value):
     raw = np.asarray(value)
@@ -64,6 +111,9 @@ def _exact_row(K, alpha, b, sparse, index):
     return result
 
 
+_TRUSTED_EXACT_ROW = _exact_row
+
+
 def _finish_row(high, low, K, alpha, b, sparse, index):
     """Sum products and b jointly; recover only justified exceptional cases."""
     try:
@@ -78,6 +128,12 @@ def _finish_row(high, low, K, alpha, b, sparse, index):
     allowance = math.nextafter(4.0 * _EPS * abs(score) + (2.0 * len(high) + 6.0) * _ETA,
                                math.inf)
     if not math.isfinite(allowance) or abs(score) <= allowance:
+        if score == 0.0:
+            try:
+                if _zero_has_exact_products(K, alpha, sparse, index):
+                    return score, False
+            except MemoryError:
+                pass  # Extra certificate scratch must not displace exact recovery.
         return _exact_row(K, alpha, b, sparse, index), True
     return score, False
 

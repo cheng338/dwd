@@ -127,6 +127,11 @@ def accurate_rbf(X, Y=None, gamma=None, *, block_size=256):
         raise ValueError('block_size must be a positive integer.')
     X = _validated_features(X, 'X')
     Y = X if Y is None else _validated_features(Y, 'Y')
+    return _rbf_from_validated_features(X, Y, gamma, block_size)
+
+
+def _rbf_from_validated_features(X, Y, gamma, block_size):
+    """Private arithmetic core; callers must validate/canonicalize both inputs."""
     if X.shape[1] != Y.shape[1]:
         raise ValueError('X and Y must have the same feature count.')
     if gamma is None:
@@ -167,6 +172,34 @@ def accurate_rbf(X, Y=None, gamma=None, *, block_size=256):
                         value = math.exp(-(gamma * distance))
                     output[i, j] = value
     return output
+
+
+# Capture the public boundary once; replacements must retain their own behavior.
+_ORIGINAL_ACCURATE_RBF = accurate_rbf
+_ORIGINAL_VALIDATED_FEATURES = _validated_features
+
+
+def _prediction_basis_kernel(basis):
+    """Prepare a private basis lifetime for one read-only prediction call.
+
+    Validation remains lazy so errors occur at the first kernel batch. Dense
+    inputs retain their existing view; CSR canonicalization owns one copy for
+    this call only. Concurrent calls never share this closure or its copy.
+    """
+    if (accurate_rbf is not _ORIGINAL_ACCURATE_RBF or
+            _validated_features is not _ORIGINAL_VALIDATED_FEATURES):
+        return None
+    validated_basis = None
+
+    def compute(query, *, gamma):
+        nonlocal validated_basis
+        if validated_basis is None:
+            validated_basis = _validated_features(basis, 'X')
+        validated_query = _validated_features(query, 'Y')
+        return _rbf_from_validated_features(
+            validated_basis, validated_query, gamma, 256)
+
+    return compute
 
 
 # Alias for callers that identify the numerical policy explicitly.

@@ -1,5 +1,74 @@
 # Validation
 
+## Version 1.3.16: recovery, literal diagnostics and legacy warnings
+
+Eligible typed failures in restarted kernel MM can take one fresh spectral
+retry from the original initialization. The retry preserves the objective,
+solver tolerances and numerical acceptance rules. Restart acceleration remains
+explicit: objective-change stopping depends on the optimization trajectory,
+so agreement with ordinary MM at a finite stopping threshold is not promised.
+
+The explicit `literal_objective_diagnostics` function evaluates the represented
+stored kernel, using `K` for scores and `(K + K.T) / 2` for the quadratic penalty.
+It encloses the objective and coefficient/intercept gradients and reports a
+dual lower bound within its declared arithmetic contract. It is limited to
+small inputs, with at most 16 rows and bounded precision and operation counts.
+It does not alter fitting or certify the analytic Gaussian kernel independently
+of its stored representation. See the [kernel guide](docs/kernel_dwd.md).
+
+New valid legacy fits emit a `FutureWarning`; invalid inputs retain their
+validation errors. The historical update equations and prediction from saved
+models remain available. Branch-only push CI avoids duplicate release-tag
+runs without removing test jobs, pull-request checks or manual runs.
+
+Application checks on 2026-10-19 passed 57 focused tests on each of Python 3.11,
+3.12 and 3.13, using both isolated native and portable wheels. Every configuration
+had zero failures, errors and skips. The exact installed runtime payloads were
+verified. Checks used local `py12_df_aocl` as the primary environment and isolated
+Python 3.11/3.13 environments for focused validation; no working environment was
+updated by these checks.
+
+The prior full DWD run executed 960 test methods with no failures or errors and
+four platform/runtime skips. That full run was reused, not repeated: all 43
+Python runtime files at the application stage had identical syntax trees to
+the validated sources, and the compiled helper is byte-identical. The new focused checks
+supplement this existing coverage. Strict Sphinx documentation checks also
+passed. These are correctness and integration checks, not new performance
+benchmarks or hosted CI results.
+
+## Version 1.3.16: automatic policies and bounded internal reuse
+
+Version 1.3.16 defaults new kernel estimators to automatic
+affine scoring and residual ordering. Corrected Schur fits resolve affine
+scoring to joint evaluation; eligible optimized Cholesky fits resolve residual
+ordering to adaptive checks. Explicit historical policies remain available,
+and older fitted objects retain their recorded behavior. The objectives,
+free intercept, solver tolerances and stopping defaults are unchanged.
+Restarted MM and L-BFGS remain explicit options. Earlier sections describe
+their dated validation scope and do not override these current defaults.
+
+Local Windows checks in Python 3.12 covered the combined policies, cloning,
+CV forwarding, supplied eigensystems, spectral recovery, failed refits and
+exact-zero affine certification against independent rational arithmetic.
+Saved pre-change model predictions were rechecked on actual Python 3.11,
+3.12 and 3.13. Unsupported gradual-underflow modes remain rejected by the
+shared input guard; the zero shortcut does not bypass that rejection.
+
+The native coefficient preparation and solver-scoped worker changes passed
+81 discovered tests on each of those three runtimes: 79 passed with two
+runtime-qualification skips on Python 3.11, and 80 passed with one skip on
+Python 3.12 and 3.13. Separate allocator fixtures covered allocation refusal
+and cleanup. The 14 new RBF norm-reuse tests passed on each runtime, including
+fresh call-local state, original-route score parity, custom-hook fallback and
+concurrent read-only prediction. No persistent norm cache was introduced.
+
+These checks used local `py12_df_aocl` as the primary environment, with
+isolated Python 3.11/3.13 environments for focused qualification. They are
+correctness checks, not new performance measurements or a universal speedup
+claim. These dated checks precede the release version and metadata changes;
+release-artifact verification and hosted CI have separate records. Installation
+into working environments is also separate from validation.
+
 ## Version 1.3.15: development validation
 
 Before release packaging, local Windows checks under conventional CPython 3.12

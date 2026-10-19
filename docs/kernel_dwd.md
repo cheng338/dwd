@@ -96,7 +96,7 @@ every unmodified upstream 1.0.5 input.
 
 ## Automatic numerical restart
 
-An unaccelerated optimized fit with `solver_mode='schur'`, `backend='auto'`, and
+An optimized fit with `solver_mode='schur'`, `backend='auto'`, and
 `callback=None` can make one fresh spectral attempt when a constrained MM update
 and its existing bounded recovery both fail. The trigger is specific: the
 original/centered/anchor constrained solve must be exhausted, followed by failure
@@ -107,8 +107,10 @@ This applies only to named RBF kernels built internally by the package's unchang
 construction methods, with valid known-PSD parameters. A reused CV kernel also
 requires the recorded construction provenance and unchanged preparation methods.
 Caller-supplied `K` or eigenpairs, precomputed and callable kernels, overridden
-construction methods, reference/legacy implementations, explicit backend choices,
-and momentum acceleration do not gain this restart. A successful ordinary fit
+construction methods, reference/legacy implementations, and explicit backend choices
+do not gain this restart. Explicit `acceleration='restart'` is supported: its
+ordinary-step retry remains first, and only exhausted constrained/MM recovery
+can trigger the fresh spectral attempt. A successful ordinary fit
 does not compute an additional eigendecomposition.
 
 The failed attempt's temporary solver arrays and factors are released before
@@ -142,6 +144,25 @@ records failed-attempt details and `successful_attempt_timing`. Top-level
 `setup_seconds`, `optimization_seconds`, and `total_seconds` include both attempts.
 `backend_` is `'spectral'`, while the requested backend remains `'auto'` in the
 diagnostics. This numerical restart is separate from `acceleration='restart'`.
+The failed-attempt receipt also preserves acceleration counters, including in
+ensemble lean storage and reusable base-cache summaries.
+
+## Bounded literal-operator diagnostics
+
+`dwd.literal_diagnostics.literal_objective_diagnostics` is an explicit diagnostic
+for small stored kernels (at most 16 rows). It treats finite binary64 inputs as
+exact represented numbers and encloses the objective and coefficient/intercept
+gradients for any positive finite generalized-loss exponent within its arithmetic
+budgets. For score map `K @ alpha + offset`, the coefficient gradient uses `K.T`
+and the penalty uses the symmetric part of `K`; the stored score map is never
+silently replaced. Exact PSD and range checks support a valid dual lower bound.
+Indefinite penalties and exceeded precision, operation or bit budgets raise
+`DiagnosticRefusal`; this routine is not an unbounded large-kernel validator.
+
+This diagnostic never changes estimator state, solver stopping or numerical
+acceptance. Its operation counter counts instrumented rational operations,
+not total CPU work. Decimal transcendental enclosures assume correctly rounded
+`ln` and `exp`; reported intervals are rounded outward to binary64.
 
 ## Optional restarted MM
 
@@ -158,8 +179,9 @@ changes the kernel nor truncates eigendirections. The momentum schedule begins
 with two ordinary MM updates. An extrapolated proposal that increases the
 objective triggers one ordinary-step retry; a failed numerical proposal at
 nonzero momentum can also trigger that bounded retry. A failed ordinary step
-raises if its bounded numerical and exact-function recovery cannot produce an
-acceptable update. The recovery receives the same full extrapolated right-hand
+can invoke the narrowly gated fresh spectral attempt described above when its
+constrained/MM recovery is exhausted; other unresolved failures raise. The
+ordinary-step recovery receives the same full extrapolated right-hand
 side, with the corresponding zero prior-offset convention of the proximal step.
 Rejected proposals are not passed to callbacks or validation rules.
 
@@ -171,12 +193,15 @@ subset of all restarts. Fixed 100 updates therefore does not imply identical
 work across ordinary and accelerated MM. A validation-restored model can come
 from an earlier accepted iteration, as with ordinary MM.
 
-Acceleration is optional because lower training objective and better numerical
-stationarity do not ensure higher validation accuracy. The development panel
-found both accuracy ties and declines at matched update budgets. Use external
-CV to compare it with ordinary MM, and count any explicit stopping validation
-inside each CV training fold. The package does not choose acceleration or change
-the original objective-change/cap defaults automatically.
+Acceleration remains an explicit optimizer choice. The default absolute
+successive-objective stopping rule depends on the optimization trajectory and
+does not certify stationarity. A faster trajectory can therefore stop at a
+different optimization quality under the same objective-change threshold;
+fixed update budgets and validation checkpoints also observe different states.
+Use `stopping='optimality'` when the aim is a common numerical stationarity
+target, and retain any failed or capped result as such. Parameter tuning and
+explicit stopping validation belong inside the training fold. The package
+does not infer a different optimizer from a stopping or callback setting.
 
 ## Stopping and fitted diagnostics
 
@@ -318,7 +343,7 @@ Callbacks are optional and receive a mapping with `iteration`, `alpha`, `offset`
 (also `intercept`), `objective`, `training_scores`, `decision_values`, and
 `elapsed_seconds`. The initial state is included. `training_scores` means
 `K @ alpha`; `decision_values` includes the intercept. These are optimizer
-trace values, not a recomputation using optional joint affine scoring, so their
+trace values, not a recomputation using joint affine scoring, so their
 rounded margins may differ from public decision scores. Arrays are protected
 copies, so callbacks cannot modify the numerical state. Return `True`, or raise
 `StopIteration`, to stop; return `False` or `None` to continue. Other return types
@@ -356,10 +381,27 @@ public sklearn input convention: square training Gram matrix in `fit`, then
 query-by-training values in `predict` or `decision_function`. Standard sklearn
 pairwise tags and built-in CV slicing preserve this orientation.
 
+`KernGDWD` retains its own feature copy and fitted `kernel_` and `kernel_kws_`.
+Changing the caller's features or kernel-keyword dictionary after fitting does
+not change predictions. Constructor kernel changes apply on the next fit.
+Nested keyword values are copied, but a callable kernel remains the same
+callable: its external state and behavior must remain stable. Precomputed mode
+retains the training shape without copying the square matrix, because prediction
+uses the supplied query kernel rather than the training matrix values.
+`cv_init` does own its precomputed matrix, because later fits reuse those values.
+Older serialized models without these fitted attributes retain their historical
+parameter lookup until refitted.
+
 Set `prediction_batch_size` to a positive integer to bound the number of query
 rows used by each prediction kernel calculation. This supports named, callable,
 and precomputed kernels. Callable kernels must compute consistent pairwise values
 when their query rows are partitioned. The training Gram matrix is still dense.
+The current setting applies after fitting, including in `KernGDWDCV`. A call to
+`decision_function(X, prediction_batch_size=...)` overrides the limit for that
+call only; explicit `None` disables batching. The CV wrapper forwards this limit
+without changing its fitted child's parameter. Invalid limits fail before kernel
+construction. Partitioning can change rounding at the last few bits in numerical
+library operations; it does not change the prediction formula.
 
 Completed scores are copied into the result before releasing each temporary
 kernel block. When the package owns those blocks, the previous block no longer
@@ -440,6 +482,13 @@ unsupported. Use `rbf_computation='direct'` on `KernGDWDCV`, or
 [README](../README.md#explicit-parameter-search). The standalone resumable-CV Python
 function accepts a `KernGDWD` configured this way; no separate CLI flag is added.
 
+Eligible built-in direct-RBF prediction validates the retained training basis
+once per public call, while still checking each query batch. Sparse basis
+canonicalization is private to that call; no validity cache or temporary buffer
+is stored on the model. Later calls validate afresh, and custom construction or
+scoring methods retain their existing behavior. This internal reuse is automatic
+within the direct path and introduces no additional numerical option.
+
 Direct computation can be substantially slower. In ten paired MNIST 2-vs-3
 prediction measurements per estimator with one native thread, it took about
 18 times as long for full-kernel DWD and 6 times as long for ensemble DWD.
@@ -497,10 +546,13 @@ state cannot be accepted for stopping using one precision policy and exported
 under another. No inconsistent callback state is emitted. These are numerical
 estimates under the stated floating-point model, not universal interval proofs.
 
-### Optional joint affine scoring
+<a id="optional-joint-affine-scoring"></a>
 
-`affine_computation='joint'` is an optional precision mode for
-`KernGDWD` and `KernGDWDCV` with `solver_mode='schur'`. It supports the same
+### Joint affine scoring
+
+New `KernGDWD` and `KernGDWDCV` models default to `affine_computation='auto'`.
+It selects joint scoring with `solver_mode='schur'` and standard scoring in
+legacy mode. Explicit `'joint'` and `'standard'` remain available. It supports the same
 named, callable and precomputed kernels as corrected kernel DWD. It is
 independent of `rbf_computation`: joint scoring evaluates the supplied kernel
 entries more accurately but cannot repair inaccurate entries themselves.
@@ -520,7 +572,10 @@ the intercept before rounding. Models requiring compensated prediction skip
 the ordinary screen. Exceptional range or unresolved cancellation can require
 an exact rational sum of the represented inputs. Product temporaries are
 processed in bounded groups, with row-wise retry after an allocation failure;
-the exact fallback has no fixed wall-time limit.
+the exact fallback has no fixed wall-time limit. A guarded exact-zero shortcut
+can avoid rational summation when the product expansions preserve every bit.
+It requires the trusted helpers, round-to-nearest arithmetic and sufficient
+product exponent range; underflow or uncertainty retains the exact fallback.
 
 The DWD loss, regularization, unregularized intercept, solver updates and
 acceptance thresholds are unchanged. Binary classification still chooses the
@@ -535,7 +590,8 @@ or the stopping iteration. CV candidate scoring likewise uses the selected
 policy; neither the fold split nor its scoring rule changes. Constructor
 cloning copies the requested option; serialization preserves the fitted
 `affine_computation_`. Changing a parameter after fitting does not change the
-stored scoring policy. Old models retain standard behavior until refitted.
+stored scoring policy. Old models and their clones retain standard behavior unless their policy is
+explicitly changed before refitting.
 
 The repair was reproduced with a genuine two-observation fitted linear-kernel
 model: the standard score was zero while the exact represented affine value
@@ -681,7 +737,7 @@ vectors. Unsupported arithmetic or unresolved cancellation retains the existing
 compensated check. These estimates require the documented floating-point and
 BLAS assumptions; they are not interval certificates for arbitrary runtimes.
 
-With the default `residual_check_order='refinement_first'`, a failed bounded ordinary
+With explicit `residual_check_order='refinement_first'`, a failed bounded ordinary
 residual check first triggers one inexpensive native correction using the existing
 factor or basis. The solver accepts that trial only
 after fresh ordinary checks of the corrected state and scores. If the trial
@@ -711,12 +767,18 @@ For eligible optimized Cholesky fits, with or without `acceleration='restart'`,
 `residual_check_order='adaptive'` can assess the untouched state accurately before
 trying another correction after two discarded trials whose original states passed
 accurate assessment. The same acceptance checks apply. The rules for restart
-proposals, objective-descent checks and restart decisions are unchanged. This opt-in order
+proposals, objective-descent checks and restart decisions are unchanged. This order
 can change finite-iteration results. The original 1.3.9 feature supported only
 unaccelerated fits; version 1.3.14 adds the restart combination. See the
 [original feature scope](candidate_changes.md) and the
-[restart validation](../VALIDATION.md#version-1314-development-validation). The default remains
-`'refinement_first'`; healthy ordinary checks gain no skipped correction work.
+[restart validation](../VALIDATION.md#version-1314-development-validation).
+New estimators default to `'auto'`, selecting adaptive ordering only for
+optimized Schur fits with backend auto/Cholesky and no supplied or cached
+eigenbasis. Other auto routes use `refinement_first`. Explicit Cholesky with
+a supplied basis still accepts explicit adaptive ordering. Low-level solver
+and linear-system defaults remain `refinement_first`. Fitted diagnostics
+record requested, initial and effective ordering; spectral recovery uses
+`refinement_first`. Healthy ordinary checks gain no skipped correction work.
 
 If reference spectral inverse-action refinement exhausts its allowance or
 stagnates at the same stored

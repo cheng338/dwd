@@ -1,17 +1,21 @@
 """Guarded native compensated dot products for original-equation residuals.
 
-CPython 3.12's ``math.sumprod`` uses the triple-length dot-product algorithm
-from Ogita, Rump and Oishi (2005), Algorithm 5.10. Proposition 5.11 supplies
+The qualified CPython ``math.sumprod`` implementations use the triple-length
+dot-product algorithm from Ogita, Rump and Oishi (2005), Algorithm 5.10.
+Proposition 5.11 supplies
 its forward error estimate. This module is an optional numerical screen:
 unsupported arithmetic, uncertain bounds, or exceptional states return None
 for the caller to evaluate with the portable compensated residual routine.
 
 References:
 https://github.com/python/cpython/blob/3.12/Modules/mathmodule.c
+https://github.com/python/cpython/blob/v3.13.15/Modules/mathmodule.c
 https://doi.org/10.1137/030601818
 """
 import math
+import platform
 import sys
+import sysconfig
 import time
 import types
 
@@ -19,6 +23,7 @@ import numpy as np
 
 from ._compensated_residual import _fsum, _gradual_underflow
 from ._compiled_residual import compiled_values
+from . import _compiled_residual
 from .profiling import _active_profile
 
 
@@ -26,15 +31,38 @@ _MIN_OPERAND = 2.**-200
 _MAX_OPERAND = 2.**200
 _MAX_TERMS = 2**20
 _EPS = np.finfo(float).eps
+_GIL_DISABLED = sysconfig.get_config_var('Py_GIL_DISABLED')
 
 
-def _native_supported():
+def _scalar_supported():
     """Enable only the audited implementation and IEEE binary64 arithmetic."""
     return (sys.implementation.name == 'cpython'
-            and sys.version_info[:2] == (3, 12)
+            and (sys.version_info[:2] == (3, 12)
+                 or (sys.version_info[:2] == (3, 13)
+                     and sys.platform == 'win32'
+                     and platform.machine().lower() in ('amd64', 'x86_64')
+                     and sys.maxsize > 2**32
+                     and _GIL_DISABLED in (None, 0)))
             and isinstance(getattr(math, 'sumprod', None), types.BuiltinFunctionType)
             and sys.float_info.radix == 2 and sys.float_info.mant_dig == 53
             and sys.float_info.max_exp == 1024)
+
+
+def _compiled_runtime_supported():
+    """Qualify the self-contained core independently of scalar sumprod."""
+    return (sys.implementation.name == 'cpython'
+            and sys.platform == 'win32'
+            and sys.version_info[:2] in ((3, 11), (3, 12), (3, 13))
+            and (sys.version_info[:2] != (3, 13) or _GIL_DISABLED in (None, 0))
+            and platform.machine().lower() in ('amd64', 'x86_64')
+            and sys.maxsize > 2**32
+            and sys.float_info.radix == 2 and sys.float_info.mant_dig == 53
+            and sys.float_info.max_exp == 1024)
+
+
+def _native_supported():
+    return (_scalar_supported() or (_compiled_runtime_supported()
+            and getattr(_compiled_residual._ACCEL, 'evaluate', None) is not None))
 
 
 def _round_to_nearest():
@@ -63,6 +91,20 @@ def _safe_operand(values):
     # NaNs and infinities fail these comparisons. Zero is safe, including -0.
     return bool(np.all((absolute == 0.)
                        | ((absolute >= _MIN_OPERAND) & (absolute <= _MAX_OPERAND))))
+
+
+_DEFAULT_SAFE_OPERAND = _safe_operand
+
+
+def _dispatch_compiled_values(K, x, rhs, shift, intercept):
+    # Only the original scalar guard over ordinary ndarray storage has the
+    # same operand domain as the trusted compiled core. Custom dispatchers,
+    # ndarray iteration, and changed guards keep their prior fallback route.
+    if (compiled_values is _compiled_residual._DEFAULT_COMPILED_VALUES
+            and type(K) is np.ndarray and _safe_operand is _DEFAULT_SAFE_OPERAND
+            and _MIN_OPERAND == 2.**-200 and _MAX_OPERAND == 2.**200):
+        return _compiled_residual._compiled_values_or_refusal(K, x, rhs, shift, intercept)
+    return compiled_values(K, x, rhs, shift, intercept)
 
 
 def _bound_constants(terms, eta):
@@ -170,7 +212,7 @@ def _native_compensated_residual(K, shift, rhs, x, s, target_sum, *, _sample=Non
         score_constants = _bound_constants(n, eta)
         residual_constants = _bound_constants(n + 3, eta)
         if _sample is None:
-            compiled = compiled_values(K, x, rhs, shift, s)
+            compiled = _dispatch_compiled_values(K, x, rhs, shift, s)
         else:
             # Timing is confined to the opt-in observation path. The same
             # dispatcher is called once, with its original positional inputs.
@@ -178,12 +220,21 @@ def _native_compensated_residual(K, shift, rhs, x, s, target_sum, *, _sample=Non
             _sample.compiled_outcome = 'raised'
             started = time.perf_counter()
             try:
-                compiled = compiled_values(K, x, rhs, shift, s)
+                compiled = _dispatch_compiled_values(K, x, rhs, shift, s)
             finally:
                 _sample.compiled_seconds = time.perf_counter() - started
             _sample.compiled_outcome = ('declined' if compiled is None
+                                        or compiled is _compiled_residual._COMPILED_DOMAIN_REFUSAL
                                         else 'values_returned')
+        if compiled is _compiled_residual._COMPILED_DOMAIN_REFUSAL:
+            if _sample is not None:
+                _sample.decline_reason = 'compiled_operand_domain'
+            return None
         if compiled is None:
+            if not _scalar_supported():
+                if _sample is not None:
+                    _sample.decline_reason = 'scalar_runtime_unqualified'
+                return None
             if _sample is not None:
                 _sample.route = 'scalar_fallback'
             # Retain the scalar sumprod fallback, including its original product

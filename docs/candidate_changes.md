@@ -1,5 +1,8 @@
 # DWD 1.3.9 changes and validation scope
 
+This page records the historical 1.3.9 behavior. For current development
+defaults and supported combinations, see the [kernel guide](kernel_dwd.md).
+
 This October 3, 2026 release of the fork, developed under Chang Cheng's guidance,
 preserves the corrected DWD objective, loss, free intercept, kernel construction
 and stopping tolerances. It changes native

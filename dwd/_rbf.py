@@ -39,6 +39,10 @@ def norm_sum_rbf(X, Y, *, gamma=None, self_kernel=False):
         raise ValueError('self_kernel requires identical feature objects.')
     gamma = 1.0 / X.shape[1] if gamma is None else gamma
     x_norm = row_norms(X, squared=True)
+    return _norm_sum_rbf_with_norms(X, Y, gamma=gamma, x_norm=x_norm, self_kernel=self_kernel)
+
+
+def _norm_sum_rbf_with_norms(X, Y, *, gamma, x_norm, self_kernel=False):
     y_norm = x_norm if self_kernel else row_norms(Y, squared=True)
     K = safe_sparse_dot(X, Y.T, dense_output=True)
     K *= -2.0

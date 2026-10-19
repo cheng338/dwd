@@ -10,10 +10,11 @@ from dwd._validation import check_real_X_y, contains_complex, require_real
 
 from dwd.utils import pm1, parameters_equal
 from dwd.gen_dwd import V, V_grad
-from dwd.kernel_utils import KernelClfMixin
+from dwd.kernel_utils import KernelClfMixin, _PREDICTION_BATCH_DEFAULT
 from dwd.cv import run_cv
 from dwd._eigen import validated_eigh
 from dwd._fit_state import fit_with_cleanup
+from dwd._residual_order import resolve_residual_check_order
 
 
 def _validate_rbf_computation(estimator):
@@ -27,10 +28,18 @@ def _validate_rbf_computation(estimator):
 
 def _validate_affine_computation(estimator):
     policy = getattr(estimator, 'affine_computation', 'standard')
-    if not isinstance(policy, str) or policy not in ('standard', 'joint'):
-        raise ValueError("affine_computation must be 'standard' or 'joint'.")
+    if not isinstance(policy, str) or policy not in ('auto', 'standard', 'joint'):
+        raise ValueError("affine_computation must be 'auto', 'standard' or 'joint'.")
     if policy == 'joint' and estimator.solver_mode != 'schur':
         raise ValueError("affine_computation='joint' requires solver_mode='schur'.")
+
+
+def _resolved_affine_computation(estimator):
+    """Resolve a new fit without mutating its requested constructor policy."""
+    policy = getattr(estimator, 'affine_computation', 'standard')
+    if policy == 'auto':
+        return 'joint' if estimator.solver_mode == 'schur' else 'standard'
+    return policy
 
 
 def _validate_exact_recovery(estimator):
@@ -42,12 +51,10 @@ def _validate_exact_recovery(estimator):
 
 
 def _validate_residual_check_order(estimator):
-    if estimator.residual_check_order not in ('refinement_first', 'adaptive'):
-        raise ValueError("residual_check_order must be 'refinement_first' or 'adaptive'.")
-    if estimator.residual_check_order == 'adaptive' and (estimator.implementation != 'optimized'
-            or estimator.solver_mode != 'schur'
-            or estimator.backend not in ('auto', 'cholesky')):
-        raise ValueError('Adaptive residual ordering requires optimized Cholesky MM.')
+    # Full eligibility is resolved after fit has selected an actual eigensystem.
+    resolve_residual_check_order(estimator.residual_check_order,
+        implementation=estimator.implementation, solver_mode=estimator.solver_mode,
+        backend=estimator.backend)
 
 
 class KernGDWD(KernelClfMixin, BaseEstimator):
@@ -88,8 +95,8 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         The fitted policy is retained for scoring;
         supplied training K and replaced construction hooks are unsupported.
 
-    affine_computation : {'standard', 'joint'}, default='standard'
-        Optional evaluation of the full decision expression K @ alpha + b in
+    affine_computation : {'auto', 'standard', 'joint'}, default='auto'
+        Evaluation policy for the full decision expression K @ alpha + b in
         Schur mode, including explicit validation-stopping scores. Joint avoids
         rounding the dot product before cancellation with the intercept. It
         refines uncertain rows and can use expensive exact rational recovery
@@ -97,7 +104,11 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         not guaranteed correctly rounded. Kernel construction, solver updates,
         objective checks and the score > 0 tie rule are unchanged. Corrected
         scores may change predictions, CV selection or validation stopping.
-        The fitted affine_computation_ policy survives constructor changes;
+        Auto selects joint scoring for corrected Schur models and standard
+        scoring for the historical legacy solver. Explicit standard preserves
+        the former scoring path. Older objects without this parameter retain
+        the class-level standard fallback, including when cloned or refitted.
+        The fitted ``affine_computation_`` policy survives constructor changes;
         refit to change it. Callback training scores retain solver arithmetic.
 
     exact_recovery : {'standard', 'extended'}, default='standard'
@@ -108,7 +119,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         each MM preparation/step, with unchanged complete-PSD and accuracy
         checks. This can recover additional small problems at substantial cost;
         it does not guarantee convergence or bound wall time and total memory.
-        Healthy fits and L-BFGS do not use this recovery. exact_recovery_ records
+        Healthy fits and L-BFGS do not use this recovery. ``exact_recovery_`` records
         the fitted profile; changing the constructor parameter requires refitting.
 
     implicit_P: bool
@@ -116,6 +127,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         kernel DWD; use the independent small-system tests as a reference.
 
     solver_mode: {'legacy', 'schur'}
+        New legacy fits emit a FutureWarning; prediction does not.
         'legacy' preserves the released update for reproducibility, including
         its known algebra errors. 'schur' is the corrected published MM update.
         Neither mode regularizes the intercept. Scientific comparisons must
@@ -133,8 +145,9 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         Recovery does not change the objective. Reference accepts only auto or
         spectral and always uses a checked eigenbasis, with spectral refinement.
         Invalid supplied eigenpairs are rejected. For trusted internally
-        generated RBF kernels, unaccelerated optimized auto fits without a
-        callback may restart once through the existing spectral backend after
+        generated RBF kernels, optimized auto fits without a
+        callback, including explicit restart acceleration, may restart once
+        through the existing spectral backend after
         constrained MM recovery is exhausted. The original initialization,
         kernel and stopping settings are reused. The successful attempt keeps
         max_iter; discarded work and total time are reported separately, so
@@ -181,9 +194,11 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         same solution quality as ordinary MM. Reference, legacy and L-BFGS modes
         do not support this option. Spectral backend requests remain spectral.
 
-    residual_check_order : {'refinement_first', 'adaptive'}, default='refinement_first'
-        Explicit scheduling option for optimized Cholesky MM, including
-        acceleration='restart'.
+    residual_check_order : {'auto', 'refinement_first', 'adaptive'}, default='auto'
+        Auto selects adaptive scheduling for optimized Schur Cholesky MM,
+        including acceleration='restart', when no supplied or cached
+        eigenbasis is used. Other supported routes retain refinement_first.
+        Explicit values retain their previous supported-route validation.
         Adaptive first observes two discarded refinement trials whose original
         states pass the accurate residual checks, then probes those same checks
         before trying a correction. A declined or failed probe falls back to
@@ -192,10 +207,16 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         Reference, explicit spectral, L-BFGS and legacy routes do
         not support adaptive ordering. Automatic spectral recovery, if needed,
         uses refinement_first; anchor recovery retains its original checks.
+        ``requested_residual_check_order_`` preserves the fit request and
+        ``residual_check_order_`` records the successful attempt's policy.
+        Diagnostics also record the initial attempt's order after resolution.
+        Older serialized objects missing the constructor field retain
+        refinement_first when cloned or refitted.
     """
 
     # Old serialized estimators predate this constructor parameter.
     rbf_computation = 'standard'
+    residual_check_order = 'refinement_first'
     affine_computation = 'standard'
     exact_recovery = 'standard'
 
@@ -205,8 +226,8 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                  backend='auto', stopping='objective', initialization='auto',
                  tol=1e-6, patience=3, min_delta=0., check_interval=1,
                  callback=None, prediction_batch_size=None, implementation='optimized',
-                 acceleration=None, residual_check_order='refinement_first',
-                 rbf_computation='standard', affine_computation='standard',
+                 acceleration=None, residual_check_order='auto',
+                 rbf_computation='standard', affine_computation='auto',
                  exact_recovery='standard'):
         self.implementation = implementation
         self.acceleration = acceleration
@@ -279,7 +300,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         if len(self.classes_) != 2:
             raise ValueError('KernGDWD requires exactly two classes.')
         self.n_features_in_ = X.shape[1]
-        self._Xfit = X
+        X = self._capture_kernel_basis(X)
         internally_constructed = K is None
         used_cv_cache = False
         self.kernel_computation_ = 'sklearn'
@@ -343,7 +364,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                 and self.solver_mode == 'schur'
                 and isinstance(self.kernel, str) and self.kernel == 'rbf'
                 and self.implementation == 'optimized' and self.backend == 'auto'
-                and self.acceleration is None and self.callback is None
+                and self.acceleration in (None, 'restart') and self.callback is None
                 and getattr(self._compute_kernel, '__func__', None)
                     is KernelClfMixin._compute_kernel
                 and getattr(self._compute_training_kernel, '__func__', None)
@@ -368,7 +389,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                 patience=self.patience, min_delta=self.min_delta,
                 check_interval=self.check_interval, implementation=self.implementation,
                 acceleration=self.acceleration, residual_check_order=self.residual_check_order,
-                affine_computation=self.affine_computation,
+                affine_computation=_resolved_affine_computation(self),
                 **({'exact_recovery': self.exact_recovery}
                    if self.exact_recovery != 'standard' else {}))
         self._set_fit_result(result)
@@ -527,8 +548,28 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
                                             self.objective_history_[-2]) < self.obj_tol))
         self.backend_ = result['backend']
         self.diagnostics_ = result['diagnostics']
+        # Preserve constructor intent and the successful fit's actual route.
+        self.diagnostics_.setdefault('requested_residual_check_order', self.residual_check_order)
+        self.diagnostics_.setdefault('residual_check_order', 'refinement_first')
+        self.diagnostics_.setdefault('initial_residual_check_order', self.diagnostics_['residual_check_order'])
+        self.requested_residual_check_order_ = self.diagnostics_['requested_residual_check_order']
+        self.residual_check_order_ = self.diagnostics_['residual_check_order']
         self.validation_history_ = result.get('validation_history',
                                                self.diagnostics_.get('validation_history', []))
+
+    def _capture_kernel_basis(self, X):
+        """Own prediction features and snapshot the parameters used to fit."""
+        self.kernel_ = self.kernel
+        self.kernel_kws_ = deepcopy(self.kernel_kws)
+        if self.kernel == 'precomputed' and isinstance(X, np.ndarray):
+            # Prediction uses only the training row count in this mode. A view
+            # keeps its shape stable without duplicating the square Gram matrix.
+            self._Xfit = X.view()
+        elif isinstance(X, np.ndarray):
+            self._Xfit = X.copy(order='K')
+        else:
+            self._Xfit = X.copy()
+        return self._Xfit
 
     @fit_with_cleanup
     def cv_init(self, X):
@@ -545,7 +586,11 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         # Promote before constructing the Gram matrix, not after rounding it.
         X = check_array(X, accept_sparse='csr',
                         dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
-        self._Xfit = X
+        if self.kernel == 'precomputed':
+            # Unlike ordinary prediction, the CV cache reuses the matrix's
+            # values. Own them so caller mutation cannot corrupt a later fit.
+            X = X.copy()
+        X = self._capture_kernel_basis(X)
 
         # Record construction-time provenance, not merely the methods that
         # happen to be bound later when fit reuses this cache.
@@ -574,7 +619,8 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         self._cv_trusted_rbf_construction = bool(trusted_rbf)
         self._cv_kernel_computation = self.kernel_computation_
         self._cv_kernel_symmetry_correction = self.kernel_symmetry_correction_
-        self._cv_X = X.copy()
+        # X is already owned by this preparation, including precomputed mode.
+        self._cv_X = X
         self._cv_kernel = self.kernel
         self._cv_kernel_kws = deepcopy(self.kernel_kws)
         self._cv_solver_mode = self.solver_mode
@@ -636,6 +682,44 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
             return None
 
 
+_ORIGINAL_KERNGDWD_TYPE = KernGDWD
+_ORIGINAL_TRAINING_KERNEL = KernGDWD._compute_training_kernel
+_ORIGINAL_KNOWN_PSD_KERNEL = KernGDWD._known_psd_kernel
+
+
+def _direct_prediction_kernel(estimator):
+    """Use call-local basis validation only for unchanged built-in direct hooks."""
+    from .kernel_utils import (_ORIGINAL_COMPUTE_KERNEL,
+                               _ORIGINAL_KERNEL_DECISION_PRODUCT,
+                               _ORIGINAL_DECISION_FUNCTION)
+    if (type(estimator) is not _ORIGINAL_KERNGDWD_TYPE or
+            getattr(estimator, 'kernel_', estimator.kernel) != 'rbf' or
+            getattr(estimator, 'kernel_computation_', None) != 'direct_v1' or
+            getattr(estimator._compute_kernel, '__func__', None)
+                is not _ORIGINAL_COMPUTE_KERNEL or
+            getattr(estimator._compute_training_kernel, '__func__', None)
+                is not _ORIGINAL_TRAINING_KERNEL or
+            getattr(estimator._known_psd_kernel, '__func__', None)
+                is not _ORIGINAL_KNOWN_PSD_KERNEL or
+            getattr(estimator._kernel_decision_product, '__func__', None)
+                is not _ORIGINAL_KERNEL_DECISION_PRODUCT or
+            getattr(estimator.decision_function, '__func__', None)
+                is not _ORIGINAL_DECISION_FUNCTION):
+        return None
+    from ._direct_rbf import _prediction_basis_kernel
+    basis_kernel = _prediction_basis_kernel(estimator._Xfit)
+    if basis_kernel is None:
+        return None
+
+    def compute(query):
+        gamma = (getattr(estimator, 'kernel_kws_', estimator.kernel_kws) or {}).get('gamma')
+        if isinstance(gamma, bool):
+            gamma = float(gamma)
+        return basis_kernel(query, gamma=gamma)
+
+    return compute
+
+
 class KernGDWDCV(KernelClfMixin, BaseEstimator):
     """
     Fit kernel generalized DWD with cross-validation.
@@ -663,10 +747,11 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         numerical compatibility and cost limits. Standard preserves existing
         construction behavior.
 
-    affine_computation : {'standard', 'joint'}, default='standard'
-        Forwarded to every candidate and the final refit. Joint uses the
-        optional full affine decision evaluation described by KernGDWD and
-        requires Schur mode. It can change CV scores and the chosen candidate.
+    affine_computation : {'auto', 'standard', 'joint'}, default='auto'
+        Forwarded to every candidate and the final refit. Auto selects joint
+        for Schur mode and standard for legacy mode. Joint uses the full affine
+        decision evaluation described by KernGDWD and requires Schur mode.
+        It can change CV scores and the chosen candidate.
 
     exact_recovery : {'standard', 'extended'}, default='standard'
         Forwarded to every candidate and the final refit. Extended requires
@@ -686,7 +771,7 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         The option changes finite-iteration behavior; ordinary MM remains the
         default. Only optimized MM supports acceleration.
 
-    residual_check_order : {'refinement_first', 'adaptive'}, default='refinement_first'
+    residual_check_order : {'auto', 'refinement_first', 'adaptive'}, default='auto'
         Forwarded to every candidate and the final refit. Adaptive ordering is
         restricted to optimized Cholesky MM, including restart acceleration,
         and may change
@@ -695,6 +780,7 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
     """
     # Old serialized CV estimators retain the standard constructor policy.
     rbf_computation = 'standard'
+    residual_check_order = 'refinement_first'
     affine_computation = 'standard'
     exact_recovery = 'standard'
 
@@ -708,8 +794,8 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
                  stopping='objective', initialization='auto', tol=1e-6,
                  patience=3, min_delta=0., check_interval=1, callback=None,
                  prediction_batch_size=None, implementation='optimized', acceleration=None,
-                 residual_check_order='refinement_first', rbf_computation='standard',
-                 affine_computation='standard', exact_recovery='standard'):
+                 residual_check_order='auto', rbf_computation='standard',
+                 affine_computation='auto', exact_recovery='standard'):
 
         self.lambd_vals = lambd_vals
         self.implementation = implementation
@@ -811,13 +897,20 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         self.prediction_precision_ = getattr(self.best_estimator_, 'prediction_precision_', 'ordinary')
         self.affine_computation_ = getattr(self.best_estimator_, 'affine_computation_', 'standard')
         self.exact_recovery_ = getattr(self.best_estimator_, 'exact_recovery_', 'standard')
+        self.requested_residual_check_order_ = self.best_estimator_.requested_residual_check_order_
+        self.residual_check_order_ = self.best_estimator_.residual_check_order_
 
         return self
 
-    def decision_function(self, X):
+    def decision_function(self, X, *, prediction_batch_size=_PREDICTION_BATCH_DEFAULT):
+        """Score with the wrapper's current batch limit, or a per-call override."""
         from sklearn.utils.validation import check_is_fitted
         check_is_fitted(self, 'best_estimator_')
-        return self.best_estimator_.decision_function(X)
+        batch_size = (getattr(self, 'prediction_batch_size', None)
+                      if prediction_batch_size is _PREDICTION_BATCH_DEFAULT
+                      else prediction_batch_size)
+        return self.best_estimator_.decision_function(
+            X, prediction_batch_size=batch_size)
 
 
 def solve_gen_kern_dwd(K, y, lambd, q=1,
@@ -1000,6 +1093,12 @@ def solve_gen_kern_dwd(K, y, lambd, q=1,
     if not np.isfinite(prev_obj):
         raise FloatingPointError('Kernel DWD produced a nonfinite initial objective.')
     obj_vals.append(prev_obj)
+
+    import warnings
+    warnings.warn(
+        "solver_mode='legacy' uses historical kernel update equations. "
+        "Use solver_mode='schur' for new fits; existing saved models remain readable.",
+        FutureWarning, stacklevel=2)
 
     for i in range(max_iter):
 

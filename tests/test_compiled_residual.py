@@ -126,7 +126,11 @@ class CompiledAllocationTests(unittest.TestCase):
                 compiled.os, 'cpu_count', return_value=16):
             result = compiled.compiled_values(K, x, rhs, .5, .25)
         self.assertIsNotNone(result)
-        self.assertEqual(sorted(intervals), [(0, n//3), (n//3, 2*n//3), (2*n//3, n)])
+        ordered = sorted(intervals)
+        self.assertEqual(ordered[0][0], 0)
+        self.assertEqual(ordered[-1][1], n)
+        self.assertTrue(all(left[1] == right[0] for left, right in zip(ordered, ordered[1:])))
+        self.assertTrue(all(0 < stop-start <= compiled._chunk_rows(n) for start, stop in ordered))
         np.testing.assert_array_equal(result[0], np.arange(n))
         np.testing.assert_array_equal(result[1], -np.arange(n))
         np.testing.assert_array_equal(result[2], np.ones(n))
@@ -157,7 +161,7 @@ class CompiledArithmeticTests(unittest.TestCase):
     def assert_core_reference(self, K, x, rhs, shift, s, outputs):
         scores, residual, maxima = outputs
         self.assert_bits_equal(maxima, np.max(abs(K), axis=1))
-        if native._native_supported():
+        if native._scalar_supported():
             expected_scores = np.array([math.sumprod(row.tolist(), x.tolist()) for row in K])
             expected_residual = np.array([
                 math.sumprod(row.tolist() + [float(rhs[i]), -s, -shift],
@@ -222,7 +226,7 @@ class CompiledArithmeticTests(unittest.TestCase):
                 for actual, expected in zip(result, direct):
                     self.assert_bits_equal(actual, expected)
                     self.assertFalse(any(np.shares_memory(actual, value) for value in (K, x, rhs)))
-                if native._native_supported():
+                if native._scalar_supported():
                     args = (K, .125, rhs, x, .3, -.25)
                     with patch.object(compiled, '_ACCEL', None):
                         scalar = native.native_compensated_residual(*args)
@@ -232,7 +236,11 @@ class CompiledArithmeticTests(unittest.TestCase):
                     for actual, expected in zip(accelerated, scalar):
                         self.assert_bits_equal(actual, expected)
                 else:
-                    self.assertIsNone(native.native_compensated_residual(K, .125, rhs, x, .3, -.25))
+                    bounded = native.native_compensated_residual(K, .125, rhs, x, .3, -.25)
+                    if native._native_supported():
+                        self.assertIsNotNone(bounded)
+                    else:
+                        self.assertIsNone(bounded)
                     if n <= 31:
                         self.assert_core_reference(K, x, rhs, .125, .3, result)
                 for value, before in zip((K, x, rhs), snapshots):
@@ -368,7 +376,7 @@ class CompiledArithmeticTests(unittest.TestCase):
                 {'user_api': 'blas', 'num_threads': 1}]):
             raw = compiled.compiled_values(K, x, rhs, .125, .3)
             self.assertIsNotNone(raw)
-            if native._native_supported():
+            if native._scalar_supported():
                 args = (K, .125, rhs, x, .3, -.25)
                 with patch.object(compiled, '_ACCEL', None):
                     disabled = native.native_compensated_residual(*args)
@@ -378,9 +386,14 @@ class CompiledArithmeticTests(unittest.TestCase):
                 for first, second in zip(disabled, enabled):
                     self.assert_bits_equal(first, second)
             else:
-                # The optional arithmetic still runs on Python 3.11; its
-                # caller's audited native screen correctly remains unavailable.
-                self.assertIsNone(native.native_compensated_residual(K, .125, rhs, x, .3, -.25))
+                # The self-contained core can be qualified without sumprod.
+                bounded = native.native_compensated_residual(K, .125, rhs, x, .3, -.25)
+                if native._native_supported():
+                    self.assertIsNotNone(bounded)
+                else:
+                    self.assertIsNone(bounded)
+                with patch.object(compiled, '_ACCEL', None):
+                    self.assertIsNone(native.native_compensated_residual(K, .125, rhs, x, .3, -.25))
                 self.assert_core_reference(K[:7, :7], x[:7], rhs[:7], .125, .3,
                                            _rows(K[:7, :7], x[:7], rhs[:7], .125, .3)[1:])
         for value, before in zip((K, x, rhs), snapshots):

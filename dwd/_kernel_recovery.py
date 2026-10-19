@@ -45,14 +45,14 @@ def _release_failed_frames(error):
 def solve_with_spectral_restart(solve, K, y, lambd, *, eligible=False, **options):
     """Try auto once, then explicit spectral once for a typed eligible failure.
 
-    The caller establishes kernel-construction provenance. Callback and
-    accelerated fits are excluded because replay would alter their contracts.
+    The caller establishes kernel-construction provenance. Callbacks are excluded because replay would alter their contract. Restart
+    momentum and validation state are local to each fresh solve invocation.
     Existing histories and counters describe the successful attempt; retry
     diagnostics explicitly account for work discarded from the failed one.
     """
     eligible = (eligible and options.get('backend', 'auto') == 'auto'
                 and options.get('implementation', 'optimized') == 'optimized'
-                and options.get('acceleration') is None
+                and options.get('acceleration') in (None, 'restart')
                 and options.get('callback') is None
                 and options.get('K_eig') is None)
     if not eligible:
@@ -70,14 +70,15 @@ def solve_with_spectral_restart(solve, K, y, lambd, *, eligible=False, **options
 
     # No recursive dispatch, public refit, second initialization or new kernel.
     retry_options = dict(options, backend='spectral')
-    if options.get('residual_check_order') == 'adaptive':
-        # The opt-in schedule belongs only to Cholesky. A fresh spectral
+    if options.get('residual_check_order') in ('adaptive', 'auto'):
+        # The adaptive schedule belongs only to Cholesky. A fresh spectral
         # attempt retains its own existing checks and refinement ordering.
         retry_options['residual_check_order'] = 'refinement_first'
     result = solve(K, y, lambd, **retry_options)
     diagnostics = result['diagnostics']
-    if options.get('residual_check_order') == 'adaptive':
-        diagnostics['requested_residual_check_order'] = 'adaptive'
+    if options.get('residual_check_order') in ('adaptive', 'auto'):
+        diagnostics['requested_residual_check_order'] = options['residual_check_order']
+        diagnostics['initial_residual_check_order'] = 'adaptive'
         diagnostics['residual_check_order'] = 'refinement_first'
     successful_timing = {
         name: float(diagnostics.get(name, 0.))
