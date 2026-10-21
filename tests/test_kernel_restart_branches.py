@@ -20,7 +20,7 @@ class TestLaterRecoveryBoundary(unittest.TestCase):
         self.K = np.eye(6) / 2. + np.ones((6, 6)) / 8.
         self.y = np.array([-1., 1., -1., 1., -1., 1.])
         self.options = dict(backend='auto', implementation='optimized',
-                            psd_known=True, max_iter=3, stopping='fixed',
+                            psd_known=True, max_iter=3, stopping='fixed', acceleration=None,
                             alpha_init=np.zeros(6), offset_init=0.)
 
     def run_guarded(self, watched):
@@ -109,6 +109,26 @@ class TestLaterRecoveryBoundary(unittest.TestCase):
         self.assertEqual(watched.call_count, 1)
         self.assertEqual(recovery.call_count, 1)
         self.assertIn('increased the original objective', recovery.call_args.args[2])
+
+
+    def test_automatic_acceleration_rejects_non_descending_active_action(self):
+        self.options['acceleration'] = 'auto'
+        actions = []
+        def action(recovery, rhs, old_offset, trigger=None):
+            actions.append((rhs.copy(), old_offset))
+            if len(actions) == 1:
+                return self.accepted_action(recovery, rhs, old_offset, trigger)
+            alpha = np.full(len(rhs), 1000.)
+            return alpha, 0., recovery.K @ alpha
+        watched = Mock(wraps=solve_kernel)
+        with patch.object(KernelLinearSystem, 'solve_constrained',
+                          side_effect=ConstrainedSolveFailure('Controlled constrained exhaustion')), \
+             patch.object(KernelMMRecovery, 'step', action):
+            with self.assertRaisesRegex(FloatingPointError, 'could not establish objective descent') as caught:
+                self.run_guarded(watched)
+        self.assertNotIsInstance(caught.exception, MMRecoveryExhausted)
+        self.assertEqual(watched.call_count, 1)
+        self.assertEqual(len(actions), 2)
 
 
 if __name__ == '__main__':

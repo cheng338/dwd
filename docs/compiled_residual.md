@@ -19,25 +19,46 @@ When compiled values are available, the Python layer evaluates those bounds
 on arrays with the same outward rounding points. The C core additionally checks
 its arithmetic domain and rounding behavior.
 Uncertain or unsupported evaluations retain the prior Python/native or portable
-fallback. No numerical tolerance is relaxed. The compiled residual path is
-qualified on conventional Windows x86-64 CPython 3.11 through 3.13. Its
-self-contained C arithmetic does not call the interpreter's `math.sumprod`.
-The separate scalar `math.sumprod` path preserves its CPython 3.12 eligibility
-and is also qualified on conventional Windows x86-64 CPython 3.13. Omitting the
-extension on those runtimes can still leave the guarded builtin path available.
-Python 3.13's builtin was tested directly with the extension disabled; qualifying
-the C core alone would not establish this fallback's numerical behavior.
-Python 3.11 has no `math.sumprod`, so a missing or declining extension returns
-to portable compensated arithmetic. The wheel
-ABI and DWD's residual
-arithmetic guard are separate from NumPy/SciPy BLAS acceleration.
+fallback. No numerical tolerance is relaxed. The self-contained C arithmetic
+does not call the interpreter's `math.sumprod`.
 
-The additional scalar qualification used ordinary Windows x86-64 CPython
-3.13.15, exact-rational residual bounds, unsafe arithmetic-mode refusals and
-fitting comparisons against portable compensated evaluation. The relevant
-extended-arithmetic and `math_sumprod_impl` source sections in the official
-CPython 3.12.15 and 3.13.15 sources were identical. This does not qualify
-free-threaded builds, other Python versions or additional 3.13 platforms.
+### Runtime eligibility in 1.3.18
+
+The independent compiled residual route accepts Windows x86-64 CPython 3.11
+and later 3.x releases. The scalar route accepts CPython 3.12 and later 3.x
+releases when `math.sumprod` is a built-in function and Python floats are
+IEEE binary64. Neither gate has a Python 3 minor-version ceiling. Both require
+a GIL-enabled build (`Py_GIL_DISABLED` absent or zero); rounding, gradual
+underflow, operand-range and precision checks still apply.
+
+The scalar route has no operating-system or architecture restriction beyond
+its arithmetic requirements, preserving the earlier CPython 3.12 scope. A
+compatible residual extension built on another platform can still be tried
+through this scalar-eligible dispatcher. The separate dense-score entry below
+remains restricted to Windows x86-64. A missing or declining helper retains
+the guarded scalar or portable compensated fallback. Python 3.11 has no
+`math.sumprod`, so its fallback is portable compensated arithmetic. Wheel ABI
+compatibility and these arithmetic gates are separate from NumPy/SciPy BLAS.
+
+The scalar residual bound assumes the built-in continues to use the extended,
+triple-length product accumulation described above. The runtime gate does not
+inspect a future interpreter's C implementation. Simulated version identities
+test dispatch decisions, not arithmetic on those future interpreters.
+
+### Recorded numerical validation
+
+Routine complete-suite validation targets Python 3.11 and 3.12. Python 3.13
+and later Python 3.x releases remain supported without dedicated complete-suite
+runs. The checks below record earlier numerical qualification.
+
+Released version 1.3.17 qualified the compiled residual and dense-score paths
+on conventional Windows x86-64 CPython 3.11 through 3.13. The separate scalar
+qualification used CPython 3.13.15 with the extension disabled, exact-rational
+residual bounds, unsafe arithmetic-mode refusals and fitting comparisons against
+portable compensated evaluation. The relevant extended-arithmetic and
+`math_sumprod_impl` source sections in the official CPython 3.12.15 and 3.13.15
+sources were identical. Those checks remain evidence for the tested runtimes;
+forward eligibility does not relabel later versions or other platforms as tested.
 
 The adapted arithmetic source includes the complete Python Software Foundation
 license in `dwd/CPYTHON-LICENSE.txt`. Original DWD attribution and its MIT license
@@ -161,10 +182,10 @@ For normal binary64 values whose scaled result remains normal, exponent-field
 changes perform the exact normalization/scaling; zero, subnormal and exceptional
 cases retain the library `frexp`/`ldexp` path and its rounding points.
 
-The score path requires conventional Windows CPython 3.11 through 3.13 on x86-64 with
-binary64 round-to-nearest arithmetic and gradual underflow. Other operating
-systems retain the existing Python calculation until their native builds are
-qualified. It handles the
+In version 1.3.18, the score path accepts Windows x86-64 CPython 3.11
+and later 3.x releases with a GIL-enabled build, binary64 round-to-nearest
+arithmetic and gradual underflow. Other operating systems retain the existing
+Python calculation. It handles the
 existing C/F-contiguous float64 kernels through bounded contiguous tiles, with
 at most eight rows and O(n_training) scratch. It releases the GIL without
 starting additional threads. Single-row tails, unsupported layouts/dtypes,
@@ -186,7 +207,7 @@ accurate scoring; ordinarily accepted dot products do not use this entry.
 
 An accelerated wheel is platform specific and is tagged
 `cp311-abi3-<platform>`, not `py3-none-any`. The stable ABI permits loading on
-CPython 3.11 and later; the narrower numerical runtime gate above still applies.
+CPython 3.11 and later; the platform, build and arithmetic guards above still apply.
 No compiler or tool download is invoked at runtime, and the extension does not
 depend on the NumPy C API.
 

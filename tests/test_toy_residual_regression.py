@@ -95,11 +95,11 @@ class ToyResidualRegressionTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.thread_limit.restore_original_limits()
 
-    def fit(self, implementation, initialization, supplied=True, count=100, offset=0.):
+    def fit(self, implementation, initialization, supplied=True, count=100, offset=0., acceleration='auto'):
         states = []
         model = KernGDWD(kernel='rbf', kernel_kws={'gamma': .001}, lambd=1e-7,
             implementation=implementation, initialization=initialization, random_state=314159,
-            stopping='objective', obj_tol=1e-5, max_iter=count,
+            stopping='objective', obj_tol=1e-5, max_iter=count, acceleration=acceleration,
             callback=lambda state: states.append(dict(state)))
         model.fit(self.X, self.y, offset_init=offset, **({'K': self.K} if supplied else {}))
         self.assertEqual(model.n_iter_, count)
@@ -114,15 +114,31 @@ class ToyResidualRegressionTests(unittest.TestCase):
             with self.subTest(implementation=implementation, supplied=supplied):
                 if implementation == 'reference':
                     with patch.object(linear, 'cho_factor', side_effect=AssertionError('Reference must remain spectral')):
-                        model, states = self.fit(implementation, 'zero', supplied)
+                        model, states = self.fit(implementation, 'zero', supplied, acceleration=None)
                 else:
-                    model, states = self.fit(implementation, 'zero', supplied)
+                    model, states = self.fit(implementation, 'zero', supplied, acceleration=None)
                 assert_allclose([s['decision_values'] for s in states], [s[0] for s in expected], rtol=0., atol=2e-8)
                 assert_allclose([s['objective'] for s in states], [s[1] for s in expected], rtol=0., atol=3e-10)
                 diagnostics = model.diagnostics_['linear_system_diagnostics']
                 self.assertGreater(diagnostics['compensated_residual_checks'], 0)
                 self.assertEqual(diagnostics['positive_eigenvalues_discarded'], 0)
                 self.assertEqual(diagnostics['added_objective_regularization'], 0)
+
+    def test_automatic_restart_observations_match_independent_high_precision_scores(self):
+        # Momentum changes the path, but every observed state must still
+        # describe its own coefficients under the original stored kernel.
+        model, states = self.fit('optimized', 'zero', acceleration='auto')
+        self.assertEqual(model.acceleration_, 'restart')
+        for state in states:
+            score = self.oracle.product(state['alpha'])
+            decisions = score + state['offset']
+            margin = self.y * decisions
+            loss = 1. - margin
+            mask = margin > .5
+            loss[mask] = .25 / margin[mask]
+            objective = float(np.mean(loss) + 1e-7 * math.fsum(state['alpha'] * score))
+            assert_allclose(state['decision_values'], decisions, rtol=0., atol=2e-8)
+            self.assertLessEqual(abs(state['objective'] - objective), 3e-10)
 
     def test_native_gaussian_initialization_and_free_intercept_are_preserved(self):
         initial = np.random.RandomState(314159).normal(size=len(self.K))

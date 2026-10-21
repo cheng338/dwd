@@ -61,7 +61,7 @@ class CompiledScoreDispatchTests(unittest.TestCase):
         self.assertBitsEqual(actual, expected)
 
     def test_independent_runtime_guard_and_replaced_math_fsum(self):
-        for version in ((3, 10), (3, 14)):
+        for version in ((3, 10), (4, 0)):
             with patch.object(compiled.sys, 'version_info', version):
                 self.assertFalse(compiled._supported())
         with patch.object(compiled.platform, 'machine', return_value='ARM64'):
@@ -195,6 +195,23 @@ class NativeScoreArithmeticTests(unittest.TestCase):
         self.assertEqual(actual.dtype, expected.dtype)
         self.assertEqual(actual.shape, expected.shape)
         self.assertEqual(actual.tobytes(), expected.tobytes())
+
+    def test_future_python3_identity_keeps_native_scoring(self):
+        K = np.array([[1e16, 1., -1e16, -0.]] * 11)
+        alpha = np.ones(4)
+        expected, state = expanded(K, alpha)
+        for version in ((3, 14), (3, 15), (3, 99)):
+            identity = SimpleNamespace(version_info=version, platform='win32',
+                implementation=SimpleNamespace(name='cpython'), maxsize=2**63-1,
+                float_info=sys.float_info)
+            with self.subTest(version=version), patch.object(compiled, 'sys', identity), \
+                    patch.object(compiled.platform, 'machine', return_value='AMD64'), \
+                    patch.object(compiled, '_GIL_DISABLED', 0), \
+                    patch.object(loader._ACCEL, 'score_rows', wraps=_ENTRY) as entry:
+                actual, actual_state = expanded(K, alpha)
+                self.assertGreater(entry.call_count, 0)
+                self.assertBitsEqual(actual, expected)
+                self.assertEqual(actual_state, state)
 
     def test_exact_expanded_products_across_range_and_layout(self):
         rng = np.random.default_rng(913)

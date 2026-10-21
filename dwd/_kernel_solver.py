@@ -1,4 +1,3 @@
-from ._dual_certificate import kernel_dual_lower_bound
 """Exact full-kernel generalized DWD solvers with a free intercept.
 
 The objective is mean(V_q(y * (K @ alpha + b))) + lambd * alpha.T @ K @ alpha.
@@ -225,9 +224,9 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                  stopping='objective', tol=1e-6, backend='auto',
                  psd_known=False, callback=None, validation=None,
                  patience=3, min_delta=0., check_interval=1,
-                 implementation='optimized', acceleration=None,
+                 implementation='optimized', acceleration='auto',
                  residual_check_order='refinement_first', affine_computation='standard',
-                 exact_recovery='standard'):
+                 exact_recovery='standard', linear_action='factor'):
     """Solve one specified kernel DWD problem; no internal parameter search.
 
     y contains both -1/+1. ``validation`` is an explicitly supplied pair
@@ -239,6 +238,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     Explicit auto resolves only after the actual supplied eigenbasis is known.
     """
     started = perf_counter()
+    from ._linear_action import validate_linear_action
+    validate_linear_action(linear_action, implementation=implementation, backend=backend, K_eig=K_eig)
     if not isinstance(exact_recovery, str) or exact_recovery not in ('standard', 'extended'):
         raise ValueError("exact_recovery must be 'standard' or 'extended'.")
     if not isinstance(affine_computation, str) or affine_computation not in ('standard', 'joint'):
@@ -247,10 +248,10 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         raise ValueError("implementation must be 'optimized' or 'reference'.")
     if implementation == 'reference' and backend not in ('auto', 'spectral'):
         raise ValueError('The coefficient/eigenbasis reference uses backend=auto or spectral.')
-    if acceleration is not None and (not isinstance(acceleration, str) or acceleration != 'restart'):
-        raise ValueError("acceleration must be None or 'restart'.")
-    if acceleration is not None and (implementation != 'optimized' or backend == 'lbfgs'):
-        raise ValueError('Acceleration is supported only for optimized MM, not reference or L-BFGS.')
+    requested_acceleration = acceleration
+    from dwd._acceleration_policy import resolve_acceleration
+    acceleration = resolve_acceleration(acceleration,
+        implementation=implementation, backend=backend)
     requested_residual_check_order = residual_check_order
     from dwd._residual_order import resolve_residual_check_order
     residual_check_order = resolve_residual_check_order(residual_check_order,
@@ -313,10 +314,12 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                    'fallback_reason': None, 'cholesky_setup_seconds': 0.,
                    'spectral_setup_seconds': 0., 'eigenvalue_check_seconds': 0.,
                    'implementation': implementation, 'acceleration': acceleration,
+                   'requested_acceleration': requested_acceleration,
                    'residual_check_order': residual_check_order,
                    'initial_residual_check_order': residual_check_order,
                    'requested_residual_check_order': requested_residual_check_order}
     diagnostics.update(initial_details)
+    diagnostics.update(requested_linear_action=linear_action, linear_action='factor')
     U = values = system = None
     if backend in ('spectral', 'lbfgs') or K_eig is not None:
         spectral_started = perf_counter()
@@ -339,7 +342,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         c = None
     elif backend == 'cholesky':
         cholesky_started = perf_counter()
-        system = KernelLinearSystem(K, shift, residual_check_order=residual_check_order)
+        system = KernelLinearSystem(K, shift, residual_check_order=residual_check_order, linear_action=linear_action)
         scores = initial_scores
         c = None
         diagnostics['cholesky_setup_seconds'] = perf_counter() - cholesky_started
@@ -711,6 +714,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
         'check the kernel, initialization or supplied eigenpairs.')
     if system is not None:
         diagnostics['linear_system_diagnostics'] = dict(system.info)
+        diagnostics['linear_action'] = system.info.get('effective_linear_action', 'factor')
         diagnostics['auto_fallback'] = bool(system.info['linear_recoveries'])
         diagnostics['fallback_reason'] = ('original_system_residual_or_factorization' 
                                           if diagnostics['auto_fallback'] else None)

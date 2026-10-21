@@ -55,7 +55,8 @@ updates. The reference never substitutes a Cholesky solve.
 | `backend='cholesky'` | Optimized only: solve the original constrained shifted-kernel equations with residual checks, bounded refinement, and centered factor recovery. Unknown/precomputed kernels still require PSD validation. |
 | `backend='spectral'` | Use the full checked eigensystem; it can be reused across lambda/q values. The reference retains coefficient updates; optimized mode uses spectral coordinates. |
 | `backend='lbfgs'` | Optimized only: optimize the same generalized objective in full spectral RKHS coordinates with a free intercept. It requires spectral preparation. |
-| `acceleration=None` | Default ordinary MM. |
+| `acceleration='auto'` | Default: restarted optimized Schur MM, including checked spectral solves; ordinary updates for reference, legacy and L-BFGS routes. Resolution does not depend on stopping policy or data. |
+| `acceleration=None` | Explicit ordinary MM, including the behavior of older serialized objects missing this parameter. |
 | `acceleration='restart'` | Optimized corrected MM only: extrapolate decision values and restart momentum using the original objective. Available with Cholesky or a checked full spectral solve; incompatible with reference, legacy and L-BFGS. |
 | `initialization='auto'` | Zero for optimized corrected fits; normalized Gaussian coefficients for the repaired reference and explicit legacy mode. |
 | `initialization='zero'` | Deterministic zero coefficients and default zero intercept. |
@@ -164,7 +165,7 @@ acceptance. Its operation counter counts instrumented rational operations,
 not total CPU work. Decimal transcendental enclosures assume correctly rounded
 `ln` and `exp`; reported intervals are rounded outward to binary64.
 
-## Optional restarted MM
+## Restarted MM
 
 ```python
 accelerated = KernGDWD(
@@ -193,7 +194,15 @@ subset of all restarts. Fixed 100 updates therefore does not imply identical
 work across ordinary and accelerated MM. A validation-restored model can come
 from an earlier accepted iteration, as with ordinary MM.
 
-Acceleration remains an explicit optimizer choice. The default absolute
+The automatic default selects restart only on compatible solver routes. Explicit
+`None` selects ordinary MM, and explicit `'restart'` rejects incompatible routes.
+The constructor parameter remains the request; fitted `requested_acceleration_`
+and `acceleration_`, also recorded in `diagnostics_`, distinguish request from
+effective policy. Momentum retains one extra n-element float64 score vector
+(8n bytes) between updates, plus temporary O(n) work vectors. This is not a
+bound on total solver or recovery memory.
+
+The default absolute
 successive-objective stopping rule depends on the optimization trajectory and
 does not certify stationarity. A faster trajectory can therefore stop at a
 different optimization quality under the same objective-change threshold;
@@ -410,41 +419,103 @@ matrices or arrays retained by a callable, and single-batch prediction receives
 no such saving. Kernel and scoring arithmetic are unchanged. See the
 [allocation checks and timing limits](../VALIDATION.md#prediction-kernel-block-lifetime-in-local-source).
 
+Eligible built-in standard RBF prediction reuses training norms within a batched
+call for supported float64 dense arrays and canonical, native float64 CSR
+matrices or arrays. CSR canonicality is checked from the current coordinates,
+without trusting mutable ordering flags. The training norms and validation
+results are discarded when the call returns. Custom numerical hooks,
+unsupported representations and unsuitable arithmetic retain the checked
+fallback. This does not make an unsafe historical fitted basis valid or support
+concurrent mutation of fitted data.
+
 ### RBF construction and query consistency
 
-With the default `rbf_computation='standard'`, corrected named RBF fits first
-use scikit-learn's pairwise kernel. If that internally
-constructed self-kernel exceeds the existing symmetry tolerance
-`100 * eps * max(1, max(abs(K)))`, the package reconstructs it from the validated
-float64 features. It adds the two squared norms before subtracting the dot-product
-term, clips negative squared distances to zero, and applies the RBF exponential.
-One computed triangle is mirrored and the self-diagonal is set to its analytic
-value of one. External or custom kernel matrices retain the strict validator and
-are not averaged.
+Sparse feature coordinates are combined before named RBF row norms are
+calculated. Repeated CSR entries therefore have the same meaning during fitting,
+CV preparation, validation and prediction. Normalization uses private storage;
+caller buffers and ordering flags are preserved, and nonfinite duplicate sums
+raise an error. Corrected Schur fits promote sparse values to float64 before a
+format conversion can sum duplicates in a narrower dtype. Callable kernels and
+precomputed Gram matrices retain their own input contracts.
 
-For the standard policy, fitted `kernel_computation_` is `'sklearn'` on the
-ordinary path or `'norm_sum'` on the reconstructed path.
-`kernel_symmetry_correction_` records the triggering
-asymmetry. The selected distance formula is also used for prediction and explicit
-validation kernels, including dense/CSR and batched queries. Serialization and
-compatible CV caches preserve the policy. Self-kernel mirroring and BLAS/batch
-rounding mean copied or partitioned queries are not promised bitwise identity;
-the existing original-kernel score and objective checks still apply. The reordered
-construction removes the demonstrated reversed-addition asymmetry, but does not
-eliminate all cancellation for nearly identical large feature vectors.
+An old standard-RBF CV cache containing noncanonical CSR features is rebuilt.
+Its stored Gram matrix may have squared individual storage entries instead of
+the combined coordinate. An older fitted norm/dot RBF model with duplicate
+training coordinates must be refitted from its original data, labels and
+settings: changing prediction distances cannot repair its fitted coefficients.
+Prediction raises an explicit error for this case. Unique unsorted coordinates,
+duplicate query coordinates and saved direct-distance models remain supported.
+Canonicalization addresses sparse representation; it does not eliminate
+floating-point cancellation between large feature vectors.
 
-Healthy scikit-learn RBF results retain their ordinary construction. The fallback
-uses numerical-library matrix products and their configured thread limits; it
-does not forward `kernel_kws['n_jobs']` into pairwise-kernel workers. Gamma,
-regularization, loss, and the free intercept are unchanged. Corrected reference
-and optimized fits share this construction policy; automatic solver restart has
-the narrower optimized-only eligibility described above.
+For new corrected named RBF fits, the default `rbf_computation='standard'`
+selectively recomputes cancellation-sensitive squared distances using coordinate
+differences. Eligibility requires the original construction hooks, supported
+scalar gamma without extra kernel keywords, verified numerical helper provenance,
+and ordinary NumPy error handling. Other standard-policy routes retain their
+existing construction. The Gaussian definition `exp(-gamma * ||x-y||**2)`,
+regularization, loss and free intercept are unchanged.
+
+The trigger compares the computed distance with a conservative forward-error
+envelope divided by `sqrt(eps)`. It catches positive but poorly conditioned
+distances as well as nonfinite or nearly cancelled results. This is a numerical
+conditioning rule under ordinary floating-point assumptions, not a universal
+interval certificate. It does not guarantee every unflagged kernel bit, every
+prediction sign, or a positive-semidefinite floating-point Gram matrix. Existing
+PSD, residual and objective checks remain in force; no jitter or eigenvalue
+clipping is introduced.
+
+Ordinary unflagged pairs retain the original multiplication and exponential.
+A global bound can skip the flag scan when every pair is safely outside the
+trigger. When the norm and distance bounds establish the required finite
+envelope, the tiled scan omits redundant finite-value masks. In the self-norm
+case, a tile whose minimum distance exceeds that bound can be skipped. These
+shortcuts preserve the same flagged pairs; uncertain inputs retain the full
+predicate. Flag storage requires `n_train * ceil(n_query / 8)` bytes, plus
+256-by-256 temporary tiles and one unpacked flag row. A conservative budget for
+the visible tile arrays is 4 MiB, separate from the retained flags, kernel
+matrix, numerical-library allocation overhead and direct-repair feature scratch.
+Selecting rows with flags also uses O(n_train) Boolean and integer storage.
+Only actual row identity in a
+self-kernel permits setting a diagonal entry directly to one. Off-diagonal
+duplicates and cross queries retain the checks. A large fraction of flagged
+pairs can require substantial direct-distance work; bounded scratch space does
+not imply a small running time.
+
+If the internally constructed self-kernel exceeds the existing symmetry tolerance
+`100 * eps * max(1, max(abs(K)))`, construction is repeated by adding the two
+squared norms before subtracting the dot-product term. The same selective repair
+applies. One computed triangle is mirrored and the self-diagonal is one.
+External or custom kernel matrices retain the strict validator and are not
+averaged.
+
+Eligible new fits record `kernel_computation_='guarded_sklearn_rel_v1'` or
+`'guarded_norm_sum_rel_v1'`; other standard routes record `'sklearn'` or
+`'norm_sum'`. `kernel_symmetry_correction_` records any triggering asymmetry.
+Prediction and explicit validation retain the fitted construction, including
+when NumPy error handling is later changed; invalid feature inputs are still
+rejected. Deliberately replaced numerical hooks remain observable. Copied or
+partitioned queries are not promised bitwise identity because BLAS/batch rounding
+and self-kernel mirroring can differ.
+
+Older serialized models retain their recorded construction; refit to use the
+new correction. The duplicate-training-coordinate exception described above
+requires refitting. New CV preparation records its construction generation;
+unversioned old caches are rebuilt when a new fit would select the corrected
+policy. Loading models with new construction modes in older packages is
+unsupported. Example checkpoint identities include the runtime modules.
+
+Corrected reference and optimized fits share this construction policy.
+The numerical-library matrix products use configured native thread limits;
+the reconstruction does not forward `kernel_kws['n_jobs']` into pairwise-kernel
+workers. Automatic solver restart has the narrower optimized-only eligibility
+described above.
 
 ### Optional direct RBF computation
 
 `rbf_computation='direct'` is an explicit option for numerical accuracy on
-`KernGDWD` and `KernGDWDCV`. The default remains `'standard'`, including its
-documented extreme-input limitations. The direct option is included in DWD
+`KernGDWD` and `KernGDWDCV`. It evaluates every pair directly rather than
+selecting pairs with the standard policy's conditioning trigger. The direct option is included in DWD
 1.3.11; the earlier 1.3.10 wheels do not include it.
 
 ```python
@@ -919,6 +990,37 @@ not measured. Independent checks verified the recovered equations and original
 DWD objectives; see [validation scope](../VALIDATION.md). The capacity is
 optional because its benefit is conditional and more work can still end in
 refusal.
+
+## Explicit full-inverse action
+
+`linear_action='factor'` remains the default. The explicit `inverse` option
+constructs a dense inverse action of the same shifted Cholesky system for
+optimized Schur MM. It changes candidate arithmetic, not the objective,
+constraint, acceptance tolerances, refinement, or recovery budgets. It supports
+ordinary and restart MM. It can amortize setup over many updates, but measured
+actual-stopping fits can be slower; it is not an automatic large-data setting.
+
+The workspace belongs to one solve and is discarded on return or before
+centered/anchor recovery. A numerical construction refusal retains the factor
+action; allocation errors propagate. Eligible automatic spectral retry uses
+the existing factor/spectral action and records the original inverse request.
+`requested_linear_action_` and `linear_action_` distinguish request from final
+active action. Compact ensemble base diagnostics preserve each learner's route.
+
+For n rows, float64 B alone adds `8*n*n` bytes: 512 MiB at 8192 or 2 GiB at 16384.
+The qualified `(B+B.T)*.5` construction can transiently hold three B-sized
+arrays (1.5 GiB or 6 GiB respectively), plus vectors and native workspace. These
+are incremental planning terms, not total fit peaks or automatic admission.
+K, the factor, features, and parallel learners consume additional memory.
+There is no persistent inverse cache and no fitted inverse to pickle.
+
+Use optimized Schur `backend='auto'` without a supplied eigensystem or explicit
+`backend='cholesky'`. Explicit Cholesky still validates any supplied eigenpairs.
+Reference, legacy, explicit spectral, L-BFGS and auto-with-eigenbasis routes
+refuse an inverse request. `implicit_P` retains its historical meaning and
+must remain True; it does not select this action. Old objects missing the new
+parameter use factor. Changing the parameter affects the next fit, not saved
+predictions. CV forwards the request and may reuse K, never the inverse.
 
 ## Numerical scope
 

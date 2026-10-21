@@ -47,7 +47,7 @@ class RBFComputationTests(unittest.TestCase):
                 np.testing.assert_array_equal(implicit.intercept_, explicit.intercept_)
                 np.testing.assert_array_equal(implicit.decision_function(features), explicit.decision_function(features))
                 implicit.cv_init(features)
-            self.assertEqual(implicit.kernel_computation_, 'sklearn')
+            self.assertEqual(implicit.kernel_computation_, 'guarded_sklearn_rel_v1')
             np.testing.assert_array_equal(implicit._cv_K,
                                           pairwise_kernels(features, features, metric='rbf', gamma=.3))
 

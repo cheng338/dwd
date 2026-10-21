@@ -35,25 +35,21 @@ _GIL_DISABLED = sysconfig.get_config_var('Py_GIL_DISABLED')
 
 
 def _scalar_supported():
-    """Enable only the audited implementation and IEEE binary64 arithmetic."""
+    """Allow CPython 3.12+ builtins with compatible binary64 arithmetic."""
     return (sys.implementation.name == 'cpython'
-            and (sys.version_info[:2] == (3, 12)
-                 or (sys.version_info[:2] == (3, 13)
-                     and sys.platform == 'win32'
-                     and platform.machine().lower() in ('amd64', 'x86_64')
-                     and sys.maxsize > 2**32
-                     and _GIL_DISABLED in (None, 0)))
+            and sys.version_info[0] == 3 and sys.version_info[:2] >= (3, 12)
+            and _GIL_DISABLED in (None, 0)
             and isinstance(getattr(math, 'sumprod', None), types.BuiltinFunctionType)
             and sys.float_info.radix == 2 and sys.float_info.mant_dig == 53
             and sys.float_info.max_exp == 1024)
 
 
 def _compiled_runtime_supported():
-    """Qualify the self-contained core independently of scalar sumprod."""
+    """Allow the self-contained core independently of scalar sumprod."""
     return (sys.implementation.name == 'cpython'
             and sys.platform == 'win32'
-            and sys.version_info[:2] in ((3, 11), (3, 12), (3, 13))
-            and (sys.version_info[:2] != (3, 13) or _GIL_DISABLED in (None, 0))
+            and sys.version_info[0] == 3 and sys.version_info[:2] >= (3, 11)
+            and _GIL_DISABLED in (None, 0)
             and platform.machine().lower() in ('amd64', 'x86_64')
             and sys.maxsize > 2**32
             and sys.float_info.radix == 2 and sys.float_info.mant_dig == 53

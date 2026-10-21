@@ -148,13 +148,20 @@ class FeasibleDualCertificateTests(unittest.TestCase):
         penalty = 1e-30 / (2 * n / 4)
         optimum, _ = constant_optimum(1.)
         for order in ('C', 'F'):
-            result = solve_kernel(np.ones((n, n), order=order), y, penalty, q=1.,
-                stopping='optimality', max_iter=100)
-            self.assertEqual(result['n_iter'], 39)
-            self.assertLess(abs(result['final_objective'] - float(optimum)), 1e-11)
-            self.assertLessEqual(Decimal.from_float(result['dual_objective']), optimum)
-            self.assertLess(result['dual_gap'], 1e-9)
-            self.assertEqual(result['dual_equality_residual'], 0.)
+            for acceleration in (None, 'auto'):
+                with self.subTest(order=order, acceleration=acceleration):
+                    # Retain the exact historical ordinary-MM reproducer and
+                    # require the same certificate quality from the new default.
+                    result = solve_kernel(np.ones((n, n), order=order), y, penalty, q=1.,
+                        stopping='optimality', max_iter=100, acceleration=acceleration)
+                    if acceleration is None:
+                        self.assertEqual(result['n_iter'], 39)
+                    self.assertTrue(result['converged'])
+                    self.assertEqual(result['termination_reason'], 'optimality_tolerance')
+                    self.assertLess(abs(result['final_objective'] - float(optimum)), 1e-11)
+                    self.assertLessEqual(Decimal.from_float(result['dual_objective']), optimum)
+                    self.assertLess(result['dual_gap'], 1e-9)
+                    self.assertEqual(result['dual_equality_residual'], 0.)
 
 
 if __name__ == '__main__':

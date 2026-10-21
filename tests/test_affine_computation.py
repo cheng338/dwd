@@ -49,8 +49,9 @@ class AffineComputationTests(unittest.TestCase):
         return KernGDWD(**options)
 
     def test_real_fitted_cancellation_dense_sparse_batch_and_pickle(self):
-        ordinary = self.model().fit(self.X, self.y)
-        joint = self.model(affine_computation='joint').fit(self.X, self.y)
+        # This boundary is produced by five ordinary MM updates.
+        ordinary = self.model(acceleration=None).fit(self.X, self.y)
+        joint = self.model(affine_computation='joint', acceleration=None).fit(self.X, self.y)
         for name in ('dual_coef_', 'intercept_', 'objective_history_'):
             np.testing.assert_array_equal(getattr(ordinary, name), getattr(joint, name))
         expected = exact_scores(joint._compute_kernel(self.query).T,
@@ -70,7 +71,7 @@ class AffineComputationTests(unittest.TestCase):
 
     def test_fitted_policy_changes_only_on_refit(self):
         for fitted, changed in (('joint', 'standard'), ('standard', 'joint')):
-            model = self.model(affine_computation=fitted).fit(self.X, self.y)
+            model = self.model(affine_computation=fitted, acceleration=None).fit(self.X, self.y)
             expected = model.decision_function(self.query)
             model.set_params(affine_computation=changed)
             np.testing.assert_array_equal(model.decision_function(self.query), expected)
@@ -178,7 +179,7 @@ class AffineComputationTests(unittest.TestCase):
                 self.assertEqual(float(np.mean(model.predict(self.query) == 7)), best['score'])
 
     def test_zero_iteration_validation_uses_same_fitted_policy(self):
-        seed = self.model().fit(self.X, self.y)
+        seed = self.model(acceleration=None).fit(self.X, self.y)
         for policy, expected in (('standard', 0.), ('joint', 1.)):
             model = self.model(affine_computation=policy, stopping='validation', max_iter=0).fit(
                 self.X, self.y, alpha_init=seed.dual_coef_[0], offset_init=float(seed.intercept_[0]),

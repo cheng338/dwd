@@ -187,7 +187,7 @@ class TwoImplementationPublicTests(unittest.TestCase):
                                   ('objective', {'max_iter': 100, 'obj_tol': .02})):
             fits = []
             for implementation in IMPLEMENTATIONS:
-                fitted = self.model(implementation, stopping=stopping, **options).fit(
+                fitted = self.model(implementation, stopping=stopping, acceleration=None, **options).fit(
                     self.X, self.y, alpha_init=self.alpha, offset_init=self.offset)
                 fits.append(fitted)
                 self.assertEqual(fitted.n_iter_, len(fitted.objective_history_) - 1)
@@ -214,7 +214,7 @@ class TwoImplementationPublicTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         state['alpha'][0] = 123.
                 return state['iteration'] == 3
-            fitted = self.model(implementation, callback=callback, max_iter=10).fit(
+            fitted = self.model(implementation, callback=callback, max_iter=10, acceleration=None).fit(
                 self.X, self.y, alpha_init=self.alpha, offset_init=self.offset)
             self.assertEqual(seen, [0, 1, 2, 3])
             self.assertEqual(fitted.n_iter_, 3)
@@ -233,7 +233,7 @@ class TwoImplementationPublicTests(unittest.TestCase):
             seen = []
             fitted = self.model(implementation, kernel='linear', kernel_kws=None, lambd=.2,
                 stopping='validation', max_iter=20, patience=2, check_interval=1,
-                callback=lambda state: seen.append(state['iteration'])).fit(
+                callback=lambda state: seen.append(state['iteration']), acceleration=None).fit(
                     X, y, alpha_init=np.zeros(8), offset_init=.2, validation_data=validation)
             self.assertEqual(seen, [0, 1, 2, 3])
             self.assertEqual(fitted.termination_reason_, 'validation_patience')

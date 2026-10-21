@@ -21,7 +21,7 @@ passed other runtimes. The original local archives and receipts are preserved.
 Each suite verifies the imported package path, version, complete package and
 test/fixture hashes, actual wheel archive, build receipt, validation helper and
 native runtime before and after execution. The wheel is extracted in isolation;
-testing does not install it into the user's environment. Numerical suites run
+testing does not replace existing package installations. Numerical suites run
 serially with at most four BLAS threads; the public synthetic replay uses two.
 Public release checksums identify the exact uploaded archives.
 

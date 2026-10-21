@@ -101,7 +101,8 @@ class NativeEigenRuntimeTests(unittest.TestCase):
         X=rng.normal(size=(520,3))
         y=np.where(X[:,0]*X[:,1]+.2*X[:,2]>0,1,-1)
         options=dict(kernel='rbf',kernel_kws={'gamma':.9},lambd=.07,q=1.7,
-                     max_iter=4,stopping='fixed',initialization='zero')
+                     # Match the reference ordinary-MM trajectory explicitly.
+                     max_iter=4,stopping='fixed',initialization='zero',acceleration=None)
         with patch.object(subprocess,'Popen',side_effect=AssertionError('no child process')):
             reference=KernGDWD(implementation='reference',**options).fit(X,y)
             optimized=KernGDWD(implementation='optimized',**options).fit(X,y)

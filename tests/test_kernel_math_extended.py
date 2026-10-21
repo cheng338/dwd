@@ -46,7 +46,7 @@ class KernelMathExtendedTests(unittest.TestCase):
         offset = self.offset if offset is None else offset
         out = solve_gen_kern_dwd(
             K, self.y, penalty, q=q, alpha_init=alpha, offset_init=offset,
-            max_iter=1, obj_tol=0, K_eig=K_eig, solver_mode="schur")
+            max_iter=1, obj_tol=0, K_eig=K_eig, solver_mode="schur", acceleration=None)
         return np.r_[offset - out[1], alpha - out[0]], out
 
     def test_augmented_system_identity_across_q_and_regularization(self):
@@ -119,7 +119,7 @@ class KernelMathExtendedTests(unittest.TestCase):
             with self.subTest(zero=not K.any()):
                 out = solve_gen_kern_dwd(K, self.y, 0.05, q=0.5,
                     alpha_init=self.alpha, offset_init=self.offset,
-                    max_iter=35, obj_tol=0, solver_mode="schur")
+                    max_iter=35, obj_tol=0, solver_mode="schur", acceleration=None)
                 self.assertTrue(np.isfinite(out[2]).all())
                 self.assertLessEqual(float(np.max(np.diff(out[2]))), 2e-12)
 
@@ -135,7 +135,7 @@ class KernelMathExtendedTests(unittest.TestCase):
         # Reject this case rather than silently projecting or adding a ridge.
         with self.assertRaises((ValueError, FloatingPointError)):
             solve_gen_kern_dwd(K, y, 1e-9, q=1, alpha_init=initial,
-                              max_iter=100, obj_tol=0, solver_mode="schur")
+                              max_iter=100, obj_tol=0, solver_mode="schur", acceleration=None)
 
     def test_genuinely_indefinite_kernel_is_rejected(self):
         K = np.eye(self.n)

@@ -37,7 +37,10 @@ class KernelLinearSystem:
     direction is removed from the fitted function by that coordinate change.
     Every candidate is checked against those original equations before return.
     """
-    def __init__(self, K, shift, *, residual_check_order='refinement_first'):
+    def __init__(self, K, shift, *, residual_check_order='refinement_first', linear_action='factor'):
+        from ._linear_action import validate_linear_action
+        self.linear_action = validate_linear_action(linear_action)
+        self._full_inverse_action = None
         if residual_check_order not in ('refinement_first', 'adaptive'):
             raise ValueError("residual_check_order must be 'refinement_first' or 'adaptive'.")
         self.residual_check_order = residual_check_order
@@ -83,6 +86,10 @@ class KernelLinearSystem:
             self.info['linear_recoveries'] += 1
 
     def _prepare(self, mode):
+        # Release inverse storage before allocating a recovery representation.
+        self._full_inverse_action = None
+        self.info['requested_linear_action'] = self.linear_action
+        self.info['effective_linear_action'] = 'factor'
         if self.residual_check_order == 'adaptive':
             # A new representation must establish its own scheduling history.
             self._adaptive_factor_generation += 1
@@ -131,8 +138,51 @@ class KernelLinearSystem:
             'seconds': perf_counter() - started,
         })
         self.info['factor_representation'] = mode
+        if mode == 'original' and self.linear_action == 'inverse':
+            self._prepare_inverse()
+
+    def _prepare_inverse(self):
+        started = perf_counter()
+        self.info['inverse_build_attempts'] = self.info.get('inverse_build_attempts', 0) + 1
+        failure = None
+        try:
+            rhs = np.eye(self.n, dtype=np.float64, order='F')
+            inverse = cho_solve(self.factor, rhs, overwrite_b=True, check_finite=False)
+            del rhs
+            # Retain exactly the construction qualified by the isolated study.
+            inverse = (inverse + inverse.T) * 0.5
+            if not np.isfinite(inverse).all():
+                raise FloatingPointError('Nonfinite full inverse.')
+            v = inverse @ np.ones(self.n)
+            denominator = _sum(v)
+            if (not np.isfinite(v).all() or not np.isfinite(denominator)
+                    or denominator <= 0):
+                raise FloatingPointError('Invalid full-inverse Schur denominator.')
+            inverse.flags.writeable = False
+            # Commit only a fully constructed, checked action. Original-K
+            # acceptance still occurs in the unchanged solve_constrained.
+            v.flags.writeable = False
+            # Keep this action's Schur state together. Do not overwrite the
+            # factor action's v/denominator, even on successful construction.
+            self._full_inverse_action = (inverse, v, denominator)
+            self.info.update(effective_linear_action='inverse', inverse_ever_built=True,
+                             inverse_matrix_bytes=int(inverse.nbytes))
+        except (FloatingPointError, LinAlgError, OverflowError) as error:
+            # The already prepared factor/v/denominator remain coherent.
+            # MemoryError is intentionally not swallowed or silently retried.
+            failure = f'{type(error).__name__}: {error}'
+        self.info['inverse_build_seconds'] = perf_counter() - started
+        if failure is not None:
+            self.info['inverse_build_failure'] = failure
+
 
     def _candidate(self, rhs, target_sum):
+        if self._full_inverse_action is not None:
+            inverse, v, denominator = self._full_inverse_action
+            w = inverse @ rhs
+            s = (_sum(w) - target_sum) / denominator
+            self.info["inverse_candidate_calls"] = self.info.get("inverse_candidate_calls", 0) + 1
+            return w - v * s, float(s)
         if self.mode == 'anchor':
             return self.anchor_action.candidate(rhs, target_sum)
         if self.mode == 'original':

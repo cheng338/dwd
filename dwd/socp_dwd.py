@@ -11,6 +11,7 @@ from sklearn.utils.validation import check_is_fitted
 from dwd.utils import pm1
 from dwd.linear_model import LinearClassifierMixin
 from dwd._fit_state import fit_with_cleanup
+from dwd._sparse_features import canonical_sparse_features, promote_sparse_features
 
 try:
     import cvxpy as cp
@@ -59,6 +60,8 @@ class DWD(LinearClassifierMixin, BaseEstimator):
         -------
         self : object
         """
+        if self.C == 'auto':
+            X = promote_sparse_features(X)
         X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
         self.classes_ = np.unique(y)
         if self.classes_.size != 2:
@@ -221,7 +224,9 @@ def auto_dwd_C(X, y, const=100):
         The constanted used to determine C. Originally suggested to be 100.
 
     """
+    X = promote_sparse_features(X)
     X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
+    X = canonical_sparse_features(X)
     labels = np.unique(y)
     if len(labels) != 2:
         raise ValueError('Automatic DWD C requires exactly two classes.')

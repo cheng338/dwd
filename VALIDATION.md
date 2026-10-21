@@ -1,5 +1,153 @@
 # Validation
 
+## Version 1.3.18: automatic acceleration and optional inverse action
+
+The applied changes passed 1,069 DWD and 947 ensemble-DWD test methods under
+Windows CPython 3.12 with AOCL, with zero failures or errors. Five DWD methods
+were skipped for unavailable wider floating-point arithmetic, a qualified
+runtime's inapplicable refusal case, and file-symlink privileges. The ensemble
+suite had one POSIX-only path skip. These are recorded application checks before
+the final version metadata and forward-runtime changes, not a claim that the
+release artifacts passed another full suite.
+
+The checks cover automatic acceleration dispatch, explicit ordinary MM, saved
+policies, numerical recovery, custom dense/sparse prediction helpers and the
+explicit inverse action. `acceleration='auto'` selects restarted optimized
+Schur MM, including checked spectral solves, and ordinary updates on reference,
+legacy and L-BFGS routes. The objective, free intercept, tolerances and numerical
+acceptance rules remain unchanged; finite stopping results can differ from
+ordinary MM. `linear_action='factor'` remains the default. The explicit inverse
+action retains the original-equation checks and recovery, owns its temporary
+state per solve, and documents its setup and storage costs.
+
+The focused forward-runtime checks below supplement these application results.
+Release artifact verification and hosted CI have separate records. Timing
+measurements in this document concern their named fixtures and establish no
+universal speedup.
+
+## Version 1.3.18: forward Python 3 runtime support
+
+The forward-eligibility change passed a focused 48-method selection on Windows
+using isolated source copies. Python 3.12 used AOCL; Python 3.11 used OpenBLAS.
+Every configuration had zero failures or errors and included one 48-row
+ensemble-DWD integration fit.
+
+| Python | Arithmetic configuration | Passed | Skipped |
+|---|---|---:|---:|
+| 3.12 | Compiled helper available | 48 | 0 |
+| 3.11 | Compiled helper available | 46 | 2 |
+| 3.12 | Portable, without the helper | 32 | 16 |
+| 3.11 | Portable, without the helper | 27 | 21 |
+
+The two Python 3.11 compiled-configuration skips require `math.sumprod`.
+Portable skips concern unavailable compiled paths and, on Python 3.11,
+unavailable scalar `sumprod`. These are repeated configurations of the same
+selection, not 192 distinct test methods. The unchanged compiled helper was
+reused after verifying the current C and build-source hashes.
+
+Simulated Python 3.14, 3.15 and 3.99 identities exercised dispatch on the actual
+3.11/3.12 interpreters; they do not validate future interpreter arithmetic.
+This change received focused checks, not complete suites or large benchmarks.
+That focused check performed no new Python 3.13 run, installation, build or
+release. Routine complete-suite validation targets 3.11/3.12; Python 3.13 and
+later Python 3.x releases remain supported.
+
+## Version 1.3.18: guard scanning and sparse prediction reuse
+
+The follow-up optimization comparison holds the preceding sparse geometry and
+selective RBF correctness fixes constant in both arms. It changes only guard
+scanning and per-call training-norm reuse. Differential checks cover 214 flag
+and kernel cases, including nonfinite distances, envelope overflow, cancellation
+and self/cross inputs. New regressions also cover canonical CSR matrices and
+arrays, stale ordering flags, unsafe historical bases, helper replacement,
+read-only calls and the lifetime of reused norms. These are automatic internal
+optimizations on qualified inputs, with the checked fallbacks retained.
+
+Local Python 3.12/AOCL measurements used six alternating fresh-process pairs
+per case, one process with 16 native threads at a time. The 98 records comprise
+60 fits, two sparse-model preparations and 36 prediction trials. All saved
+numerical arrays matched exactly in the 48 pairs, including ensemble selection,
+disjoint subsets, coefficients, objective histories and predictions where
+applicable. One additional untimed replay of the frozen MNIST ensemble case
+also matched exactly, preserving its original preprocessing and parameters.
+
+The median paired fit-time change was -2.55% for the base-heavy ensemble case;
+ordinary and larger ensemble controls were approximately unchanged. Warm CSR
+prediction changed by -2.20% with batches of 128 and -3.29% with batches of 32.
+The small-gamma hard fit changed by +1.15%. Full-DWD fit measurements drifted
+across the session in both arms and showed no clear total benefit. Unbatched
+CSR timings were noisy and are not evidence of an optimization gain. These
+figures describe the tested cases, not a universal speedup or elimination of
+the cost of the retained correctness checks. Percentages are medians of paired
+ratios, not ratios of separate timing medians. All formal trials were retained.
+
+The final source passed the full local suites: 1,035 DWD test methods and 938
+ensemble-DWD methods collected, with zero failures or errors and five and one
+skips, respectively. Focused Python 3.11 and 3.13 checks each collected 130 methods with zero
+failures or errors and eight skips. Skips concern platform/runtime-specific
+paths, unavailable optional oracle dependencies in the focused environments,
+and Windows file-symlink privileges. The actual symlink-retarget regression
+was rerun with administrator privileges on the final source in Python 3.12,
+3.11 and 3.13. All three runs passed without skips. These supplemental checks resolve the permission-blocked
+case; the original full-suite skip counts above remain historical records.
+The primary 3.12 suite retains the optional conic/oracle coverage.
+Validation did not replace existing package installations or released artifacts.
+
+## Version 1.3.18: sparse feature geometry and selective RBF correction
+
+Sparse regression checks cover CSR/CSC/COO matrices and arrays, duplicate and
+unsorted coordinates, stale ordering flags, read-only input buffers, dtype
+promotion before summation, overflow, automatic SOCP penalty selection, CV
+preparation and batched prediction. A genuine model fitted by released 1.3.17
+with duplicate training coordinates reproduces the historical incorrect Gram
+matrix. Prediction now requires refitting that model; valid canonical and
+direct-distance saved models retain their behavior. Independent represented-input
+oracles and the original failing input distinguish the correction from a change
+in solver tolerances or acceptance.
+
+Selective RBF checks include large common offsets, identical and nearly identical
+rows, positive but ill-conditioned distances, underflow/overflow, dense/sparse
+cross inputs, construction hooks, fitted-policy serialization, CV generations
+and changes to NumPy error handling. An exact-fraction/Decimal oracle is
+independent of the production distance formula. The global shortcut agrees
+with a forced full flag scan; the self-row shortcut preserves the corrected
+kernel while avoiding unnecessary diagonal work. Focused checks cover local
+Python 3.11, 3.12 and 3.13, with Python 3.12/AOCL as the primary environment.
+
+Serial paired measurements retain all trials and observe external CPU activity.
+The source-path initialization optimization, combined with the sparse fix,
+preserved all scientific outputs in 16 ordinary-data pairs against released
+1.3.17/ensemble-DWD 0.3.13. Small full-DWD first prediction had medians
+9.42 ms before and 5.51 ms after. Larger timings were mixed: one three-pair
+warm-prediction comparison had a median paired increase of 7.6%, despite
+unchanged prepared-kernel arithmetic. It is not attributed to a proven cause
+or presented as a universal speed improvement.
+
+The separate RBF comparison used the same sparse/initialization fixes in both
+arms. With the self-row shortcut, median complete fit plus first prediction
+changed from 1.109 to 1.122 seconds for 4,096 dense training rows and from
+0.257 to 0.291 seconds for 2,048 sparse rows. All saved ordinary-case numerical
+arrays were identical. Pathological offset cases needed substantially more
+direct-distance work and corrected large kernel errors. These are diagnostic
+cost measurements with fixed settings, not new classifier-accuracy studies or
+proof of stationarity. They do not establish universal timing, PSD or decision
+sign guarantees; see the [construction contract](docs/kernel_dwd.md#rbf-construction-and-query-consistency).
+
+A subsequent 24-trial integrated comparison preserved all saved final numerical
+arrays in 12 paired fits, but exposed a consistent larger-ensemble fitting cost
+before scan optimization (median paired increase 37.8%). Profiling attributed
+most of that cost to base-score flag scanning and visiting empty packed rows;
+that ordinary fixture required no distinct-pair direct-distance repairs.
+Intermediate consensus hashes differed from the released implementation, so
+equality of final outputs is not a claim that every intermediate value stayed
+identical. The scan optimization retains the flag criterion and arithmetic,
+uses bounded 256-by-256 tiles and visits active rows in their original order.
+Independent equivalence checks cover 251 controls on each of Python 3.11, 3.12
+and 3.13. The earlier timing panel describes the implementation before this
+scan optimization; it is retained as diagnostic evidence, not presented as a
+measurement of the optimized implementation. Exact artifact identities and
+subsequent measurements are recorded with the local validation results.
+
 ## Version 1.3.17: recovery, literal diagnostics and legacy warnings
 
 Eligible typed failures in restarted kernel MM can take one fresh spectral
@@ -24,9 +172,9 @@ runs without removing test jobs, pull-request checks or manual runs.
 Application checks on 2026-10-19 passed 57 focused tests on each of Python 3.11,
 3.12 and 3.13, using both isolated native and portable wheels. Every configuration
 had zero failures, errors and skips. The exact installed runtime payloads were
-verified. Checks used local `py12_df_aocl` as the primary environment and isolated
-Python 3.11/3.13 environments for focused validation; no working environment was
-updated by these checks.
+verified. Checks used Windows CPython 3.12 with AOCL as the primary runtime and
+isolated Python 3.11/3.13 environments for focused validation. These checks did
+not update existing package installations.
 
 The prior full DWD run executed 960 test methods with no failures or errors and
 four platform/runtime skips. That full run was reused, not repeated: all 43
@@ -62,12 +210,12 @@ and cleanup. The 14 new RBF norm-reuse tests passed on each runtime, including
 fresh call-local state, original-route score parity, custom-hook fallback and
 concurrent read-only prediction. No persistent norm cache was introduced.
 
-These checks used local `py12_df_aocl` as the primary environment, with
+These checks used Windows CPython 3.12 with AOCL as the primary runtime, with
 isolated Python 3.11/3.13 environments for focused qualification. They are
 correctness checks, not new performance measurements or a universal speedup
 claim. These dated checks precede the release version and metadata changes;
 release-artifact verification and hosted CI have separate records. Installation
-into working environments is also separate from validation.
+into application environments is also separate from validation.
 
 ## Version 1.3.15: development validation
 
@@ -90,13 +238,10 @@ first-maximum selection and final refitting. Compact diagnostics retain existing
 counts without performing extra solver checks; unavailable counts remain
 unknown rather than becoming zero.
 
-These checks used the local `py12_df` environment with one native thread for
-small fixtures; the CV integration checks also included their existing
-two-worker regression. The first reporting integration attempt encountered
-Windows access errors in the sandbox's default temporary directory. It passed
-using a workspace temporary directory, without changing package behavior or
-system permissions. These runs are correctness checks, not a performance
-benchmark or evidence of zero overhead on all inputs.
+These Windows CPython 3.12 checks used one native thread for small fixtures;
+the CV integration checks also included their existing two-worker regression.
+These completed runs are correctness checks, not a performance benchmark or
+evidence of zero overhead on all inputs.
 
 The development results do not establish that earlier real-data studies used
 complex inputs or that historical results were corrupted. They also do not
@@ -298,8 +443,7 @@ refits, strict old-source rejection, summary provenance and resume with final
 counts changing from one to two and back. RuntimeError and KeyboardInterrupt
 during final scaling, fitting and runtime checks restored caller limits and
 allowed a fresh retry using unchanged CV receipts. SystemExit was not directly
-injected. An initial test-launcher TEMP permission failure was resolved by
-using a permitted workspace temporary directory, without changing package code.
+injected.
 
 Default source comparisons retained the original guard/context call sequence.
 Matched execution sequences produced 40 byte-identical recorded arrays across
@@ -536,7 +680,7 @@ historical record for that release, including its measured runtime costs.
 
 # DWD 1.3.5 source validation
 
-The final source passes 412 tests in py12_df, including 22 new regression
+The final source passes 412 tests, including 22 new regression
 methods for failed-fit cleanup. These cover all seven public classifier
 interfaces, changed labels and features, early and late failures, partial
 result handling, failed CV scoring and final refits, interruptions, successful
@@ -568,7 +712,7 @@ source pass alone does not certify a different binary artifact.
 
 # DWD 1.3.4 validation (preserved history)
 
-The source was validated in py12_df: CPython 3.12.14, NumPy 2.5.2, SciPy 1.18.0,
+The source was validated with CPython 3.12.14, NumPy 2.5.2, SciPy 1.18.0,
 scikit-learn 1.9.0 and MKL 2025.3.
 
 | Check | Result |

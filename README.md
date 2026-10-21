@@ -38,17 +38,17 @@ Wang, B., and Zou, H. (2018).
 
 Python 3.11+ and scikit-learn 1.6+ are required. The base package depends on
 NumPy, SciPy, scikit-learn, and threadpoolctl. Download a compatible wheel from
-the [1.3.17 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.17).
+the [1.3.18 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.18).
 For conventional Windows AMD64 CPython 3.11 or later, install the native wheel:
 
 ```shell
-python -m pip install ./dwd-1.3.17-cp311-abi3-win_amd64.whl
+python -m pip install ./dwd-1.3.18-cp311-abi3-win_amd64.whl
 ```
 
 To omit the optional compiled helper, install the portable wheel (Python 3.11+):
 
 ```shell
-python -m pip install ./dwd-1.3.17-py3-none-any.whl
+python -m pip install ./dwd-1.3.18-py3-none-any.whl
 ```
 
 The helper retains its numerical runtime guards; the ABI tag does not promise
@@ -58,20 +58,33 @@ checks also cover CPython 3.11 and 3.13 with OpenBLAS wheels. These are not Ubun
 or Intel-hardware performance results. Other platforms and free-threaded Python
 remain outside those local checks.
 
+The current validation policy targets Python 3.11 and 3.12 for complete suites.
+Python 3.13 and later Python 3.x releases are supported without dedicated
+complete-suite runs. The recorded 3.13 checks retain their historical scope.
+
 Python 3.10 is no longer supported. Previously released companion wheels
 remain available as historical artifacts and will not receive updates.
 
 The `cp311-abi3` tag describes extension loading compatibility, not which
-residual arithmetic DWD selects. Version 1.3.17 qualifies the
-compiled residual and dense accurate-score paths on conventional Windows
-x86-64 CPython 3.11 through 3.13. All arithmetic guards remain active.
-The separate built-in `math.sumprod` residual path retains CPython 3.12 support
-and also qualifies conventional Windows x86-64 CPython 3.13. A portable wheel
-on those runtimes can still use guarded `math.sumprod`; it simply omits the
-optional extension. Python 3.11 lacks that builtin, so a missing or declining
-compiled helper uses portable compensated arithmetic. Other runtimes keep
-their existing guarded paths.
-These choices do not disable or select NumPy/SciPy BLAS acceleration.
+residual arithmetic DWD selects. Released version 1.3.17 qualified the compiled
+residual and dense accurate-score paths on conventional Windows x86-64
+CPython 3.11 through 3.13. Its separate built-in `math.sumprod` residual path
+retained CPython 3.12 support and qualified Windows x86-64 CPython 3.13.
+
+**Version 1.3.18:** runtime eligibility no longer has a Python 3 minor-version
+ceiling. The independent compiled residual and dense-score routes accept
+Windows x86-64 CPython 3.11 and later 3.x releases. The scalar residual route
+accepts CPython 3.12 and later 3.x releases with a built-in `math.sumprod`, using
+the same platform scope as the earlier 3.12 path. These routes require a
+GIL-enabled build and the existing binary64 and arithmetic checks. The scalar
+bound continues to assume CPython's extended/triple-length `sumprod` arithmetic.
+
+Recorded numerical validation covers Python 3.11 through 3.13; forward
+eligibility is not a claim of testing on later runtimes. Portable wheels can
+use the guarded scalar route when available. Python 3.11 has no `math.sumprod`,
+so a missing or declining compiled helper uses portable compensated arithmetic.
+See the [runtime contract](docs/compiled_residual.md) for dispatch and fallback
+details. These choices do not disable or select NumPy/SciPy BLAS acceleration.
 
 To install from the release checkout instead:
 
@@ -118,7 +131,7 @@ print(model.objective_tolerance_met_, model.converged_, model.rkhs_gradient_norm
 ```
 
 The defaults are `implementation='optimized'`, `q=1`, `solver_mode='schur'`, `backend='auto'`,
-`acceleration=None`, `residual_check_order='auto'`, `rbf_computation='standard'`,
+`acceleration='auto'`, `residual_check_order='auto'`, `rbf_computation='standard'`,
 `affine_computation='auto'`,
 `exact_recovery='standard'`, `initialization='auto'`, `stopping='objective'`,
 `obj_tol=1e-5`, and `max_iter=100`.
@@ -131,15 +144,19 @@ Auto initialization is zero for optimized fits. The intercept is unregularized.
 Automatic residual ordering uses adaptive checks on eligible optimized
 Schur/Cholesky paths and preserves the applicable historical order elsewhere.
 Explicit `residual_check_order='refinement_first'` remains available.
-Restarted MM and L-BFGS remain explicit choices; the stopping default is unchanged.
+Automatic acceleration selects restarted MM for optimized Schur MM, including
+checked spectral solves, and ordinary updates for reference, legacy and L-BFGS
+routes. Use `acceleration=None` to retain ordinary MM. The stopping default is unchanged.
 The parameter names remain `lambd`, `q`, and `kernel_kws`.
 
-For sensitive RBF inputs, `KernGDWD(kernel='rbf', rbf_computation='direct')`
-opts into direct coordinate differences instead of the standard norm/dot
-distance formula. It addresses the demonstrated self/equal-copy discrepancy
-and large-offset cancellation while preserving the mathematical RBF and DWD
-objective. It can change rounded scores, fits and CV choices, and can cost
-substantially more. `KernGDWDCV` accepts the same option. See the
+Eligible new standard RBF fits selectively recompute cancellation-sensitive
+distances using coordinate differences. The Gaussian kernel and DWD objective
+are unchanged; the [construction policy](docs/kernel_dwd.md#rbf-construction-and-query-consistency)
+describes its scope, fitted-model behavior and limits.
+For sensitive inputs, `KernGDWD(kernel='rbf', rbf_computation='direct')`
+uses direct coordinate differences for every pair. It can change rounded
+scores, fits and CV choices, and can cost substantially more.
+`KernGDWDCV` accepts the same option. See the
 [supported settings, benchmarks and precision limits](docs/kernel_dwd.md#optional-direct-rbf-computation).
 
 The default `affine_computation='auto'` uses joint scoring for corrected
@@ -235,13 +252,20 @@ to distinguish compiled residual dispatch from scalar fallback during a fit.
 It records observations separately from the estimator and does not change
 the numerical checks or solver defaults.
 
-Optimized MM also offers `acceleration='restart'`. It extrapolates decision
+The default `acceleration='auto'` selects restarted optimized Schur MM. It extrapolates decision
 values and restarts momentum when necessary, using the same full kernel,
 regularizer, and free intercept. The reference and L-BFGS paths do not accept
-this option. Faster objective convergence can reduce classification accuracy at
-a fixed update budget, as observed in the development comparisons, so ordinary
-MM remains the default. Compare acceleration and stopping through an external
+explicit `acceleration='restart'`. The automatic policy resolves solely from
+the configured implementation, solver mode and backend. Faster objective
+convergence can reduce classification accuracy at a fixed update budget.
+Compare acceleration and stopping through an external
 validation procedure when predictive performance is the goal.
+
+The constructor retains the requested policy; `requested_acceleration_` and
+`acceleration_` report the fitted request and effective policy. Previously
+serialized objects that lack this parameter retain ordinary MM. Momentum keeps
+one additional length-n float64 score vector between updates and uses temporary
+length-n work vectors; it does not retain another Gram matrix.
 
 # Explicit parameter search
 
@@ -336,7 +360,18 @@ they have not been relabeled as new release results.
 
 # Release history
 
-Version 1.3.17, October 19, 2026. See the [current validation scope](VALIDATION.md).
+Version 1.3.18, October 21, 2026. See the [current validation scope](VALIDATION.md).
+
+## Changes in 1.3.18
+
+Sparse coordinate canonicalization and selective RBF distance correction protect
+the represented feature geometry. Guard scanning and eligible batched prediction
+reuse avoid repeated work while retaining custom-helper fallbacks. Automatic
+acceleration selects restarted MM on optimized Schur routes; ordinary MM remains
+explicitly available. Factor solves remain the default and inverse action is
+optional. Python 3.13 and later Python 3.x releases remain supported, with full
+CI targeting 3.11 and 3.12. See the [release notes](RELEASE_NOTES.md) for numerical
+scope, saved-model behavior and validation limits.
 
 ## Changes in 1.3.17
 
@@ -353,7 +388,7 @@ parameters are owned by the model, post-fit prediction batching is honored, and
 interruption and checkpoint cleanup preserve their original failures. Objectives,
 free intercepts, stopping settings and numerical acceptance remain unchanged;
 changed scoring and check order can change finite-iteration results. See the
-[release notes](RELEASE_NOTES.md) for all changes and validation limits.
+[1.3.17 release notes](docs/history/RELEASE_NOTES-1.3.17.md) for all changes and validation limits.
 
 ## Changes in 1.3.15
 

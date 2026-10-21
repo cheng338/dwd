@@ -172,7 +172,9 @@ class Controls(unittest.TestCase):
         for number,scenario in enumerate(scenarios):
             results=[];record=[]
             for name,module in variants.items():
-                args=dict(scenario);stop=args.pop('callback_stop',None);observed=[];count=[0]
+                # Compare arithmetic optimizations under the same historical policy.
+                args=dict(acceleration=None);args.update(scenario)
+                stop=args.pop('callback_stop',None);observed=[];count=[0]
                 def callback(state):
                     observed.append((state['iteration'],state['objective'],state['alpha'].copy(),state['decision_values'].copy()))
                     return state['iteration']==stop

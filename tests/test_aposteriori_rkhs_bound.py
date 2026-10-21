@@ -137,8 +137,10 @@ class AposterioriRKHSTests(unittest.TestCase):
         y = np.tile([-1., 1.], n//2)
         lambd = shift/(n/2.)
         states = []
+        # The independent recurrence below is ordinary MM, without momentum.
         model = KernGDWD(kernel='precomputed', implementation='optimized', initialization='zero',
-                        lambd=lambd, max_iter=5, stopping='fixed', callback=lambda s: states.append(dict(s)))
+                        acceleration=None, lambd=lambd, max_iter=5, stopping='fixed',
+                        callback=lambda s: states.append(dict(s)))
         model.fit(K, y)
         self.assertEqual(model.n_iter_, 5)
         self.assertGreater(model.diagnostics_['linear_system_diagnostics']['aposteriori_rkhs_acceptances'], 0)

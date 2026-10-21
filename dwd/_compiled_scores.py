@@ -22,11 +22,11 @@ _GIL_DISABLED = sysconfig.get_config_var('Py_GIL_DISABLED')
 
 
 def _supported():
-    """Limit the entry to qualified Windows CPython 3.11-3.13 x86-64 runtimes."""
+    """Allow compatible Windows x86-64 CPython 3 runtimes from 3.11 onward."""
     return (sys.implementation.name == 'cpython'
             and sys.platform == 'win32'
-            and sys.version_info[:2] in ((3, 11), (3, 12), (3, 13))
-            and (sys.version_info[:2] != (3, 13) or _GIL_DISABLED in (None, 0))
+            and sys.version_info[0] == 3 and sys.version_info[:2] >= (3, 11)
+            and _GIL_DISABLED in (None, 0)
             and platform.machine().lower() in ('amd64', 'x86_64')
             and sys.maxsize > 2**32
             and sys.float_info.radix == 2 and sys.float_info.mant_dig == 53

@@ -128,8 +128,11 @@ class ExactRecoveryPolicyTests(unittest.TestCase):
 
     def test_healthy_extended_path_does_not_import_exact_modules(self):
         script = '''import sys
+from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 import numpy as np
+import dwd
+assert Path(dwd.__file__).resolve() == Path(sys.argv[2]).resolve()
 from dwd.gen_kern_dwd import KernGDWD
 from threadpoolctl import threadpool_limits
 names = ('dwd._exact_kernel_factor', 'dwd._certified_kernel_mm')
@@ -143,8 +146,9 @@ assert all(name not in sys.modules for name in names)
 '''
         env = dict(os.environ, OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
                    MKL_NUM_THREADS='1', BLIS_NUM_THREADS='1')
+        package_file = Path(sys.modules['dwd'].__file__).resolve()
         result = subprocess.run([sys.executable, '-I', '-B', '-c', script,
-                                 str(Path(__file__).resolve().parents[1])],
+                                 str(package_file.parent.parent), str(package_file)],
                                 capture_output=True, text=True, env=env, timeout=30,
                                 creationflags=0x08000000 if os.name == 'nt' else 0)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

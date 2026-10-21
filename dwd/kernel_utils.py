@@ -7,6 +7,8 @@ from sklearn.utils.validation import FLOAT_DTYPES, check_is_fitted
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils import check_array
 from dwd._fit_state import fit_with_cleanup
+from dwd._sparse_features import (canonical_sparse_features, promote_sparse_features,
+                                  checked_prediction_basis)
 
 _PREDICTION_BATCH_DEFAULT = object()
 
@@ -77,13 +79,31 @@ class KernelClfMixin(ClassifierMixin):
                     gamma = float(gamma)
                 return accurate_rbf(self._Xfit, X,
                                     gamma=gamma)
+            basis = self._Xfit
+            if kernel == 'rbf':
+                # Corrected fits own canonical features. Older norm/dot fits
+                # with duplicate coordinates may encode an incorrect Gram;
+                # normalizing their basis cannot repair fitted coefficients.
+                if getattr(self, 'kernel_computation_', None) in (None, 'sklearn', 'norm_sum'):
+                    basis = checked_prediction_basis(basis)
+                else:
+                    basis = canonical_sparse_features(basis)
+                X = basis if X is self._Xfit else canonical_sparse_features(X)
+            mode = getattr(self, 'kernel_computation_', None)
+            if kernel == 'rbf' and mode in ('guarded_sklearn_rel_v1', 'guarded_norm_sum_rel_v1'):
+                from ._prediction_norms import standard_kernel_sources_ok
+                if standard_kernel_sources_ok():
+                    from ._guarded_rbf import guarded_rbf
+                    return guarded_rbf(basis, X, gamma=(kernel_kws or {}).get('gamma'),
+                                       mode='norm_sum' if mode == 'guarded_norm_sum_rel_v1' else 'sklearn',
+                                       self_kernel=X is basis)
             if (kernel == 'rbf' and
-                    getattr(self, 'kernel_computation_', None) == 'norm_sum'):
+                    mode in ('norm_sum', 'guarded_norm_sum_rel_v1')):
                 from ._rbf import norm_sum_rbf
                 return norm_sum_rbf(
-                    self._Xfit, X, gamma=(kernel_kws or {}).get('gamma'),
-                    self_kernel=X is self._Xfit)
-            return pairwise_kernels(X=self._Xfit,
+                    basis, X, gamma=(kernel_kws or {}).get('gamma'),
+                    self_kernel=X is basis)
+            return pairwise_kernels(X=basis,
                                     Y=X,
                                     metric=kernel,
                                     **(kernel_kws or {}))
@@ -110,6 +130,8 @@ class KernelClfMixin(ClassifierMixin):
 
         check_is_fitted(self, ['dual_coef_', 'intercept_', 'classes_', '_Xfit'])
         original_X = X
+        if getattr(self, 'kernel_', self.kernel) == 'rbf':
+            X = promote_sparse_features(X, force_float64=getattr(self, 'solver_mode', None) == 'schur')
         X = check_array(X, dtype=np.float64 if getattr(self, 'solver_mode', None) == 'schur'
                         else 'numeric', accept_sparse='csr')
         if getattr(self, 'kernel_', self.kernel) != 'precomputed' and X.shape[1] != self._Xfit.shape[1]:

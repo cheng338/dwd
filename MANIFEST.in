@@ -12,3 +12,5 @@ recursive-include doc *.py *.rst *.md *.ipynb
 recursive-include docs *.py *.rst *.md
 recursive-include examples *.py
 global-exclude *.py[cod]
+include docs/Makefile
+include docs/make.bat

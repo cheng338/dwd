@@ -2,6 +2,7 @@
 import pickle
 import tempfile
 import unittest
+from fractions import Fraction
 from inspect import signature
 from unittest.mock import patch
 import numpy as np
@@ -53,9 +54,10 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
             self.assertFalse(hasattr(obj, 'affine_computation_'))
 
     def test_new_default_recovers_natural_boundary(self):
-        auto = self.model().fit(self.X, self.y)
-        standard = self.model(affine_computation='standard').fit(self.X, self.y)
-        joint = self.model(affine_computation='joint').fit(self.X, self.y)
+        # The affine-policy fixture depends on five ordinary MM updates.
+        auto = self.model(acceleration=None).fit(self.X, self.y)
+        standard = self.model(affine_computation='standard', acceleration=None).fit(self.X, self.y)
+        joint = self.model(affine_computation='joint', acceleration=None).fit(self.X, self.y)
         self.assertEqual(auto.affine_computation, 'auto')
         self.assertEqual(auto.affine_computation_, 'joint')
         self.assertEqual(auto.predict(self.query)[0], 7)
@@ -66,7 +68,7 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
         np.testing.assert_array_equal(auto.decision_function(self.query), joint.decision_function(self.query))
 
     def test_fitted_policy_ownership_mutation_and_refit(self):
-        obj = self.model().fit(self.X, self.y)
+        obj = self.model(acceleration=None).fit(self.X, self.y)
         obj.set_params(affine_computation='standard')
         self.assertEqual(obj.predict(self.query)[0], 7)
         restored = pickle.loads(pickle.dumps(obj))
@@ -104,7 +106,7 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
                 joint = self.model(stopping='validation', affine_computation='joint', **opts).fit(self.X, self.y, validation_data=(self.query, np.array([7])))
                 self.assertEqual(auto.validation_history_, joint.validation_history_)
                 self.assertEqual(auto.returned_iteration_, joint.returned_iteration_)
-        seed = self.model().fit(self.X, self.y)
+        seed = self.model(acceleration=None).fit(self.X, self.y)
         zero = self.model(max_iter=0, stopping='validation').fit(self.X, self.y, alpha_init=seed.dual_coef_[0], offset_init=float(seed.intercept_[0]), validation_data=(self.query, np.array([7])))
         self.assertEqual(zero.validation_history_[0]['score'], 1.0)
 
@@ -180,6 +182,29 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
     def test_auto_fit_with_optional_native_helper_disabled(self):
         from dwd import _compiled_residual, _native_residual
         with patch.object(_compiled_residual, '_ACCEL', None), patch.object(_native_residual, '_native_supported', return_value=False):
-            model = self.model().fit(self.X, self.y)
+            model = self.model(acceleration=None).fit(self.X, self.y)
             self.assertEqual(model.affine_computation_, 'joint')
             self.assertEqual(model.predict(self.query)[0], 7)
+
+    def test_restart_default_affine_scores_match_exact_returned_state(self):
+        models = {}
+        for acceleration in ('auto', 'restart'):
+            for affine in ('auto', 'standard', 'joint'):
+                model = self.model(acceleration=acceleration, affine_computation=affine).fit(self.X, self.y)
+                models[acceleration, affine] = model
+                self.assertEqual(model.acceleration_, 'restart')
+                if affine != 'standard':
+                    row = model._compute_kernel(self.query).T[0]
+                    exact = sum((Fraction(float(k)) * Fraction(float(a))
+                                 for k, a in zip(row, model.dual_coef_[0])),
+                                Fraction(float(model.intercept_[0])))
+                    self.assertEqual(model.decision_function(self.query)[0], float(exact))
+                    self.assertEqual(model.predict(self.query)[0], model.classes_[int(exact > 0)])
+                for name in ('dual_coef_', 'intercept_', 'objective_history_'):
+                    np.testing.assert_array_equal(getattr(model, name),
+                                                  getattr(models[acceleration, 'auto'], name))
+        for affine in ('auto', 'standard', 'joint'):
+            a, b = models['auto', affine], models['restart', affine]
+            for name in ('dual_coef_', 'intercept_', 'objective_history_'):
+                np.testing.assert_array_equal(getattr(a, name), getattr(b, name))
+            np.testing.assert_array_equal(a.decision_function(self.query), b.decision_function(self.query))

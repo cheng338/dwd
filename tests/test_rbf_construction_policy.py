@@ -50,7 +50,7 @@ class RBFConstructionTests(unittest.TestCase):
         model._Xfit = self.X
         actual = model._compute_training_kernel(self.X)
         expected = pairwise_kernels(self.X, self.X, metric='rbf', gamma=.5)
-        self.assertEqual(model.kernel_computation_, 'sklearn')
+        self.assertEqual(model.kernel_computation_, 'guarded_sklearn_rel_v1')
         self.assertEqual(model.kernel_symmetry_correction_, 0.)
         assert_array_equal(actual, expected)
 

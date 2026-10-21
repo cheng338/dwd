@@ -70,12 +70,17 @@ def solve_with_spectral_restart(solve, K, y, lambd, *, eligible=False, **options
 
     # No recursive dispatch, public refit, second initialization or new kernel.
     retry_options = dict(options, backend='spectral')
+    if options.get('linear_action') == 'inverse':
+        retry_options['linear_action'] = 'factor'
     if options.get('residual_check_order') in ('adaptive', 'auto'):
         # The adaptive schedule belongs only to Cholesky. A fresh spectral
         # attempt retains its own existing checks and refinement ordering.
         retry_options['residual_check_order'] = 'refinement_first'
     result = solve(K, y, lambd, **retry_options)
     diagnostics = result['diagnostics']
+    if options.get('linear_action') == 'inverse':
+        diagnostics.update(requested_linear_action='inverse', linear_action='factor',
+                           initial_linear_action='inverse')
     if options.get('residual_check_order') in ('adaptive', 'auto'):
         diagnostics['requested_residual_check_order'] = options['residual_check_order']
         diagnostics['initial_residual_check_order'] = 'adaptive'

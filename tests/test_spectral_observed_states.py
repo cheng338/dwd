@@ -1,5 +1,6 @@
 """Reject inconsistent spectral representations before exposing checkpoints."""
 import unittest
+from fractions import Fraction
 from unittest.mock import patch
 import numpy as np
 from numpy.testing import assert_allclose, assert_array_equal
@@ -23,7 +24,9 @@ class ObservedSpectralStateTests(unittest.TestCase):
         X=np.repeat(rng.normal(size=(4,3)),20,axis=0)
         self.K=rbf_kernel(X,gamma=.3)
         self.y=np.tile([-1.,1.],40)
-        self.options=dict(lambd=1e-12,q=1.,alpha_init=np.zeros(80),max_iter=20,implementation='optimized')
+        # Preserve the historical eigen-coordinate path independently of restart.
+        self.options=dict(lambd=1e-12,q=1.,alpha_init=np.zeros(80),max_iter=20,
+                          implementation='optimized',acceleration=None)
 
     def check_returned_objective(self,result):
         scores=self.K@result['alpha']
@@ -79,7 +82,8 @@ class ObservedSpectralStateTests(unittest.TestCase):
             for mode in ('callback','validation','unobserved'):
                 with self.subTest(backend=backend,mode=mode):
                     seen=[]
-                    options=dict(lambd=.1,q=1.,backend=backend,max_iter=2,stopping='fixed')
+                    options=dict(lambd=.1,q=1.,backend=backend,max_iter=2,
+                                 stopping='fixed',acceleration=None)
                     if mode=='callback':options['callback']=lambda state: seen.append(state['iteration'])
                     elif mode=='validation':options.update(stopping='validation',validation=(K,y))
                     with patch.object(solver,'_eigensystem',return_value=(np.eye(8),np.full(8,2.),{})):
@@ -110,6 +114,102 @@ class ObservedSpectralStateTests(unittest.TestCase):
                 assert_array_equal(result['alpha'],alpha)
                 self.assertEqual(result['offset'],offset)
                 self.assertGreater(result['diagnostics']['observed_checkpoint_checks'],0)
+
+    def exact_original_state(self, K, y, alpha, offset, lambd):
+        coefficients = [Fraction(float(value)) for value in alpha]
+        scores = [sum((Fraction(float(k)) * a for k, a in zip(row, coefficients)),
+                      Fraction(0)) for row in K]
+        margins = [Fraction(float(label)) * (score + Fraction(float(offset)))
+                   for label, score in zip(y, scores)]
+        losses = [1-margin if margin <= Fraction(1, 2) else 1/(4*margin)
+                  for margin in margins]
+        norm = sum((a*score for a, score in zip(coefficients, scores)), Fraction(0))
+        objective = sum(losses, Fraction(0))/len(y) + Fraction(float(lambd))*norm
+        return scores, objective
+
+    def assert_exact_original_state(self, K, y, alpha, offset, lambd, reported_objective,
+                                    reported_scores=None):
+        scores, objective = self.exact_original_state(K, y, alpha, offset, lambd)
+        self.assertLessEqual(abs(objective-Fraction(float(reported_objective))),
+                             Fraction(5e-8)*max(Fraction(1), abs(objective)))
+        if reported_scores is not None:
+            discrepancy = max(abs(score-Fraction(float(reported)))
+                              for score, reported in zip(scores, reported_scores))
+            self.assertLessEqual(discrepancy,
+                                 Fraction(5e-7)*max(Fraction(1), *(abs(s) for s in scores)))
+
+    def test_restarted_spectral_observations_match_exact_original_kernel(self):
+        # Restart uses original-coordinate residual/refinement. On this case
+        # naive BLAS K@alpha is less accurate than its accepted score vector.
+        for acceleration in ('auto', 'restart'):
+            for mode in ('callback', 'validation', 'unobserved'):
+                with self.subTest(acceleration=acceleration, mode=mode):
+                    seen = []
+                    options = dict(self.options, acceleration=acceleration,
+                                   backend='spectral', stopping='fixed')
+                    if mode == 'callback':
+                        def callback(state):
+                            seen.append(state)
+                            self.assert_exact_original_state(self.K, self.y, state['alpha'],
+                                state['offset'], options['lambd'], state['objective'],
+                                state['training_scores'])
+                            assert_array_equal(state['decision_values'],
+                                               state['training_scores'] + state['offset'])
+                            self.assertFalse(state['alpha'].flags.writeable)
+                            self.assertFalse(state['training_scores'].flags.writeable)
+                        options['callback'] = callback
+                    elif mode == 'validation':
+                        options.update(stopping='validation', validation=(self.K[::3], self.y[::3]),
+                                       patience=2, check_interval=3)
+                    try:
+                        result = solve_kernel(self.K, self.y, **options)
+                    except FloatingPointError:
+                        # A refused fit may expose only independently checked states.
+                        pass
+                    else:
+                        self.assertEqual(result['diagnostics']['acceleration'], 'restart')
+                        for value in (result['final_objective'],
+                                      result['objective_history'][result['returned_iteration']]):
+                            self.assert_exact_original_state(self.K, self.y, result['alpha'],
+                                                             result['offset'], options['lambd'], value)
+                    if mode == 'callback':
+                        self.assertTrue(seen)
+
+    def test_restarted_spectral_fault_is_recovered_or_refused_before_observation(self):
+        K = np.eye(8)
+        y = np.tile([-1., 1.], 4)
+        for acceleration in ('auto', 'restart'):
+            for mode in ('callback', 'validation', 'unobserved'):
+                with self.subTest(acceleration=acceleration, mode=mode):
+                    seen = []
+                    options = dict(lambd=.1, q=1., backend='spectral', max_iter=2,
+                                   stopping='fixed', acceleration=acceleration)
+                    if mode == 'callback':
+                        def callback(state):
+                            seen.append(state['iteration'])
+                            self.assert_exact_original_state(K, y, state['alpha'], state['offset'],
+                                .1, state['objective'], state['training_scores'])
+                        options['callback'] = callback
+                    elif mode == 'validation':
+                        options.update(stopping='validation', validation=(K, y))
+                    with patch.object(solver, '_eigensystem',
+                                      return_value=(np.eye(8), np.full(8, 2.), {})):
+                        try:
+                            result = solve_kernel(K, y, **options)
+                        except FloatingPointError:
+                            pass
+                        else:
+                            # The injected representation must be detected. A new
+                            # checked original-system representation may recover it.
+                            self.assertGreater(result['diagnostics']['linear_system_diagnostics']
+                                               ['linear_recoveries'], 0)
+                            for value in (result['final_objective'],
+                                          result['objective_history'][result['returned_iteration']]):
+                                self.assert_exact_original_state(K, y, result['alpha'],
+                                                                 result['offset'], .1, value)
+                    if mode == 'callback':
+                        self.assertTrue(seen)
+                        self.assertEqual(seen[0], 0)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

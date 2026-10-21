@@ -82,7 +82,7 @@ class NativeResidualTests(unittest.TestCase):
             self.assert_exact_bounds(args, result)
 
     def test_unsupported_runtime_or_missing_builtin_falls_back(self):
-        for version in ((3, 10), (3, 14)):
+        for version in ((3, 10), (4, 0)):
             with patch.object(native.sys, 'version_info', version):
                 self.assertFalse(native._native_supported())
                 self.assertIsNone(native.native_compensated_residual(*self.args))

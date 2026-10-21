@@ -6,6 +6,62 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 1.3.18 — 2026-10-21
+
+- Bind the isolated recovery-import test to the package under test and verify
+  its child-process import location, including when tests run outside a source
+  checkout.
+
+- Target Python 3.11 and 3.12 for routine complete-suite validation. Retain
+  Python 3.13 and later Python 3.x support without dedicated full-suite runs;
+  earlier 3.13 results remain historical evidence.
+
+- Admit later CPython 3 minor releases without a version ceiling: built-in
+  `math.sumprod` residual evaluation requires 3.12 or later, while independent
+  Windows x86-64 compiled residual and dense-score paths require 3.11 or later.
+  Require GIL-enabled builds and retain arithmetic guards, bounds and fallbacks.
+  Preserve the scalar path's existing platform scope and state its extended-
+  accumulation assumption separately from the recorded 3.11–3.13 test coverage.
+
+- Add explicit `linear_action="inverse"` for optimized Cholesky MM with
+  unchanged original-kernel checks and recovery. Keep factor as default;
+  document setup cost, per-solve ownership, and construction memory.
+
+- Default kernel MM acceleration to `'auto'`: use restarted optimized Schur MM
+  and ordinary updates on reference, legacy and L-BFGS routes. Preserve explicit
+  `None`, older serialized objects, stopping rules and numerical acceptance.
+  Expose requested and effective fitted acceleration policies.
+- Apply the same evaluator-identity checks to dense and sparse batched
+  prediction before reusing training norms. Customized dot and guarded
+  kernel helpers retain the original per-batch behavior.
+- Include the documentation Makefile and Windows build wrapper in source
+  archives. Restore the private kernel solver module docstring and remove
+  its duplicate import.
+
+- Reuse training norms and freshly checked canonicality within each eligible
+  batched float64 CSR prediction call. Preserve custom-hook fallbacks and the
+  refusal of unsafe historical fitted bases; no cache persists between calls.
+- Qualify finite RBF guard masks once per scan and skip self-kernel tiles proved
+  clear by the existing envelope. Preserve the flagged pairs, repair order and
+  kernel arithmetic while reducing repeated checks and temporary masks.
+- Canonicalize private sparse feature copies before named RBF calculations and
+  automatic SOCP penalty selection. Duplicate coordinates must represent the
+  same features during fitting, cache preparation, validation and prediction;
+  nonfinite duplicate sums are rejected without mutating caller data.
+- Require refitting an older norm/dot RBF model whose stored training features
+  contain duplicate sparse coordinates. Correcting query distances alone cannot
+  repair coefficients fitted to the historical incorrect Gram matrix.
+- Resolve repeated source paths once per batched-prediction initialization
+  check. Preserve helper provenance checks, wrapper detection and fresh checks
+  after reload; no filesystem cache persists between initialization passes.
+- Selectively recompute cancellation-sensitive RBF distances for eligible new
+  standard Schur fits. Preserve the Gaussian kernel definition, fitted
+  construction ownership, solver checks and explicit direct option. Use exact
+  self-row identity to avoid unnecessary diagonal repair; retain off-diagonal
+  and cross-query checks. Older fitted construction modes retain their policy.
+  Bounded flag scans and ordered traversal of flagged rows avoid unnecessary
+  per-row dispatch without changing which distances receive correction.
+
 ## 1.3.17 — 2026-10-19
 
 - Make the worker-cleanup regression deterministic across numerical backends;

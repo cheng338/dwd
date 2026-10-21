@@ -1,6 +1,6 @@
 # DWD 1.3.3 validation
 
-The release source was tested in the user's py12_df environment: CPython
+The release source was tested with CPython
 3.12.14, NumPy 2.5.2, SciPy 1.18.0, scikit-learn 1.9.0 and MKL 2025.3.
 An independent Python 3.11.16 / NumPy 2.4.6 / SciPy 1.17.1 / OpenBLAS
 environment exercises the portable fallback.

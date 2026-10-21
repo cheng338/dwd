@@ -1,4 +1,4 @@
-"""Independent contracts for opt-in acceleration, without changing MM defaults."""
+"""Independent contracts for restarted and explicitly ordinary MM."""
 import unittest
 from unittest.mock import patch
 
@@ -54,14 +54,15 @@ class AccelerationMathTests(unittest.TestCase):
                         self.assertAlmostEqual(state['objective'],value,delta=2e-11)
                     self.assertEqual(result['diagnostics']['acceleration_restarts'],0)
 
-    def test_default_none_keeps_plain_mm_exactly(self):
+    def test_default_auto_matches_explicit_compatible_policy(self):
         for backend in ('cholesky','spectral'):
             for implementation in ('optimized','reference'):
                 if implementation=='reference' and backend=='cholesky':continue
                 kwargs=dict(backend=backend,implementation=implementation,max_iter=20,stopping='fixed',
                             alpha_init=self.alpha,offset_init=self.b)
                 left=solve_kernel(self.K,self.y,.13,**kwargs)
-                right=solve_kernel(self.K,self.y,.13,acceleration=None,**kwargs)
+                policy = 'restart' if implementation == 'optimized' else None
+                right=solve_kernel(self.K,self.y,.13,acceleration=policy,**kwargs)
                 assert_array_equal(left['alpha'],right['alpha'])
                 assert_array_equal(left['objective_history'],right['objective_history'])
                 self.assertEqual(left['offset'],right['offset'])
@@ -184,7 +185,7 @@ class AccelerationMathTests(unittest.TestCase):
         with patch.object(RestartedMM,'_proposal',fail_first_momentum):
             result=solve_kernel(self.K,self.y,.13,acceleration='restart',stopping='fixed',max_iter=3,
                                 callback=lambda state:seen.append(state['iteration']))
-        ordinary=solve_kernel(self.K,self.y,.13,stopping='fixed',max_iter=3)
+        ordinary=solve_kernel(self.K,self.y,.13,stopping='fixed',max_iter=3,acceleration=None)
         self.assertEqual(seen,[0,1,2,3]);self.assertEqual(len(calls),4)
         self.assertEqual(result['diagnostics']['acceleration_numerical_restarts'],1)
         self.assertEqual(result['diagnostics']['acceleration_restarts'],1)

@@ -54,11 +54,11 @@ class KernelAutoFallbackTests(unittest.TestCase):
         originals = (self.K.copy(), initial.copy(), self.y.copy())
         for q in (.5, 1., 2.):
             dense = bordered_mm(self.K, self.y, self.penalty, q, initial, .2, 5)
-            spectral = self.solve('spectral', q=q, alpha_init=initial, offset_init=.2)
+            spectral = self.solve('spectral', q=q, alpha_init=initial, offset_init=.2, acceleration=None)
             for backend in ('auto', 'cholesky'):
                 with self.subTest(q=q, backend=backend):
                     seen = []
-                    result = self.solve(backend, q=q, alpha_init=initial, offset_init=.2,
+                    result = self.solve(backend, q=q, alpha_init=initial, offset_init=.2, acceleration=None,
                                         callback=lambda state: seen.append(dict(state)))
                     assert_allclose(result['objective_history'], dense['history'], rtol=2e-13, atol=3e-14)
                     assert_allclose(result['objective_history'], spectral['objective_history'], rtol=2e-13, atol=3e-14)
@@ -138,7 +138,7 @@ class KernelAutoFallbackTests(unittest.TestCase):
 
         K, seen = np.diag([1., .2, .8, .5]), []
         with patch.object(linear_system, 'cho_factor', new=fail_first):
-            result = solve_kernel(K, self.y, .1, psd_known=True, max_iter=4, stopping='fixed',
+            result = solve_kernel(K, self.y, .1, psd_known=True, max_iter=4, stopping='fixed', acceleration=None,
                                   callback=lambda s: seen.append(s['iteration']))
         dense = bordered_mm(K, self.y, .1, 1., np.zeros(4), 0., 4)
         assert_allclose(result['objective_history'], dense['history'], rtol=2e-13, atol=3e-14)
@@ -170,7 +170,7 @@ class KernelAutoFallbackTests(unittest.TestCase):
         K, seen = np.diag([1., .2, .8, .5]), []
         with patch.object(linear_system, 'cho_factor', new=tracked_factor), \
                 patch.object(linear_system, 'cho_solve', new=inaccurate_original):
-            result = solve_kernel(K, self.y, .1, psd_known=True, max_iter=4, stopping='fixed',
+            result = solve_kernel(K, self.y, .1, psd_known=True, max_iter=4, stopping='fixed', acceleration=None,
                                   callback=lambda s: seen.append(s['iteration']))
         dense = bordered_mm(K, self.y, .1, 1., np.zeros(4), 0., 4)
         assert_allclose(result['objective_history'], dense['history'], rtol=2e-13, atol=3e-14)
@@ -284,7 +284,8 @@ class KernelAutoFallbackTests(unittest.TestCase):
         initial = np.linspace(-.01, .01, n)
         for q in (.5, 1., 2.):
             with self.subTest(q=q):
-                options = dict(q=q, max_iter=7, stopping='fixed', alpha_init=initial, offset_init=.2)
+                # This independent bordered-system oracle implements ordinary MM.
+                options = dict(q=q, max_iter=7, stopping='fixed', alpha_init=initial, offset_init=.2, acceleration=None)
                 result = solve_kernel(K, y, penalty, backend='auto', psd_known=True, **options)
                 explicit = solve_kernel(K, y, penalty, backend='cholesky', psd_known=True, **options)
                 spectral = solve_kernel(K, y, penalty, backend='spectral', **options)
@@ -297,6 +298,36 @@ class KernelAutoFallbackTests(unittest.TestCase):
                 self.assertEqual(result['returned_iteration'], 7)
                 self.assertLess(result['diagnostics']['linear_system_diagnostics']['factorization_attempts'][0]['rcond'],
                                 np.sqrt(np.finfo(float).eps))
+
+
+    def test_automatic_restart_low_rcond_and_centered_recovery(self):
+        initial = np.array([.1, -.15, .25, -.05])
+        for q in (.5, 1., 2.):
+            with self.subTest(q=q):
+                options = dict(q=q, alpha_init=initial, offset_init=.2)
+                automatic = self.solve(acceleration='auto', **options)
+                explicit = self.solve(acceleration='restart', **options)
+                assert_array_equal(automatic['objective_history'], explicit['objective_history'])
+                assert_array_equal(automatic['alpha'], explicit['alpha'])
+                self.assertEqual(automatic['offset'], explicit['offset'])
+                self.assertEqual(automatic['diagnostics']['acceleration'], 'restart')
+        K = np.diag([1., .2, .8, .5])
+        options = dict(psd_known=True, max_iter=4, stopping='fixed')
+        expected = solve_kernel(K, self.y, .1, acceleration='restart', **options)
+        original = linear_system.cho_factor
+        calls = []
+        def fail_first(array, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise linear_system.LinAlgError('Controlled original factorization failure')
+            return original(array, **kwargs)
+        with patch.object(linear_system, 'cho_factor', fail_first):
+            actual = solve_kernel(K, self.y, .1, acceleration='auto', **options)
+        assert_allclose(actual['objective_history'], expected['objective_history'], rtol=2e-13, atol=3e-14)
+        assert_allclose(K @ actual['alpha'] + actual['offset'],
+                        K @ expected['alpha'] + expected['offset'], rtol=2e-13, atol=3e-14)
+        self.assertEqual(calls, [1, 1])
+        self.assertEqual(actual['diagnostics']['linear_system_diagnostics']['factor_representation'], 'centered')
 
 
 if __name__ == '__main__':

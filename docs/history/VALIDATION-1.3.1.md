@@ -3,8 +3,8 @@
 
 # DWD 1.3.1 validation
 
-**Local source and actual-wheel validation passed.** Checks used the
-Windows Anaconda `py12_df` environment. The tested wheel SHA256 is
+**Local source and actual-wheel validation passed.** Checks used
+Windows with Python 3.12.14 and MKL. The tested wheel SHA256 is
 `4debfab97249264a85aad17dccdf16cf6ad3a70770eb615599dd196a72cb4e13`.
 Sealed 1.3.0 artifacts and historical measurements remain separate. The source
 distribution is refreshed for these final status documents without rebuilding
@@ -90,9 +90,9 @@ source versions and runtime attribution.
 The script controls use AST-extracted original class bodies on 72 synthetic rows;
 they do not import the data loaders or run either MNIST main. Original `binary.py`
 still has a classifier-tag/extra-Pipeline fitted-state limitation, and both original
-ensembles couple subset sampling to global RNG and treat M=1 differently. The
-planned broad classifier comparison uses a separately checked external consensus
-wrapper. Replacing the DWD package does not itself edit or repair those original
+ensembles couple subset sampling to global RNG and treat M=1 differently.
+The separately checked external consensus wrapper was outside these original-script
+controls. Replacing the DWD package does not itself edit or repair those original
 script wrappers.
 
 The CV split/grid/refit/cache algorithms retain their previously tested behavior;
@@ -114,9 +114,5 @@ behavior was changed for that test correction.
 
 The release preserves the full-kernel objective, unregularized intercept, native
 initialization policies, ordinary-MM default, objective threshold 1e-5 and cap100.
-No package installation into the user environment, GitHub upload, publication,
-dissertation edit or original-script edit occurred during this release work.
-
-The broad classifier comparison has not started. It must use the final verified
-frozen repaired source and its separate protocol; no result from that comparison
-is claimed here.
+The broad classifier comparison was outside the scope of this 1.3.1 validation
+record; no results from that comparison are included here.

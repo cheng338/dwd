@@ -87,7 +87,9 @@ class CertifiedMMIntegrationTests(unittest.TestCase):
                         method = 'refine_candidate' if implementation == 'reference' else 'solve_constrained'
                         with patch.object(target, method, side_effect=FloatingPointError('Injected ordinary rejection')) as failed, \
                              patch.object(KernelMMRecovery, 'step', watched):
-                            result = solver.solve_kernel(K, y, self.penalty, q=q,
+                            # This oracle checks ordinary incremental-offset MM;
+                            # the accelerated total-RHS contract is tested separately.
+                            result = solver.solve_kernel(K, y, self.penalty, q=q, acceleration=None,
                                 implementation=implementation, alpha_init=alpha, offset_init=self.offset,
                                 max_iter=3, stopping='fixed', callback=lambda s: states.append(dict(s)))
                         self.assertEqual(failed.call_count, 1)
@@ -124,7 +126,8 @@ class CertifiedMMIntegrationTests(unittest.TestCase):
             return native(instance, rhs, oldb, trigger)
         with patch.object(KernelLinearSystem, 'solve_constrained', corrupt), \
              patch.object(KernelMMRecovery, 'step', watched):
-            result = self.fit(max_iter=1, callback=lambda s: seen.append(dict(s)))
+            # Exercise the ordinary-proposal rollback, not an extrapolated trial.
+            result = self.fit(acceleration=None, max_iter=1, callback=lambda s: seen.append(dict(s)))
         expected = self.K@self.alpha-len(self.K)/4*self.y*V_grad(
             self.y*(self.K@self.alpha+self.offset))/len(self.K)
         assert_allclose(calls[0][0], expected, atol=1e-16)
