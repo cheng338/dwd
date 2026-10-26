@@ -1,5 +1,97 @@
 # Validation
 
+## Version 1.3.19: current-target source validation
+
+The pre-release source snapshot completed the same 1,245 DWD pytest items on
+both current Python 3.12.15 targets:
+
+| Target | Passed | Skipped | Failed |
+|---|---:|---:|---:|
+| Windows AOCL 5.3 | 1,240 | 5 | 0 |
+| Robust Linux MKL 2026.2 | 1,231 | 14 | 0 |
+
+Both direct process exits and pytest exits were zero. All 112 collected DWD
+test modules and their bound source files were checked; source readbacks were
+unchanged and monitoring reported no failure or cleanup error. These are
+unique pytest parameter items, not counts inflated by unittest subreports.
+The saved 239-file DWD source/test/documentation manifest matched the canonical
+checkout before the 1.3.19 version and release-documentation edits.
+
+The Linux run used MKL_CBWR=AUTO from startup, with getter checks before tests,
+after optional imports and at completion. Both targets began with 16 native
+threads; explicit test-specific thread limits remained in effect. Platform-
+specific native helpers were checked separately. The Linux compiled K*w route
+is qualified only for private final reporting; Windows-only public compiled
+score paths remain outside that Linux qualification.
+
+Skips remain skips. They cover runtime/platform alternatives, wider floating-
+point arithmetic, Windows-specific checks and unavailable file-symlink
+privileges. The focused sparse, stationarity and startup checks below provide
+additional original-equation, ownership and actual interrupted-worker evidence.
+Earlier numerical-test corrections also completed source-isolated checks with
+deliberate invalid-basis, retry and workflow mutations. They separate exact
+workflow assertions from independent native preparations without changing
+production arithmetic or acceptance.
+
+These results validate the stated source snapshots, not newly built 1.3.19
+wheels, installed-wheel imports, minimum dependencies or every Python version.
+Complete-suite CI remains configured for Python 3.11 and 3.12; hosted results
+for the new release are separate evidence. Focused 3.11 and 3.13 startup checks
+below retain their narrower scope. No numerical-library defect, universal
+performance gain, necessity of every historical optimization, or resumed
+Resource18 benchmark is inferred. Release-artifact verification is separate
+from this completed source validation.
+
+## 2026-10-26 follow-up: startup recovery across CPython versions
+
+Startup recovery no longer requires CPython 3.12 specifically. It recognizes
+the standard sentinel implementation and newer native thread handles, including
+the default WorkerContext argument layout. Exact post-launch traceback, worker
+ownership and completion checks remain required. Compatible later CPython
+versions are not rejected solely because their minor version is new.
+
+Focused pytest checks passed on Windows CPython 3.11.15 (18 items plus 18
+subtests), AOCL CPython 3.12.15 (18 items plus 18 subtests), and CPython 3.13.15
+(12 startup items). Robust MKL CPython 3.12.15 passed all 18 startup/cancellation
+items. Real native workers were interrupted and drained; psutil checked process
+identity and disappearance. The tests retained the original exception and
+cancellation behavior and checked unrelated worker survival. Native helpers and
+installed environments were unchanged. Pytest and psutil remain test-only.
+
+CPython 3.14's mechanism was source-reviewed, not runtime-tested here. This is
+forward capability support, not a claim that every future interpreter or
+arbitrary asynchronous-interruption window has been tested. Earlier Windows
+redirector identity failures and execution-boundary denials are retained in the
+validation provenance; the corrected harness and actual 3.11 run passed.
+
+## 2026-10-26: sparse promotion, final stationarity and startup cleanup
+
+The final isolated source artifact passed 304 pytest test items on local
+Python 3.12.15/AOCL 5.3 and 295 items on Robust Python 3.12.15/MKL 2026.2.
+Robust skipped nine Windows-specific cases; local skipped none. Both had zero
+failures or errors. Existing unittest cases ran through pytest 9.1.1, alongside
+new pytest cases. JUnit also records subtests, which are not independent test
+items. A deliberate-failure control on each host confirmed that failed unittest
+subtests and setup exceptions are reported rather than silently accepted.
+
+Checks cover literal sparse duplicate arithmetic and ownership, optional conic
+boundaries, independent Decimal stationarity references, unchanged solver paths
+and prior refusals, actual compiled reporting versus portable reporting, and
+real interrupted native-worker startup. Psutil 7.2.2 observed owned validation
+processes, CPU/RSS samples and process identities; direct waits recorded actual
+exit codes. Source and native-helper hashes remained unchanged during runs.
+Pytest and psutil are test dependencies only. Test allocations used one native
+thread by default to avoid nested oversubscription; explicit worker tests kept
+their own thread controls. These are correctness checks, not speed measurements.
+
+The paired ensemble selection passed 130 items locally and 122 on Robust, with
+one and nine platform-specific skips respectively. This is focused integration
+validation, not a fresh complete suite, wheel-release matrix or Python 3.11/3.13
+run. This initial artifact covered the proved CPython 3.12 startup window; the
+follow-up above extends it using thread capabilities. The final gradient is
+a floating-point estimate, not an interval certificate. The discarded Resource18
+benchmark was not resumed. Pre-existing exact-dispatch test edits were preserved.
+
 ## Version 1.3.18: automatic acceleration and optional inverse action
 
 The applied changes passed 1,069 DWD and 947 ensemble-DWD test methods under

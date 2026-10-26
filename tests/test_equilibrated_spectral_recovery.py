@@ -1,4 +1,6 @@
 """Original-equation oracles for the lazy, full spectral inverse recovery."""
+from contextlib import ExitStack
+from decimal import Decimal, localcontext
 import math
 import unittest
 from unittest.mock import patch
@@ -24,6 +26,36 @@ def system_for(K, shift):
     # constructing the private system. Equilibrated shifted spectra stay
     # strictly positive; fresh original-K inverses share this roundoff policy.
     return spectral.SpectralLinearSystem(K, shift, vectors, np.maximum(values, 0.))
+
+
+def benign_case():
+    rng = np.random.default_rng(915)
+    features = rng.normal(size=(12, 5))
+    K, shift, target = features @ features.T, .2, .37
+    return K, shift, target, rng.normal(size=12)
+
+
+def benign_decimal_residuals(K, shift, rhs, target, x, s):
+    """Measure the represented original equations independently of BLAS."""
+    def decimal(value):
+        return Decimal.from_float(float(value))
+
+    with localcontext() as context:
+        context.prec = 100
+        dx, ds = [decimal(value) for value in x], decimal(s)
+        residuals = [sum((decimal(k) * v for k, v in zip(row, dx)), Decimal(0))
+                     + decimal(shift) * dx[i] + ds - decimal(rhs[i])
+                     for i, row in enumerate(K)]
+        constraint = sum(dx, Decimal(0)) - decimal(target)
+        scales = [sum((abs(decimal(k) * v) for k, v in zip(row, dx)), Decimal(0))
+                  + abs(decimal(shift) * dx[i]) + abs(ds) + abs(decimal(rhs[i]))
+                  for i, row in enumerate(K)]
+        # Roundoff-scaled backward-error checks for this fixed 12-row fixture;
+        # these are neither interval certificates nor package tolerances.
+        allowance = decimal(64 * np.finfo(float).eps) * max(Decimal(1), *scales)
+        constraint_allowance = decimal(64 * np.finfo(float).eps) * max(
+            Decimal(1), sum(map(abs, dx), Decimal(0)), abs(decimal(target)))
+        return residuals, constraint, allowance, constraint_allowance
 
 
 class EquilibratedSpectralRecoveryTests(unittest.TestCase):
@@ -103,24 +135,159 @@ class EquilibratedSpectralRecoveryTests(unittest.TestCase):
                           [np.ones((1, 4)), np.zeros((1, 1))]])
         assert_allclose(np.r_[x, s], solve(dense, np.r_[rhs, target]), rtol=1e-12, atol=1e-12)
 
-    def test_benign_ordinary_path_is_bitwise_unchanged_and_has_no_recovery(self):
-        rng = np.random.default_rng(915)
-        features = rng.normal(size=(12, 5))
-        K, shift, target = features @ features.T, .2, .37
-        rhs = rng.normal(size=12)
-        system = system_for(K, shift)
-        ordinary = system_for(K, shift)
-        expected_x, expected_s = ordinary._solve_constrained(rhs, target)
-        with patch.object(spectral, 'validated_eigh', side_effect=AssertionError('unnecessary recovery')):
-            x, s = system.solve_constrained(rhs, target)
-        assert_array_equal(x, expected_x)
-        self.assertEqual(s, expected_s)
-        dense = np.block([[K + shift * np.eye(12), np.ones((12, 1))],
-                          [np.ones((1, 12)), np.zeros((1, 1))]])
+    def check_benign_equations(self, K, shift, rhs, target, x, s):
+        self.assertTrue(np.isfinite(x).all() and math.isfinite(s))
+        residual, constraint, allowance, constraint_allowance = benign_decimal_residuals(
+            K, shift, rhs, target, x, s)
+        self.assertLessEqual(max(map(abs, residual)), allowance, 'original-equation guard')
+        self.assertLessEqual(abs(constraint), constraint_allowance, 'constraint guard')
+        dense = np.block([[K + shift * np.eye(len(K)), np.ones((len(K), 1))],
+                          [np.ones((1, len(K))), np.zeros((1, 1))]])
         expected = solve(dense, np.r_[rhs, target])
         assert_allclose(np.r_[x, s], expected, rtol=1e-11, atol=1e-11)
+
+    def check_no_recovery(self, system):
         self.assertEqual(system.info['linear_recoveries'], 0)
-        self.assertNotIn('spectral_recovery_attempt', system.info)
+        self.assertEqual(system.info['factor_representation'], 'validated_eigenbasis')
+        self.assertFalse(system._recovery_attempted)
+        self.assertEqual(system._recovery_next, 0)
+        self.assertIsNone(system._equilibration)
+        self.assertIsNone(system._active_recovery_attempt)
+        for key in ('spectral_recovery_attempt', 'spectral_recovery_attempts',
+                    'spectral_inverse_failures'):
+            self.assertNotIn(key, system.info)
+        self.assertEqual(system.info['positive_eigenvalues_discarded'], 0)
+        self.assertEqual(system.info['added_objective_regularization'], 0.)
+
+    def check_benign_shared_basis(self, mutate_output=None, force_ordinary_failure=False):
+        K, shift, target, rhs = benign_case()
+        # Control the basis when testing whether the recovery wrapper changes
+        # an ordinary solve. Independent valid native bases need not be bitwise
+        # identical, especially in the near-null eigenspace of this Gram matrix.
+        values, vectors = validated_eigh(K)
+        clipped = np.maximum(values, 0.)
+        originals = [array.copy(order='K') for array in (K, rhs, values, vectors, clipped)]
+        system = spectral.SpectralLinearSystem(K, shift, vectors, clipped)
+        ordinary = spectral.SpectralLinearSystem(K, shift, vectors, clipped)
+        inverse_before, v_before = system.inverse.copy(), system.v.copy()
+        denominator_before = system.denominator
+        expected_x, expected_s = ordinary._solve_constrained(rhs, target)
+        public = system.solve_constrained
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(spectral, 'validated_eigh',
+                side_effect=AssertionError('unnecessary recovery')))
+            if force_ordinary_failure:
+                stack.enter_context(patch.object(system, '_solve_constrained',
+                    side_effect=FloatingPointError('deliberate ordinary-path failure')))
+            if mutate_output is not None:
+                def changed(r, c):
+                    x, s = public(r, c)
+                    assert_array_equal(x, expected_x, err_msg='control baseline differs before mutation')
+                    self.assertEqual(s, expected_s, 'control baseline differs before mutation')
+                    return mutate_output(x, s)
+                stack.enter_context(patch.object(system, 'solve_constrained', side_effect=changed))
+            x, s = system.solve_constrained(rhs, target)
+        assert_array_equal(x, expected_x, err_msg='exact coefficient guard')
+        self.assertEqual(s, expected_s, 'exact intercept guard')
+        self.check_benign_equations(K, shift, rhs, target, x, s)
+        self.check_no_recovery(system)
+        self.assertEqual(system.info['linear_solves'], 1)
+        for actual, before in zip((K, rhs, values, vectors, clipped), originals):
+            assert_array_equal(actual, before)
+        assert_array_equal(system.inverse, inverse_before)
+        assert_array_equal(system.v, v_before)
+        self.assertEqual(system.denominator, denominator_before)
+
+    def test_benign_ordinary_path_is_bitwise_unchanged_and_has_no_recovery(self):
+        self.check_benign_shared_basis()
+
+    def test_independent_native_bases_satisfy_original_equations(self):
+        K, shift, target, rhs = benign_case()
+        for index in range(8):
+            with self.subTest(native_preparation=index):
+                values, vectors = validated_eigh(K)
+                system = spectral.SpectralLinearSystem(K, shift, vectors, np.maximum(values, 0.))
+                with patch.object(spectral, 'validated_eigh', side_effect=AssertionError('unnecessary recovery')):
+                    x, s = system.solve_constrained(rhs, target)
+                self.check_benign_equations(K, shift, rhs, target, x, s)
+                self.check_no_recovery(system)
+
+    def test_wrapper_returns_the_exact_inner_result_without_postprocessing(self):
+        K, shift, target, rhs = benign_case()
+        system = system_for(K, shift)
+        operation = system._solve_constrained
+        captured = []
+
+        def capture(r, c):
+            value = operation(r, c)
+            captured.append(value)
+            return value
+
+        with patch.object(system, '_solve_constrained', side_effect=capture) as called, \
+                patch.object(spectral, 'validated_eigh', side_effect=AssertionError('unnecessary recovery')):
+            result = system.solve_constrained(rhs, target)
+        called.assert_called_once()
+        self.assertIs(called.call_args.args[0], rhs)
+        self.assertEqual(called.call_args.args[1], target)
+        self.assertIs(result, captured[0])
+        self.check_no_recovery(system)
+        self.check_benign_equations(K, shift, rhs, target, *result)
+
+    def test_one_ulp_coefficient_change_fails_exact_guard(self):
+        def corrupt(x, s):
+            changed = x.copy()
+            changed[0] = np.nextafter(changed[0], np.inf)
+            return changed, s
+
+        with self.assertRaisesRegex(AssertionError, 'exact coefficient guard'):
+            self.check_benign_shared_basis(mutate_output=corrupt)
+
+    def test_one_ulp_intercept_change_fails_exact_guard(self):
+        with self.assertRaisesRegex(AssertionError, 'exact intercept guard'):
+            self.check_benign_shared_basis(mutate_output=lambda x, s: (x, np.nextafter(s, np.inf)))
+
+    def test_unnecessary_recovery_fails_benign_guard(self):
+        with self.assertRaisesRegex(AssertionError, 'unnecessary recovery'):
+            self.check_benign_shared_basis(force_ordinary_failure=True)
+
+    def benign_output(self):
+        K, shift, target, rhs = benign_case()
+        system = system_for(K, shift)
+        x, s = system.solve_constrained(rhs, target)
+        self.check_benign_equations(K, shift, rhs, target, x, s)
+        return K, shift, target, rhs, x, s
+
+    def test_zero_sum_coefficient_corruption_fails_original_equation_guard(self):
+        K, shift, target, rhs, x, s = self.benign_output()
+        changed = x.copy()
+        changed[0] += .01
+        changed[1] -= .01
+        with self.assertRaisesRegex(AssertionError, 'original-equation guard'):
+            self.check_benign_equations(K, shift, rhs, target, changed, s)
+
+    def test_intercept_corruption_fails_original_equation_guard(self):
+        K, shift, target, rhs, x, s = self.benign_output()
+        with self.assertRaisesRegex(AssertionError, 'original-equation guard'):
+            self.check_benign_equations(K, shift, rhs, target, x, s + .01)
+
+    def test_wrong_requested_sum_fails_constraint_guard(self):
+        K, shift, target, rhs, x, s = self.benign_output()
+        # Keeping the equation solution unchanged isolates the sum constraint.
+        with self.assertRaisesRegex(AssertionError, 'constraint guard'):
+            self.check_benign_equations(K, shift, rhs, target + .01, x, s)
+
+    def test_altered_kernel_fails_original_equation_guard(self):
+        K, shift, target, rhs, x, s = self.benign_output()
+        changed = K.copy()
+        changed[0, 0] += .01
+        with self.assertRaisesRegex(AssertionError, 'original-equation guard'):
+            self.check_benign_equations(changed, shift, rhs, target, x, s)
+
+    def test_benign_invalid_supplied_basis_is_not_admitted(self):
+        K, _, _, _ = benign_case()
+        values, _ = validated_eigh(K)
+        with self.assertRaisesRegex(ValueError, 'Supplied eigenpairs failed validation'):
+            validated_eigh(K, supplied=(np.zeros_like(K), values))
 
     def test_original_coefficient_candidate_is_restored_after_failed_refinement(self):
         K = np.diag([1., 3., 7., 11.])

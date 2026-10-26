@@ -10,9 +10,12 @@ from sklearn.datasets import make_circles
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
 
+import dwd._acceleration_policy as acceleration_policy
+import dwd._eigen as eigen
 from dwd._accelerated_mm import RestartedMM
 from dwd._kernel_solver import solve_kernel
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
+from numerical_test_support import AcceptedNativeReplay, objective_oracle
 
 
 def independent_loss(margin, q):
@@ -54,18 +57,78 @@ class AccelerationMathTests(unittest.TestCase):
                         self.assertAlmostEqual(state['objective'],value,delta=2e-11)
                     self.assertEqual(result['diagnostics']['acceleration_restarts'],0)
 
+    def _assert_auto_policy_pair(self, backend, implementation, exact):
+        kwargs = dict(backend=backend, implementation=implementation,
+                      max_iter=20, stopping='fixed',
+                      alpha_init=self.alpha, offset_init=self.b)
+        # Literal contract, independent of the resolver being tested.
+        policy = 'restart' if implementation == 'optimized' else None
+        left = solve_kernel(self.K, self.y, .13, **kwargs)
+        right = solve_kernel(self.K, self.y, .13, acceleration=policy, **kwargs)
+        self.assertEqual(left['diagnostics']['requested_acceleration'], 'auto')
+        self.assertEqual(right['diagnostics']['requested_acceleration'], policy)
+        for result in (left, right):
+            self.assertEqual(result['diagnostics']['acceleration'], policy,
+                             'effective acceleration policy')
+            self.assertEqual(result['backend'], backend)
+            self.assertEqual(result['n_iter'], 20)
+            self.assertEqual(result['termination_reason'], 'max_iter')
+            oracle = objective_oracle(self.K, self.y, result['alpha'],
+                                      result['offset'], .13)
+            self.assertAlmostEqual(result['final_objective'], oracle,
+                                   delta=5e-13 * max(1., abs(oracle)))
+        for name in ('alpha', 'objective_history', 'offset'):
+            if exact:
+                assert_array_equal(left[name], right[name], err_msg=name)
+            else:
+                # A fixed-fixture regression bound, not a solver tolerance.
+                assert_allclose(left[name], right[name], rtol=1e-10,
+                                atol=1e-12, err_msg=name)
+
     def test_default_auto_matches_explicit_compatible_policy(self):
-        for backend in ('cholesky','spectral'):
-            for implementation in ('optimized','reference'):
-                if implementation=='reference' and backend=='cholesky':continue
-                kwargs=dict(backend=backend,implementation=implementation,max_iter=20,stopping='fixed',
-                            alpha_init=self.alpha,offset_init=self.b)
-                left=solve_kernel(self.K,self.y,.13,**kwargs)
-                policy = 'restart' if implementation == 'optimized' else None
-                right=solve_kernel(self.K,self.y,.13,acceleration=policy,**kwargs)
-                assert_array_equal(left['alpha'],right['alpha'])
-                assert_array_equal(left['objective_history'],right['objective_history'])
-                self.assertEqual(left['offset'],right['offset'])
+        # Test policy parity exactly without requiring independent LAPACK
+        # decompositions of clustered eigenvalues to be bitwise identical.
+        for backend, implementation in (('cholesky', 'optimized'),
+                                        ('spectral', 'optimized'),
+                                        ('spectral', 'reference')):
+            with self.subTest(backend=backend, implementation=implementation), \
+                    AcceptedNativeReplay() as replay:
+                self._assert_auto_policy_pair(backend, implementation, exact=True)
+                self.assertGreater(replay.native_calls, 0)
+                self.assertGreater(replay.replays, 0)
+
+    def test_default_auto_with_independent_native_preparations(self):
+        for backend, implementation in (('cholesky', 'optimized'),
+                                        ('spectral', 'optimized'),
+                                        ('spectral', 'reference')):
+            with self.subTest(backend=backend, implementation=implementation):
+                self._assert_auto_policy_pair(backend, implementation, exact=False)
+
+    def test_wrong_auto_dispatch_is_detected(self):
+        original = acceleration_policy.resolve_acceleration
+
+        def wrong(requested, **kwargs):
+            if requested == 'auto' and kwargs.get('implementation') == 'optimized':
+                return None
+            return original(requested, **kwargs)
+
+        with AcceptedNativeReplay(), \
+                patch.object(acceleration_policy, 'resolve_acceleration', wrong):
+            with self.assertRaisesRegex(AssertionError, 'effective acceleration policy'):
+                self._assert_auto_policy_pair('spectral', 'optimized', exact=True)
+
+    def test_replayed_invalid_basis_is_rejected_by_normal_validator(self):
+        K = np.diag([.25, .5, 1., 2.])
+        with AcceptedNativeReplay() as replay:
+            eigen.validated_eigh(K, drivers=('evd',))
+            self.assertEqual(len(replay.cache), 1)
+            key = next(iter(replay.cache))
+            values, vectors = (item.copy(order='K') for item in replay.cache[key])
+            vectors[:, 0] *= 2.
+            replay.cache[key] = (values, vectors)
+            with self.assertRaises(eigen.EigenDecompositionError):
+                eigen.validated_eigh(K, drivers=('evd',))
+            self.assertEqual(replay.replays, 1)
 
     def test_zero_iteration_and_initial_callback_preserve_exact_state(self):
         for backend in ('cholesky','spectral'):

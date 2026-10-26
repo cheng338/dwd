@@ -19,6 +19,10 @@ from threadpoolctl import threadpool_limits
 
 from dwd.cv import DoL2LoD, run_cv
 from dwd.gen_kern_dwd import KernGDWD
+import dwd.gen_kern_dwd as estimator_module
+import dwd._kernel_solver as solver_module
+from numerical_test_support import AcceptedNativeReplay, objective_oracle
+from reference_mm_oracle import reference_mm_oracle
 
 
 EXAMPLES = Path(__file__).resolve().parents[1] / 'examples'
@@ -71,6 +75,95 @@ def _fixture_oracle_is_loaded():
         if '/tests/fixtures/' in source:
             return True
     return False
+
+
+class _ReferenceResumeObserver:
+    """Observe actual initialized solves and fitted states without replacing them."""
+
+    def __init__(self, case):
+        self.case = case
+        self.phase, self.active = None, None
+        self.events, self.models, self.oracles = [], [], {}
+        self.original_fit = KernGDWD.fit
+        self.original_solve = solver_module.solve_kernel
+
+    def task(self, X, y, penalty):
+        case = self.case
+        for index, (train, test) in enumerate(case.folds):
+            if np.array_equal(X, case.X[train]) and np.array_equal(y, case.y[train]):
+                return ('fold', index, float(penalty)), case.X[test]
+        if np.array_equal(X, case.X) and np.array_equal(y, case.y):
+            return ('full', -1, float(penalty)), case.query
+        raise AssertionError('task/data identity guard')
+
+    @staticmethod
+    def assert_continuous(actual, expected, description):
+        # Tight regression bound for this 24-row fixture, not a general error
+        # certificate or a change to the package's numerical acceptance.
+        scale = max(1., float(np.max(np.abs(expected))))
+        tolerance = 256 * 24 * np.finfo(float).eps * scale
+        assert_allclose(actual, expected, rtol=0, atol=tolerance, err_msg=description)
+
+    def solve(self, K, y, penalty, **options):
+        case, event, model = self.case, self.active, self.models[-1]
+        case.assertIsNotNone(event, 'solver must belong to an observed fit')
+        case.assertEqual(model.random_state, 83, 'seed parameter guard')
+        case.assertEqual(model.initialization, 'auto')
+        case.assertEqual(model.implementation, 'reference')
+        initial = np.random.RandomState(83).normal(size=len(y))
+        initial /= np.linalg.norm(initial)
+        assert_array_equal(options['alpha_init'], initial, err_msg='initialization reset guard')
+        case.assertIsNone(options['offset_init'], 'initial offset guard')
+        assert_array_equal(y, np.where(event['y'] == 9, 1., -1.))
+        case.assertEqual(float(penalty), event['task'][2], 'solver candidate guard')
+        case.assertEqual(options['max_iter'], 3)
+        case.assertEqual(options['stopping'], 'fixed')
+        case.assertEqual(options['implementation'], 'reference')
+        event.update(K=np.array(K, copy=True), signed_y=np.array(y, copy=True),
+                     alpha_init=initial.copy(), offset_init=options['offset_init'])
+        return self.original_solve(K, y, penalty, **options)
+
+    def fit(self, model, X, y, *args, **kwargs):
+        self.case.assertIsNone(self.active)
+        task, held = self.task(X, y, model.lambd)
+        event = {'phase': self.phase, 'task': task, 'X': np.array(X, copy=True),
+                 'y': np.array(y, copy=True), 'held': held}
+        self.events.append(event)
+        # Retaining references prevents object-id reuse from confusing fresh-fit checks.
+        self.models.append(model)
+        self.active = event
+        try:
+            result = self.original_fit(model, X, y, *args, **kwargs)
+            self.case.assertIs(result, model)
+            self.inspect_model(model, event)
+            return result
+        finally:
+            self.active = None
+
+    def inspect_model(self, model, event):
+        case = self.case
+        case.assertEqual(model.n_iter_, 3)
+        case.assertEqual(model.returned_iteration_, 3)
+        case.assertEqual(model.termination_reason_, 'max_iter')
+        case.assertEqual(model.backend_, 'spectral')
+        case.assertEqual(model.diagnostics_['implementation'], 'reference')
+        case.assertEqual(model.diagnostics_['positive_eigenvalues_discarded'], 0)
+        case.assertFalse(model.diagnostics_['kernel_approximation_used'])
+        key = (event['task'], event['K'].tobytes(order='C'))
+        if key not in self.oracles:
+            self.oracles[key] = reference_mm_oracle(
+                event['K'], event['signed_y'], event['task'][2], event['alpha_init'])
+        oracle_alpha, oracle_b = self.oracles[key]
+        alpha, b = model.dual_coef_.reshape(-1), float(model.intercept_[0])
+        self.assert_continuous(alpha, oracle_alpha, 'Decimal MM coefficient guard')
+        self.assert_continuous(b, oracle_b, 'Decimal MM intercept guard')
+        objective = objective_oracle(event['K'], event['signed_y'], alpha, b, event['task'][2])
+        self.assert_continuous(model.final_objective_, objective, 'original-kernel objective guard')
+        event.update(alpha=alpha.copy(), b=b, history=model.objective_history_.copy(),
+                     train_labels=model.predict(event['X']).copy(),
+                     held_labels=model.predict(event['held']).copy(),
+                     query_labels=model.predict(case.query).copy(),
+                     decisions=model.decision_function(case.query).copy(), model=model)
 
 
 class ResumableKernelCVTests(unittest.TestCase):
@@ -612,34 +705,120 @@ class ResumableKernelCVTests(unittest.TestCase):
                                          refit_best=False, resume=True)
 
     def test_reference_random_initialization_resumes_exactly_after_unpublished_fit(self):
-        model = self.model('reference', initialization='auto', random_state=83)
-        expected = run_cv(model, self.X, self.y, self.params,
-                          cv=self.folds, refit_best=True)
-        original = example._fit_and_score
-        attempted = []
-        stop = KeyboardInterrupt('manufactured interruption after an unsaved random fit')
+        # Control native basis variation only for the exact-output assertion.
+        # The companion below still performs every independent native solve.
+        self._check_reference_resume(fixed_basis=True)
 
-        def interrupted(*args, **kwargs):
-            result = original(*args, **kwargs)
-            attempted.append(True)
-            if len(attempted) == 2:
-                raise stop
-            return result
+    def test_reference_random_initialization_resume_with_independent_native_bases(self):
+        self._check_reference_resume(fixed_basis=False)
 
-        with patch.object(example, '_fit_and_score', interrupted):
-            with self.assertRaises(KeyboardInterrupt) as caught:
-                self.run_example(clf=model)
-        self.assertIs(caught.exception, stop)
-        self.assertEqual(len(self.receipts()), 1)
-        with patch.object(example, '_fit_and_score', wraps=original) as fitted:
-            resumed = self.run_example(clf=model, resume=True)
-        self.assertEqual(fitted.call_count, 3)
+    def test_reference_resume_detects_changed_initialization_seed(self):
+        with self.assertRaisesRegex(AssertionError, 'initialization reset guard'):
+            self._check_reference_resume(fixed_basis=True, mutation='seed')
+
+    def test_reference_resume_detects_advancing_initialization_generator(self):
+        with self.assertRaisesRegex(AssertionError, 'initialization reset guard'):
+            self._check_reference_resume(fixed_basis=True, mutation='reset')
+
+    def test_reference_resume_detects_incorrect_work_accounting(self):
+        with self.assertRaisesRegex(AssertionError, 'work accounting guard'):
+            self._check_reference_resume(fixed_basis=False, mutation='accounting')
+
+    def _check_reference_resume(self, *, fixed_basis, mutation=None):
+        observed = _ReferenceResumeObserver(self)
+        random_state = estimator_module.check_random_state
+        shared_rng = np.random.RandomState(83)
+        memo = None
+
+        def random_state_control(seed):
+            if observed.phase == 'resumed':
+                if mutation == 'seed':
+                    return random_state(84)
+                if mutation == 'reset':
+                    return shared_rng
+            return random_state(seed)
+
+        # A plain function preserves method binding when installed on the class.
+        def observe_fit(model, X, y, *args, **kwargs):
+            return observed.fit(model, X, y, *args, **kwargs)
+
+        with ExitStack() as stack:
+            if fixed_basis:
+                memo = stack.enter_context(AcceptedNativeReplay())
+            stack.enter_context(patch.object(KernGDWD, 'fit', observe_fit))
+            stack.enter_context(patch.object(solver_module, 'solve_kernel', observed.solve))
+            stack.enter_context(patch.object(estimator_module, 'check_random_state', random_state_control))
+            model = self.model('reference', initialization='auto', random_state=83)
+            observed.phase = 'baseline'
+            expected = run_cv(model, self.X, self.y, self.params, cv=self.folds, refit_best=True)
+            observed.phase = 'uninterrupted'
+            uninterrupted = self.run_example(name='uninterrupted', clf=model)
+            fit_and_score = example._fit_and_score
+            attempted = []
+            stop = KeyboardInterrupt('manufactured interruption after unpublished random fit')
+
+            def interrupted(*args, **kwargs):
+                result = fit_and_score(*args, **kwargs)
+                attempted.append(True)
+                if len(attempted) == 2:
+                    raise stop
+                return result
+
+            observed.phase = 'interrupted'
+            with patch.object(example, '_fit_and_score', interrupted):
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    self.run_example(clf=model)
+            self.assertIs(caught.exception, stop)
+            self.assertEqual(len(attempted), 2)
+            self.assertEqual(len(self.receipts()), 1)
+            receipts_before = {path: path.read_bytes() for path in self.receipts()}
+            identity_path = self.root / 'run' / 'identity.json'
+            identity_before = identity_path.read_bytes()
+            observed.phase = 'resumed'
+            with patch.object(example, '_fit_and_score', wraps=fit_and_score) as called:
+                resumed = self.run_example(clf=model, resume=True)
+            self.assertEqual(called.call_count, 3, 'CV execution count guard')
+
+        self.assertEqual(identity_path.read_bytes(), identity_before, 'checkpoint identity preservation guard')
+        self.assertEqual({path: path.read_bytes() for path in receipts_before}, receipts_before,
+                         'completed receipt preservation guard')
+        self.assertEqual(len(self.receipts()), 4)
+        self.assert_scores_equal(uninterrupted, expected)
         self.assert_scores_equal(resumed, expected)
-        assert_array_equal(resumed['best_clf'].dual_coef_, expected[2].dual_coef_)
-        assert_array_equal(resumed['best_clf'].intercept_, expected[2].intercept_)
-        assert_array_equal(resumed['best_clf'].decision_function(self.query),
-                           expected[2].decision_function(self.query))
+        if mutation == 'accounting':
+            resumed['work_summary']['executed_evaluations'] += 1
+        self.assertEqual(resumed['work_summary']['executed_evaluations'], 3, 'work accounting guard')
+        self.assert_work(uninterrupted, 4, 0, True)
         self.assert_work(resumed, 3, 1, True)
+        selected = float(expected[0]['lambd'])
+        cv_tasks = [('fold', fold, penalty) for fold in (0, 1) for penalty in (.08, .2)]
+        expected_tasks = {'baseline': cv_tasks + [('full', -1, selected)],
+                          'uninterrupted': cv_tasks + [('full', -1, selected)],
+                          'interrupted': cv_tasks[:2],
+                          'resumed': cv_tasks[1:] + [('full', -1, selected)]}
+        for phase, tasks in expected_tasks.items():
+            self.assertEqual([event['task'] for event in observed.events if event['phase'] == phase],
+                             tasks, 'task/workflow guard')
+        anchors = {event['task']: event for event in observed.events if event['phase'] == 'baseline'}
+        for event in observed.events:
+            anchor = anchors[event['task']]
+            assert_array_equal(event['alpha_init'], anchor['alpha_init'])
+            self.assertEqual(event['offset_init'], anchor['offset_init'])
+            for field in ('train_labels', 'held_labels', 'query_labels'):
+                assert_array_equal(event[field], anchor[field], err_msg='individual label guard: ' + field)
+            for field in ('alpha', 'b', 'history', 'decisions'):
+                if fixed_basis:
+                    assert_array_equal(event[field], anchor[field], err_msg='shared-basis exact guard: ' + field)
+                else:
+                    observed.assert_continuous(event[field], anchor[field], 'native companion: ' + field)
+        for phase in ('baseline', 'uninterrupted', 'resumed'):
+            rows = [event for event in observed.events if event['phase'] == phase]
+            self.assertFalse(any(rows[-1]['model'] is event['model'] for event in rows[:-1]),
+                             'fresh final model guard')
+        if memo is not None:
+            self.assertEqual(len(memo.cache), 3, 'distinct fold/full basis guard')
+            self.assertEqual(memo.native_calls, 3)
+            self.assertGreater(memo.replays, 0)
 
     def test_non_resume_cannot_overwrite_existing_completed_run(self):
         self.run_example(refit_best=False)

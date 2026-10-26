@@ -1,62 +1,63 @@
-# DWD 1.3.18 — October 21, 2026
+# DWD 1.3.19 — October 26, 2026
 
-This release corrects sparse feature handling and cancellation-sensitive RBF
-distances, reduces repeated guarded prediction work, and enables automatic
-restarted MM on eligible kernel fits. The DWD objective, unregularized intercept,
-solver tolerances and numerical acceptance rules are preserved. Corrected
-distances and a different optimization trajectory can change rounded scores or
-finite-iteration results.
+This maintenance release corrects sparse input promotion, improves final
+stationarity reporting, and handles proved native-worker startup interruptions.
+It preserves the DWD objective, unregularized intercept, optimizer steps,
+stopping tolerances and numerical acceptance rules. Corrected sparse arithmetic
+can change a fit; more accurate final gradients can change a reported convergence
+label without changing the optimizer's stopping decision.
 
-## Correctness and computation
+## Correctness and ownership
 
-- Canonicalize private sparse copies before named RBF calculations and automatic
-  SOCP penalty selection. Duplicate coordinates now represent the same features
-  throughout fitting and prediction; invalid duplicate sums are rejected without
-  changing caller data. Older norm/dot RBF models fitted with duplicate training
-  coordinates must be refitted because their stored coefficients came from an
-  incorrect Gram matrix.
-- Selectively recompute cancellation-sensitive distances for eligible new
-  standard RBF fits. Preserve the Gaussian kernel and fitted construction policy,
-  with an explicit direct-distance option and the existing numerical safeguards.
-- Reduce repeated guard scans, source-path resolution and canonicality checks;
-  reuse training norms within eligible dense or sparse batched prediction calls.
-  Custom helpers retain checked fallbacks. No persistent prediction cache is
-  introduced.
+- Promote sparse entries before conversions can sum duplicate coordinates in
+  integer or narrower floating-point arithmetic. Cover linear and named-kernel
+  fits, CV, prediction, SVM and conic boundaries while preserving caller-owned
+  data, validation ordering and supported domains. Automatic SOCP penalty
+  selection retains its existing float32 distance/range policy after coalescing.
+- Evaluate final stationarity using compensated affine scores and residual
+  coefficients formed before the kernel action. Preserve objective and dual
+  reporting, optimizer arithmetic and prior refusal checks. The qualified Linux
+  compiled K*w route is private to final reporting; it does not enable general
+  Windows-only compiled prediction paths on Linux.
+- Drain an owned native worker omitted from executor registration only when
+  the supported post-launch interruption is proved. Publish cancellation before
+  cleanup and retain the original exception. Recognize legacy thread-state
+  sentinels and newer native thread handles by capability; unqualified startup
+  situations remain explicit rather than being treated as safely recovered.
 
-## Defaults and options
+## Regression tests
 
-- `acceleration='auto'` selects restarted optimized Schur MM, including checked
-  spectral solves. Reference, legacy and L-BFGS routes retain ordinary updates.
-  Explicit `None` and older serialized policies remain supported.
-- `linear_action='factor'` remains the default. Explicit `'inverse'` is available
-  for optimized Cholesky MM, with unchanged original-equation checks and recovery.
-  Its setup work and additional dense storage are documented; it is not chosen
-  automatically from workload size.
+Run the suite with pytest. Pytest and psutil are optional test dependencies and
+are not imported by package runtime code. Numerical regression tests distinguish
+exact policy, retry, initialization and checkpoint contracts from independently
+computed eigensystems. Independent preparations are checked against original
+equations and high-precision references. Thread-restoration tests initialize
+native libraries before capturing their limits and retain the existing runtime
+checks.
 
-## Python support and validation
+## Validation and compatibility
 
-Python 3.11 and later Python 3.x releases are supported. Complete-suite CI
-targets 3.11 and 3.12. Python 3.13 and later releases do not require separate
-complete-suite runs. Guarded scalar residual evaluation accepts CPython 3.12+;
-the independent compiled residual and dense-score routes accept Windows x86-64
-CPython 3.11+. GIL, floating-point and operand guards remain, together with
-portable fallbacks. Forward eligibility does not imply tests on future runtimes.
+The pre-release Python 3.12.15 source snapshot completed all 1,245 selected DWD
+pytest items on each current target: 1,240 passed and five skipped on Windows
+AOCL 5.3; 1,231 passed and 14 skipped on Robust Linux MKL 2026.2 with AUTO.
+Both runs had zero failures and direct exit zero, with unchanged source
+readbacks. Platform/runtime skips are retained and are not passes. These are
+source-validation results, separate from release-wheel and hosted-CI checks.
 
-Recorded application checks collected 1,069 DWD and 947 ensemble-DWD test
-methods on Windows Python 3.12, with no failures or errors and five and one
-conditional skips. Focused forward-runtime checks passed on actual Python 3.11
-and 3.12 with native and portable arithmetic. Simulated future version identities
-tested dispatch, not future interpreter arithmetic. Release-artifact verification
-and hosted CI are separate from those application checks. See
-[VALIDATION.md](VALIDATION.md) for scope and measured costs; no universal speedup
-is claimed.
+Python 3.11 and later Python 3.x releases remain supported. Complete-suite CI is
+configured for 3.11 and 3.12; the current-target complete runs above used 3.12.
+Focused startup checks on 3.11 and 3.13 have their own recorded scope. Forward
+capability checks do not imply testing every future interpreter or arbitrary
+asynchronous-interruption window. See [VALIDATION.md](VALIDATION.md) for the
+evidence and limits. No numerical-library bug or general performance improvement
+is claimed, and the canceled Resource18 benchmark remains canceled.
 
-Install the native `dwd-1.3.18-cp311-abi3-win_amd64.whl` on compatible Windows
-AMD64 CPython, or use `dwd-1.3.18-py3-none-any.whl` without the optional helper.
-Numerical path eligibility is separate from wheel loading and NumPy/SciPy BLAS.
+Install `dwd-1.3.19-cp311-abi3-win_amd64.whl` on compatible Windows AMD64 CPython,
+or `dwd-1.3.19-py3-none-any.whl` without the optional helper. Wheel loading
+compatibility and numerical-path qualification remain separate.
 
 This remains a fork of slicersalt/dwd, originally implemented by Iain Carmichael,
 with upstream maintenance by David Allemang and Kitware. Subsequent fork
 development is guided by Chang Cheng. Original credits and the MIT license are
 retained. See the [changelog](CHANGES.md), [installation](README.md#installation)
-and [1.3.17 release notes](docs/history/RELEASE_NOTES-1.3.17.md).
+and [1.3.18 release notes](docs/history/RELEASE_NOTES-1.3.18.md).

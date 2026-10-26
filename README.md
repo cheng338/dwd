@@ -38,17 +38,17 @@ Wang, B., and Zou, H. (2018).
 
 Python 3.11+ and scikit-learn 1.6+ are required. The base package depends on
 NumPy, SciPy, scikit-learn, and threadpoolctl. Download a compatible wheel from
-the [1.3.18 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.18).
+the [1.3.19 GitHub release](https://github.com/cheng338/dwd/releases/tag/v1.3.19).
 For conventional Windows AMD64 CPython 3.11 or later, install the native wheel:
 
 ```shell
-python -m pip install ./dwd-1.3.18-cp311-abi3-win_amd64.whl
+python -m pip install ./dwd-1.3.19-cp311-abi3-win_amd64.whl
 ```
 
 To omit the optional compiled helper, install the portable wheel (Python 3.11+):
 
 ```shell
-python -m pip install ./dwd-1.3.18-py3-none-any.whl
+python -m pip install ./dwd-1.3.19-py3-none-any.whl
 ```
 
 The helper retains its numerical runtime guards; the ABI tag does not promise
@@ -349,7 +349,7 @@ historical algebra for compatibility; it is distinct from the repaired reference
 
 ```shell
 python -m pip install ".[test]"
-python -m unittest discover -s tests -v
+python -m pytest tests -o "python_files=test*.py" -ra
 ```
 
 For a separate environment without CVXPY, install `.[test-base]` and run the same
@@ -360,7 +360,18 @@ they have not been relabeled as new release results.
 
 # Release history
 
-Version 1.3.18, October 21, 2026. See the [current validation scope](VALIDATION.md).
+Version 1.3.19, October 26, 2026. See the [current validation scope](VALIDATION.md).
+
+## Changes in 1.3.19
+
+Sparse entries are promoted before conversions can sum duplicate coordinates.
+Final stationarity reporting uses compensated original-equation arithmetic,
+and proved native-worker startup interruptions retain their original exception
+while cleaning up owned workers. Optimizer steps, stopping tolerances and
+numerical acceptance rules are preserved. Regression tests now use pytest and
+separate exact workflow contracts from independent eigensolver comparisons.
+See the [release notes](RELEASE_NOTES.md) for changes, compatibility and the
+completed Python 3.12 AOCL/MKL source-validation scope.
 
 ## Changes in 1.3.18
 
@@ -370,7 +381,7 @@ reuse avoid repeated work while retaining custom-helper fallbacks. Automatic
 acceleration selects restarted MM on optimized Schur routes; ordinary MM remains
 explicitly available. Factor solves remain the default and inverse action is
 optional. Python 3.13 and later Python 3.x releases remain supported, with full
-CI targeting 3.11 and 3.12. See the [release notes](RELEASE_NOTES.md) for numerical
+CI targeting 3.11 and 3.12. See the [1.3.18 release notes](docs/history/RELEASE_NOTES-1.3.18.md) for numerical
 scope, saved-model behavior and validation limits.
 
 ## Changes in 1.3.17

@@ -130,8 +130,7 @@ class KernelClfMixin(ClassifierMixin):
 
         check_is_fitted(self, ['dual_coef_', 'intercept_', 'classes_', '_Xfit'])
         original_X = X
-        if getattr(self, 'kernel_', self.kernel) == 'rbf':
-            X = promote_sparse_features(X, force_float64=getattr(self, 'solver_mode', None) == 'schur')
+        X = promote_sparse_features(X, force_float64=getattr(self, 'solver_mode', None) == 'schur')
         X = check_array(X, dtype=np.float64 if getattr(self, 'solver_mode', None) == 'schur'
                         else 'numeric', accept_sparse='csr')
         if getattr(self, 'kernel_', self.kernel) != 'precomputed' and X.shape[1] != self._Xfit.shape[1]:

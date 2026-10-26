@@ -7,6 +7,7 @@ from numbers import Real
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_array, check_random_state
 from dwd._validation import check_real_X_y, contains_complex
+from dwd._sparse_features import promote_sparse_features
 
 from dwd.utils import pm1
 from dwd.cv import run_cv
@@ -121,6 +122,7 @@ class GenDWD(LinearClassifierMixin, BaseEstimator):
 
         # formatting
         # TODO: figure out what we should actually check
+        X = promote_sparse_features(X, force_float64=self.solver_mode == 'schur')
         X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
 
@@ -184,6 +186,7 @@ class GenDWD(LinearClassifierMixin, BaseEstimator):
         """
         Initializes the object before computing a cross-valiation.
         """
+        X = promote_sparse_features(X, force_float64=self.solver_mode == 'schur')
         X = check_array(X, accept_sparse='csr',
                         dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
         self._set_P0_eig(X)
@@ -289,6 +292,7 @@ class GenDWDCV(LinearClassifierMixin, BaseEstimator):
 
         # formatting
         # TODO: figure out what we should actually check
+        X = promote_sparse_features(X, force_float64=self.solver_mode == 'schur')
         X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype='numeric')
 
@@ -413,6 +417,7 @@ def solve_gen_dwd(X, y, lambd, q=1,
     if sample_weight is not None:
         raise NotImplementedError('Sample weights are not implemented for GenDWD.')
 
+    X = promote_sparse_features(X, force_float64=solver_mode == 'schur')
     X, y = check_real_X_y(X, y,
                      accept_sparse='csr',
                      dtype=np.float64 if solver_mode == 'schur' else 'numeric')
@@ -556,6 +561,7 @@ def solve_gen_dwd(X, y, lambd, q=1,
 
 def _augmented_gram(X):
     """Build the unchanged free-intercept Gram matrix in float64 arithmetic."""
+    X = promote_sparse_features(X, force_float64=True)
     X = check_array(X, accept_sparse='csr', dtype=np.float64)
     n = np.array([[float(X.shape[0])]])
     colsum = np.asarray(X.sum(axis=0)).reshape(-1, 1)

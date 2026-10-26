@@ -24,6 +24,9 @@ from ._spectral_linear_system import SpectralLinearSystem
 from ._quadratic_bounds import _upward_nonnegative, _compensated_dot, _compensated_quadratic
 from ._accelerated_mm import RestartedMM
 from ._kernel_scores import compensated_kernel_matvec, adaptive_kernel_matvec
+from ._kernel_scores import _reporting_kernel_matvec
+from ._affine_scores import affine_scores
+from ._compensated_residual import _products, _fsum
 from ._kernel_mm_recovery import KernelMMRecovery
 from ._kernel_recovery import ConstrainedSolveFailure, MMRecoveryExhausted
 from ._residual_worker_scope import scoped_residual_workers
@@ -168,6 +171,35 @@ def _check_initial_quadratic(K, alpha):
     return scores, computed, float(bound), details
 
 
+def _final_stationarity(K, y, alpha, offset, lambd, q):
+    """Evaluate the original gradient without subtracting large kernel actions.
+
+    Only final reporting uses this calculation. Joint affine summation matters:
+    supplied rounded K*alpha scores followed by +b are not interchangeable.
+    The residual coefficient w = z + 2*lambda*alpha is formed before K*w;
+    product expansions retain small residuals lost by separately rounded
+    regularizer products. These are floating-point estimates, not interval
+    certificates, and do not change any stopping or acceptance tolerance.
+    """
+    margins = y * affine_scores(K, alpha, offset, policy='compensated')
+    z = y * V_grad(margins, q=q) / len(y)
+    high, low = _products(np.full(len(y), 2 * lambd, dtype=float), alpha)
+    w = np.array([_fsum([float(a), float(b), float(c)])
+                  for a, b, c in zip(z, high, low)])
+    Kw = _reporting_kernel_matvec(K, w)
+    high, low = _products(w, Kw)
+    raw = _fsum(high.tolist() + low.tolist())
+    scale = fsum(abs(float(a) * float(b)) for a, b in zip(w, Kw))
+    squared = _nonnegative_quadratic(raw, scale, 'RKHS gradient norm squared')
+    bias = _fsum(z.tolist())
+    gradient = max(abs(bias), np.sqrt(squared))
+    if not np.isfinite(gradient) or not np.isfinite(Kw).all():
+        raise FloatingPointError('Nonfinite stable reporting gradient')
+    return {'rkhs_gradient_norm': float(gradient),
+            'gradient_inf_norm': float(max(abs(bias), np.max(np.abs(Kw)))),
+            'intercept_gradient': float(bias)}
+
+
 def optimality_diagnostics(K, y, alpha, offset, lambd, q, *, scores=None):
     """Return stationarity estimates and a conservative feasible dual endpoint.
 
@@ -207,11 +239,15 @@ def optimality_diagnostics(K, y, alpha, offset, lambd, q, *, scores=None):
         # intermediate powers. C is descriptive, not the penalty used here.
         log_C = np.log(q + 1.) + q * np.log1p(1. / q) + .5 * (q + 1.) * np.log(norm2)
         C = float(np.exp(log_C)) if log_C <= np.log(np.finfo(float).max) else float('inf')
-    return {'final_objective': primal, 'rkhs_norm_squared': norm2,
+    result = {'final_objective': primal, 'rkhs_norm_squared': norm2,
             'gradient_inf_norm': float(max(abs(z.sum()), np.max(np.abs(gradient_alpha)))),
             'rkhs_gradient_norm': gradient, 'intercept_gradient': float(z.sum()),
             'dual_objective': dual, 'dual_gap': float(gap),
             'dual_equality_residual': 0., 'dual_certificate': dual_info, 'C': C}
+    # Keep every original objective, dual and gradient validation above. Only
+    # these three final estimates change; the optimizer's residual is separate.
+    result.update(_final_stationarity(K, y, alpha, offset, lambd, q))
+    return result
 
 
 class _RequestedStop(Exception):

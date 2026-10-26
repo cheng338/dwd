@@ -167,6 +167,10 @@ class FinalRefitThreadTests(unittest.TestCase):
         return result
 
     def setUp(self):
+        # Load lazily initialized native pools before capturing thread limits.
+        # Limits can only restore libraries present when their scope starts.
+        from scipy.linalg import eigh
+        eigh(np.diag([1., 2.]), driver='evd')
         resources = ExitStack()
         self.addCleanup(resources.close)
         resources.enter_context(threadpool_limits(1))

@@ -1,4 +1,5 @@
 """Eligible automatic residual ordering and preserved recovery contracts."""
+import copy
 import pickle
 import tempfile
 import unittest
@@ -13,11 +14,13 @@ from threadpoolctl import threadpool_limits
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
 from dwd.cv import run_cv
 import inspect
-from numpy.testing import assert_array_equal
+from numpy.testing import assert_allclose, assert_array_equal
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.pipeline import Pipeline
 from dwd._kernel_solver import solve_kernel
 from dwd._kernel_recovery import MMRecoveryExhausted
+import dwd._kernel_recovery as recovery
+from numerical_test_support import AcceptedNativeReplay, objective_oracle
 
 rng = np.random.RandomState(8201)
 X = rng.normal(size=(40, 4))
@@ -119,26 +122,100 @@ class DispatchTests(unittest.TestCase):
         grid.fit(X, y)
         self.assertEqual(grid.best_estimator_['dwd'].residual_check_order_, 'adaptive')
 
-    def test_09_spectral_failure_recovery_preserves_three_policy_diagnostics(self):
-        original = solve_kernel
-        for requested in ('auto', 'adaptive', 'refinement_first'):
-            calls = []
+    def _assert_retry_arguments(self, calls):
+        self.assertEqual(len(calls), 2)
+        first, second = calls
+        self.assertIs(first['args'][0], second['args'][0])
+        self.assertIs(first['args'][1], second['args'][1])
+        self.assertEqual(first['args'][2], second['args'][2])
+        expected = dict(first['kwargs'], backend='spectral',
+                        residual_check_order='refinement_first')
+        self.assertEqual(set(expected), set(second['kwargs']))
+        for name, value in expected.items():
+            if isinstance(value, np.ndarray):
+                assert_array_equal(value, second['kwargs'][name],
+                                   err_msg='retry argument ' + name)
+            else:
+                self.assertEqual(value, second['kwargs'][name],
+                                 'retry argument ' + name)
+        assert_array_equal(first['kernel_snapshot'], second['kernel_snapshot'])
+        # Publicly supplied K_eig would make this recovery route ineligible.
+        self.assertIsNone(first['kwargs']['K_eig'])
+        self.assertIsNone(second['kwargs']['K_eig'])
 
-            def injected(*a, **k):
-                calls.append(k.copy())
-                if len(calls) == 1:
-                    raise MMRecoveryExhausted('controlled first-attempt exhaustion', error_details())
-                return original(*a, **k)
-            with patch('dwd._kernel_solver.solve_kernel', injected):
-                model = KernGDWD(**COMMON, residual_check_order=requested).fit(X, y)
-            self.assertEqual(len(calls), 2)
-            self.assertEqual(model.requested_residual_check_order_, requested)
-            self.assertEqual(model.residual_check_order_, 'refinement_first')
-            self.assertEqual(model.diagnostics_['initial_residual_check_order'], 'adaptive' if requested in ('auto', 'adaptive') else 'refinement_first')
-            self.assertEqual(model.diagnostics_['attempted_backends'], ['cholesky', 'spectral'])
-            self.assertEqual(calls[1]['residual_check_order'], 'refinement_first')
-            reference = KernGDWD(**COMMON, backend='spectral', residual_check_order='refinement_first').fit(X, y)
-            same(scientific(model), scientific(reference))
+    def _assert_recovery_pair(self, requested, exact):
+        calls = []
+
+        def injected(*args, **kwargs):
+            calls.append(dict(args=args, kwargs=copy.deepcopy(kwargs),
+                              kernel_snapshot=args[0].copy()))
+            if len(calls) == 1:
+                raise MMRecoveryExhausted('controlled first-attempt exhaustion',
+                                         error_details())
+            return solve_kernel(*args, **kwargs)
+
+        with patch('dwd._kernel_solver.solve_kernel', injected):
+            model = KernGDWD(**COMMON, residual_check_order=requested).fit(X, y)
+        self._assert_retry_arguments(calls)
+        self.assertEqual(model.requested_residual_check_order_, requested)
+        self.assertEqual(model.residual_check_order_, 'refinement_first')
+        self.assertEqual(model.diagnostics_['initial_residual_check_order'],
+                         'adaptive' if requested in ('auto', 'adaptive')
+                         else 'refinement_first')
+        self.assertEqual(model.diagnostics_['attempted_backends'],
+                         ['cholesky', 'spectral'])
+        self.assertEqual(model.diagnostics_['spectral_restart']['history_scope'],
+                         'successful_spectral_attempt')
+        reference = KernGDWD(**COMMON, backend='spectral',
+                            residual_check_order='refinement_first').fit(X, y)
+        left, right = scientific(model), scientific(reference)
+        if exact:
+            same(left, right)
+        else:
+            continuous = {'coef', 'intercept', 'history', 'scores',
+                          'final_objective_', 'gradient_inf_norm_',
+                          'rkhs_gradient_norm_', 'dual_gap_'}
+            self.assertEqual(set(left), set(right))
+            for name in left:
+                if name in continuous:
+                    # Fixed-fixture bounds; labels and discrete state stay exact.
+                    assert_allclose(left[name], right[name], rtol=1e-10,
+                                    atol=1e-12, err_msg=name)
+                else:
+                    assert_array_equal(left[name], right[name], err_msg=name)
+        K = calls[0]['kernel_snapshot']
+        signed = calls[0]['args'][1]
+        for fitted in (model, reference):
+            oracle = objective_oracle(K, signed, fitted.dual_coef_.ravel(),
+                                      fitted.intercept_[0], .1)
+            self.assertAlmostEqual(fitted.final_objective_, oracle,
+                                   delta=5e-13 * max(1., abs(oracle)))
+
+    def test_09_spectral_failure_recovery_preserves_three_policy_diagnostics(self):
+        for requested in ('auto', 'adaptive', 'refinement_first'):
+            with self.subTest(requested=requested), AcceptedNativeReplay() as replay:
+                self._assert_recovery_pair(requested, exact=True)
+                self.assertGreater(replay.replays, 0)
+
+    def test_recovery_policy_with_independent_native_preparations(self):
+        for requested in ('auto', 'adaptive', 'refinement_first'):
+            with self.subTest(requested=requested):
+                self._assert_recovery_pair(requested, exact=False)
+
+    def test_wrong_retry_settings_are_detected(self):
+        original = recovery.solve_with_spectral_restart
+        for changed in ({'residual_check_order': 'auto'}, {'max_iter': 5}):
+            def mutate(solve, *args, **kwargs):
+                def changed_retry(*inner_args, **options):
+                    if options.get('backend') == 'spectral':
+                        options = dict(options, **changed)
+                    return solve(*inner_args, **options)
+                return original(changed_retry, *args, **kwargs)
+
+            with self.subTest(changed=changed), AcceptedNativeReplay(), \
+                    patch.object(recovery, 'solve_with_spectral_restart', mutate):
+                with self.assertRaisesRegex(AssertionError, 'retry argument'):
+                    self._assert_recovery_pair('auto', exact=True)
 
     def test_10_ineligible_recovery_and_interrupts_not_swallowed(self):
         for extra in ({'callback': lambda state: False}, {'backend': 'cholesky'}):

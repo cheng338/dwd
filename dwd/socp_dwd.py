@@ -11,7 +11,8 @@ from sklearn.utils.validation import check_is_fitted
 from dwd.utils import pm1
 from dwd.linear_model import LinearClassifierMixin
 from dwd._fit_state import fit_with_cleanup
-from dwd._sparse_features import canonical_sparse_features, promote_sparse_features
+from dwd._sparse_features import canonical_sparse_features, promote_sparse_features, csr_is_canonical
+from scipy.sparse import issparse
 
 try:
     import cvxpy as cp
@@ -20,6 +21,20 @@ except ImportError:
         'cvxpy is not installed, but is required for the conic solver.'
     )
     raise
+
+def _prepare_auto_C_features(X):
+    """Coalesce in float64 but retain auto-C's float32 distance/range policy."""
+    if issparse(X) and X.dtype == np.dtype(np.float32):
+        if X.format == 'csr' and csr_is_canonical(X):
+            return X
+        # Float32 duplicate sums can lose a represented coordinate before
+        # distance evaluation. Round the coalesced value once to float32;
+        # the following public validation still rejects float32 overflow.
+        promoted = promote_sparse_features(X, force_float64=True)
+        with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+            return promoted.astype(np.float32)
+    return promote_sparse_features(X)
+
 
 class DWD(LinearClassifierMixin, BaseEstimator):
     """Binary distance-weighted discrimination using optional CVXPY SOCP.
@@ -60,8 +75,8 @@ class DWD(LinearClassifierMixin, BaseEstimator):
         -------
         self : object
         """
-        if self.C == 'auto':
-            X = promote_sparse_features(X)
+        X = (_prepare_auto_C_features(X) if self.C == 'auto' else
+             promote_sparse_features(X, force_float64=True))
         X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
         self.classes_ = np.unique(y)
         if self.classes_.size != 2:
@@ -148,6 +163,7 @@ def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
     if sample_weight is not None:
         raise NotImplementedError
 
+    X = promote_sparse_features(X, force_float64=True)
     X, y = check_real_X_y(X, y,
                      accept_sparse='csr',
                      dtype='numeric')
@@ -224,7 +240,7 @@ def auto_dwd_C(X, y, const=100):
         The constanted used to determine C. Originally suggested to be 100.
 
     """
-    X = promote_sparse_features(X)
+    X = _prepare_auto_C_features(X)
     X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
     X = canonical_sparse_features(X)
     labels = np.unique(y)

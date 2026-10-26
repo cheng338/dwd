@@ -46,11 +46,15 @@ socp = [
     "cvxpy",
 ]
 test = [
+    "pytest>=9.0,<10",
+    "psutil>=7.2,<8",
     "cvxpy",
     "matplotlib",
     "setuptools>=68",
 ]
 test-base = [
+    "pytest>=9.0,<10",
+    "psutil>=7.2,<8",
     "matplotlib",
     "setuptools>=68",
 ]

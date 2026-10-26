@@ -4,6 +4,7 @@ import os
 from threading import Event
 from types import BuiltinFunctionType
 from ._residual_worker_scope import executor_for_call, retire_for_serial_call
+from ._residual_startup_cleanup import drain_started_before_registration
 
 _DEFAULT_EXECUTOR = ThreadPoolExecutor
 
@@ -103,23 +104,39 @@ def _compiled_values_or_refusal(K, x, rhs, shift, intercept):
         retire_for_serial_call()
         statuses = [evaluate(0)]
     else:
-        with executor_for_call(workers, ThreadPoolExecutor, _DEFAULT_EXECUTOR,
-                               type(shift) is float and type(intercept) is float and
-                               _ACCEL is _TRUSTED_ACCEL and
-                               getattr(_ACCEL, "evaluate", None) is _TRUSTED_EVALUATE) as executor:
-            try:
-                futures = [executor.submit(evaluate, part) for part in range(workers)]
-                pending = set(futures)
-                while pending:
-                    # A pending Python signal need not wake an indefinite
-                    # Future.result wait on Windows. Return to Python regularly.
-                    _, pending = wait(pending, timeout=_CANCEL_POLL_SECONDS)
-                statuses = [future.result() for future in futures]
-            except BaseException:
-                # Stop new native chunks before shutdown joins the workers.
-                # Preserve the original exception and discard all outputs.
-                cancelled.set()
-                raise
+        primary_error = None
+        try:
+            with executor_for_call(workers, ThreadPoolExecutor, _DEFAULT_EXECUTOR,
+                                   type(shift) is float and type(intercept) is float and
+                                   _ACCEL is _TRUSTED_ACCEL and
+                                   getattr(_ACCEL, "evaluate", None) is _TRUSTED_EVALUATE) as executor:
+                try:
+                    futures = [executor.submit(evaluate, part) for part in range(workers)]
+                    pending = set(futures)
+                    while pending:
+                        # A pending Python signal need not wake an indefinite
+                        # Future.result wait on Windows. Return to Python regularly.
+                        _, pending = wait(pending, timeout=_CANCEL_POLL_SECONDS)
+                    statuses = [future.result() for future in futures]
+                except BaseException as error:
+                    # Stop new native chunks before shutdown joins the workers.
+                    # Preserve the original exception and discard all outputs.
+                    cancelled.set()
+                    primary_error = error
+                    try:
+                        cleanup = drain_started_before_registration(executor, error)
+                        error.add_note('Interrupted-start recovery: ' + repr(cleanup))
+                    except BaseException as cleanup_error:
+                        error.add_note('Startup cleanup failed; worker drain is not established. '
+                                       'See the chained cleanup error.')
+                        raise error from cleanup_error
+                    raise
+        except BaseException as context_error:
+            if primary_error is not None and context_error is not primary_error:
+                primary_error.add_note('Executor context shutdown also failed; final drain is not '
+                                       'established. See the chained context error.')
+                raise primary_error from context_error
+            raise
     # Join every worker and propagate exceptions before interpreting refusal.
     if any(status is _COMPILED_DOMAIN_REFUSAL for status in statuses):
         return _COMPILED_DOMAIN_REFUSAL

@@ -114,11 +114,11 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     if getattr(clf, 'stopping', None) == 'validation':
         raise ValueError('run_cv does not create validation-stopping splits. Use explicit '
                          'training/monitoring splits within each CV training fold.')
-    # This public entry point can precede KernGDWD.fit's own validation.
-    # Promote named-RBF sparse features before format conversion can combine
-    # duplicate coordinates in an integer or narrower-than-solver dtype.
+    # Promote before this outer CV boundary can combine duplicates.
+    # Keep each estimator's existing corrected/legacy arithmetic policy.
+    from dwd.gen_dwd import GenDWD
     from dwd.gen_kern_dwd import KernGDWD
-    if isinstance(clf, KernGDWD) and clf.kernel == 'rbf':
+    if isinstance(clf, (GenDWD, KernGDWD)):
         from dwd._sparse_features import promote_sparse_features
         X = promote_sparse_features(X, force_float64=clf.solver_mode == 'schur')
     X, y = check_real_X_y(X, y,

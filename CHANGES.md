@@ -6,6 +6,33 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 1.3.19 — 2026-10-26
+
+- Promote sparse feature entries before conversions that may sum duplicates,
+  including linear, named-kernel, CV, SVM and conic input boundaries. Preserve
+  validation ordering, supported domains and caller-owned sparse buffers.
+- Evaluate final stationarity with compensated affine scores and residual
+  coefficients formed before the kernel action. Preserve optimizer steps,
+  stopping tolerances, objective/dual fields and prior refusal checks. Final
+  convergence labels can change when an old gradient estimate was inaccurate.
+  The qualified Linux compiled K*w route is private to final reporting.
+- Drain an owned native worker omitted from executor registration when an
+  exact CPython post-launch startup interruption is proved. Recognize legacy
+  thread-state sentinels and native thread handles by capability, without a
+  minor-version allowlist. Publish cancellation before cleanup and retain the
+  original exception; unidentified startup situations remain unqualified.
+- Run regression tests with pytest, with psutil used by process-ownership tests.
+  Both remain optional test dependencies, absent from package runtime imports.
+
+- Separate exact workflow checks from independent eigensolver comparisons in
+  four numerical regression tests. Keep exact policy, retry, initialization and
+  checkpoint checks; verify independent preparations against original equations
+  and high-precision references. Add deliberate fault checks without changing
+  solver arithmetic, tolerances or numerical acceptance.
+- Initialize native libraries before thread-restoration tests capture their
+  limits, so libraries loaded on first use are included in the checked scope.
+  Retain all thread-count and runtime-provenance assertions.
+
 ## 1.3.18 — 2026-10-21
 
 - Bind the isolated recovery-import test to the package under test and verify

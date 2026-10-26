@@ -56,7 +56,8 @@ _SCORE_TILE_BYTES = 1024 * 1024
 _SCORE_TILE_MAX_ROWS = 8
 
 
-def _expanded_dense_rows(K, alpha, indices, split_alpha, result, *, batch_enabled=True):
+def _expanded_dense_rows(K, alpha, indices, split_alpha, result, *, batch_enabled=True,
+                         reporting=False):
     """Evaluate selected rows in order, with bounded temporary dense products.
 
     Elementwise products and each row's fsum term order are unchanged. If a
@@ -65,7 +66,8 @@ def _expanded_dense_rows(K, alpha, indices, split_alpha, result, *, batch_enable
     disables batching for the remaining rows in this call.
     """
     native = try_expanded_dense_rows(
-        K, alpha, indices, split_alpha, result, batch_enabled=batch_enabled)
+        K, alpha, indices, split_alpha, result, batch_enabled=batch_enabled,
+        reporting=reporting)
     if native is not None:
         return native
     # Wider floating dtypes can warn or fail when cast to binary64. Keep
@@ -122,13 +124,23 @@ def compensated_kernel_matvec(K, alpha):
     be converted to CSR by their owner before calling this row-wise helper.
     Nonfinite input/products or an overflowing sum fail explicitly.
     """
+    return _compensated_kernel_matvec(K, alpha, reporting=False)
+
+
+def _reporting_kernel_matvec(K, alpha):
+    """Final stationarity K*w, including the qualified Linux native dispatch."""
+    return _compensated_kernel_matvec(K, alpha, reporting=True)
+
+
+def _compensated_kernel_matvec(K, alpha, *, reporting):
     K, alpha, sparse = _inputs(K, alpha)
     result = np.empty(K.shape[0], dtype=float)
     split_alpha = None
     if not sparse and K.shape[0] > 1:
         with np.errstate(over='ignore', invalid='ignore', under='ignore'):
             split_alpha = _split_operand(alpha)
-        _expanded_dense_rows(K, alpha, range(K.shape[0]), split_alpha, result)
+        _expanded_dense_rows(K, alpha, range(K.shape[0]), split_alpha, result,
+                             reporting=reporting)
         return result
     for i in range(K.shape[0]):
         if not sparse and split_alpha is None:

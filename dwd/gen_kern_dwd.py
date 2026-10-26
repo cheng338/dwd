@@ -332,8 +332,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
             raise NotImplementedError('Sample weights are not implemented for KernGDWD.')
         # Callers own K's correspondence to X. Supplied eigenpairs are also
         # checked numerically against K before any corrected MM iterations.
-        if self.kernel == 'rbf':
-            X = promote_sparse_features(X, force_float64=self.solver_mode == 'schur')
+        X = promote_sparse_features(X, force_float64=self.solver_mode == 'schur')
         X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
         self.classes_ = np.unique(y)
@@ -571,8 +570,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         if not isinstance(validation_data, (tuple, list)) or len(validation_data) != 2:
             raise ValueError('validation_data must be an (X_validation, y_validation) pair.')
         X_val, y_val = validation_data
-        if self.kernel == 'rbf':
-            X_val = promote_sparse_features(X_val, force_float64=True)
+        X_val = promote_sparse_features(X_val, force_float64=True)
         X_val, y_val = check_real_X_y(X_val, y_val, accept_sparse='csr', dtype=np.float64)
         if not np.isin(y_val, self.classes_).all():
             raise ValueError('Validation labels must belong to the training classes.')
@@ -661,8 +659,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         validate_linear_action(self.linear_action, implementation=self.implementation,
                                solver_mode=self.solver_mode, backend=self.backend)
         # Promote before constructing the Gram matrix, not after rounding it.
-        if self.kernel == 'rbf':
-            X = promote_sparse_features(X, force_float64=self.solver_mode == 'schur')
+        X = promote_sparse_features(X, force_float64=self.solver_mode == 'schur')
         X = check_array(X, accept_sparse='csr',
                         dtype=np.float64 if self.solver_mode == 'schur' else 'numeric')
         if self.kernel == 'precomputed':
@@ -964,8 +961,7 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
             raise ValueError('KernGDWDCV does not create monitoring splits. Use a plain '
                              'KernGDWD with explicit validation_data inside an explicitly '
                              'constructed training/monitoring/CV procedure.')
-        if self.kernel == 'rbf':
-            X = promote_sparse_features(X, force_float64=self.solver_mode == 'schur')
+        X = promote_sparse_features(X, force_float64=self.solver_mode == 'schur')
         X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype='numeric')
 

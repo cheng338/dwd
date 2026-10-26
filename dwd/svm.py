@@ -8,6 +8,7 @@ from dwd.linear_model import LinearClassifierMixin
 from dwd._fit_state import fit_with_cleanup
 from dwd.utils import pm1
 from dwd._validation import check_real_X_y
+from dwd._sparse_features import promote_sparse_features
 
 
 def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
@@ -53,6 +54,7 @@ def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
         raise NotImplementedError('Sample weights are not implemented for SVM.')
     if not isinstance(C, Real) or not np.isfinite(C) or C <= 0:
         raise ValueError('C must be finite and strictly positive.')
+    X = promote_sparse_features(X, force_float64=True)
     X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
     if np.unique(y).size != 2:
         raise ValueError('SVM requires exactly two classes.')
@@ -94,6 +96,7 @@ class SVM(LinearClassifierMixin, BaseEstimator):
 
     @fit_with_cleanup
     def fit(self, X, y, sample_weight=None):
+        X = promote_sparse_features(X, force_float64=True)
         X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
         self.classes_ = np.unique(y)
         self.n_features_in_ = X.shape[1]

@@ -21,10 +21,14 @@ _FSUM = _arithmetic._fsum
 _GIL_DISABLED = sysconfig.get_config_var('Py_GIL_DISABLED')
 
 
-def _supported():
-    """Allow compatible Windows x86-64 CPython 3 runtimes from 3.11 onward."""
+def _supported(*, reporting=False):
+    """Keep general scoring on Windows; also admit qualified Linux reporting.
+
+    The Linux qualification covers the final stationarity K*w operation, not
+    joint affine evaluation or a change to general prediction dispatch.
+    """
     return (sys.implementation.name == 'cpython'
-            and sys.platform == 'win32'
+            and (sys.platform == 'win32' or (reporting is True and sys.platform == 'linux'))
             and sys.version_info[0] == 3 and sys.version_info[:2] >= (3, 11)
             and _GIL_DISABLED in (None, 0)
             and platform.machine().lower() in ('amd64', 'x86_64')
@@ -40,7 +44,8 @@ def _array(value, dtype, ndim, *, contiguous=True):
             and value.flags.aligned and (not contiguous or value.flags.c_contiguous))
 
 
-def try_expanded_dense_rows(K, alpha, indices, split_alpha, result, *, batch_enabled):
+def try_expanded_dense_rows(K, alpha, indices, split_alpha, result, *, batch_enabled,
+                            reporting=False):
     """Return the batching state on success, or None to use the Python helper.
 
     The original single-row/tail route is retained. A native refusal, unsupported
@@ -58,7 +63,7 @@ def try_expanded_dense_rows(K, alpha, indices, split_alpha, result, *, batch_ena
                              and getattr(value, '__name__', None) == name
                              and not hasattr(value, '__wrapped__')
                              for value, name in zip(hooks, ('_products', '_fsum'))))
-    compatible = (entry is not None and _supported() and batch_enabled and genuine_hooks
+    compatible = (entry is not None and _supported(reporting=reporting) and batch_enabled and genuine_hooks
         and not any(mode in ('call', 'log') for mode in np.geterr().values())
         and _array(K, np.dtype('float64'), 2, contiguous=False)
         and (K.flags.c_contiguous or K.flags.f_contiguous)
