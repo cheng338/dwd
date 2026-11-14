@@ -152,12 +152,13 @@ class Controls(unittest.TestCase):
         for module in (old_scores,new_scores):
             with patch.object(module,'_gradual_underflow',side_effect=FloatingPointError('unsupported arithmetic')):
                 with self.assertRaises(FloatingPointError):module.adaptive_kernel_matvec(np.eye(2),np.ones(2))
-        errors=[]
-        for module in (old_scores,new_scores):
-            with np.errstate(under='raise'):
-                try:module.adaptive_kernel_matvec(np.eye(2),np.ones(2));errors.append(None)
-                except FloatingPointError as exc:errors.append(type(exc).__name__)
-        self.assertEqual(errors[0],errors[1])
+        with np.errstate(under='raise'):
+            # Retain the historical failure without requiring the fixed helper
+            # to signal while constructing an exactly representable constant.
+            with self.assertRaisesRegex(FloatingPointError, 'nextafter'):
+                old_scores.adaptive_kernel_matvec(np.eye(2),np.ones(2))
+            np.testing.assert_array_equal(
+                new_scores.adaptive_kernel_matvec(np.eye(2),np.ones(2)), np.ones(2))
 
     def test_mm_state_objective_and_observation_parity_all_variants(self):
         rng=np.random.RandomState(991);X=rng.normal(size=(64,5));K=rbf_kernel(X,gamma=.1)

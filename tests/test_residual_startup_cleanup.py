@@ -17,7 +17,8 @@ import pytest
 def test_supported_cpython_startup_capability():
     from dwd import _residual_startup_cleanup as cleanup
 
-    if sys.implementation.name == "cpython" and (3, 11) <= sys.version_info[:2] <= (3, 14):
+    if (sys.implementation.name == "cpython" and sys.version_info[0] == 3
+            and sys.version_info[:2] >= (3, 11)):
         assert cleanup._qualified_wait_line() is not None
 
 

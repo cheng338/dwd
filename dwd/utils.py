@@ -6,12 +6,16 @@ from dwd._validation import require_real
 def parameters_equal(left, right):
     """Compare cached kernel parameters without ambiguous NumPy truth values.
 
-    Container kinds and array dtypes are part of the cache key. Unknown objects
+    Concrete types and array dtypes are part of the cache key. Unknown objects
     must supply a scalar equality result; otherwise the cache is invalidated.
     Stateful callable kernels must be treated as immutable while cached.
     """
     if left is right:
         return True
+    # Scalar coercion can hide a value change; equal values can also have
+    # type-dependent kernel semantics. Rebuild instead of guessing.
+    if type(left) is not type(right):
+        return False
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
         if not (isinstance(left, np.ndarray) and isinstance(right, np.ndarray)):
             return False

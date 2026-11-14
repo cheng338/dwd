@@ -70,13 +70,13 @@ class PublicAPIEdgeTests(unittest.TestCase):
 
     def test_complex_initialization_rejects_without_discarding_imaginary_parts(self):
         for imaginary in (0., 3.):
-            for route in ('linear', 'legacy', 'schur'):
+            for route in ('linear', 'schur'):
                 with self.subTest(imaginary=imaginary, route=route):
                     if route == 'linear':
                         model, data = GenDWD(max_iter=0), self.X
                         initial = {'beta_init': np.array([1. + imaginary * 1j])}
                     else:
-                        model = KernGDWD(kernel='precomputed', solver_mode=route, max_iter=0)
+                        model = KernGDWD(kernel='precomputed', max_iter=0)
                         data = np.eye(2)
                         initial = {'alpha_init': np.array([1. + imaginary * 1j, -1.])}
                     with warnings.catch_warnings(record=True) as caught:
@@ -86,6 +86,18 @@ class PublicAPIEdgeTests(unittest.TestCase):
                     self.assertEqual(caught, [])
                     with self.assertRaises(NotFittedError):
                         model.predict(data)
+
+    def test_retired_kernel_mode_rejects_before_complex_initialization_conversion(self):
+        for imaginary in (0., 3.):
+            with self.subTest(imaginary=imaginary):
+                initial = np.array([1. + imaginary * 1j, -1.])
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter('always')
+                    with self.assertRaisesRegex(TypeError, 'solver_mode'):
+                        KernGDWD(kernel='precomputed', solver_mode='legacy', max_iter=0).fit(
+                            np.eye(2), self.y, alpha_init=initial)
+                self.assertEqual(caught, [])
+                # Binding-time refusal creates no estimator to clean up.
 
     def test_nonfinite_linear_scores_raise_with_dense_and_sparse_queries(self):
         X = np.array([[-1., 0.], [1., 0.], [0., -1.], [0., 1.]])

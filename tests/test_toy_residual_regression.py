@@ -20,6 +20,7 @@ from threadpoolctl import threadpool_limits
 
 import dwd._kernel_linear_system as linear
 from dwd.gen_kern_dwd import KernGDWD
+from _kernel_reference import kernel_route
 
 
 class DecimalOracle:
@@ -97,7 +98,7 @@ class ToyResidualRegressionTests(unittest.TestCase):
 
     def fit(self, implementation, initialization, supplied=True, count=100, offset=0., acceleration='auto'):
         states = []
-        model = KernGDWD(kernel='rbf', kernel_kws={'gamma': .001}, lambd=1e-7,
+        model = kernel_route(kernel='rbf', kernel_kws={'gamma': .001}, lambd=1e-7,
             implementation=implementation, initialization=initialization, random_state=314159,
             stopping='objective', obj_tol=1e-5, max_iter=count, acceleration=acceleration,
             callback=lambda state: states.append(dict(state)))
@@ -143,7 +144,7 @@ class ToyResidualRegressionTests(unittest.TestCase):
     def test_native_gaussian_initialization_and_free_intercept_are_preserved(self):
         initial = np.random.RandomState(314159).normal(size=len(self.K))
         initial /= np.linalg.norm(initial)
-        model, states = self.fit('reference', 'auto', count=100, offset=.17)
+        model, states = self.fit('reference', 'random', count=100, offset=.17)
         assert_array_equal(states[0]['alpha'], initial)
         self.assertEqual(states[0]['offset'], .17)
         # Independent first ten updates check the nonzero constrained direction

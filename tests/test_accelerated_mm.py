@@ -319,7 +319,10 @@ class AccelerationPublicApiTests(unittest.TestCase):
             with self.subTest(bad=bad),self.assertRaisesRegex(ValueError,'acceleration'):
                 self.model(acceleration=bad).fit(self.X,self.y)
         for options in [dict(implementation='reference'),dict(solver_mode='legacy'),dict(backend='lbfgs')]:
-            with self.subTest(options=options),self.assertRaisesRegex(ValueError,'Acceleration'):
+            removed = next((key for key in ('solver_mode', 'implementation') if key in options), None)
+            error = TypeError if removed else ValueError
+            message = removed or 'Acceleration'
+            with self.subTest(options=options),self.assertRaisesRegex(error,message):
                 self.model(**options).fit(self.X,self.y)
         for options in [dict(implementation='reference'),dict(backend='lbfgs')]:
             with self.assertRaisesRegex(ValueError,'Acceleration'):

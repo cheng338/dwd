@@ -4,9 +4,10 @@ import os
 from threading import Event
 from types import BuiltinFunctionType
 from ._residual_worker_scope import executor_for_call, retire_for_serial_call
-from ._residual_startup_cleanup import drain_started_before_registration
+from ._residual_startup_cleanup import drain_started_before_registration, publish_cancellation
 
 _DEFAULT_EXECUTOR = ThreadPoolExecutor
+_DEFAULT_EXECUTOR_FOR_CALL = executor_for_call
 
 import numpy as np
 
@@ -121,8 +122,14 @@ def _compiled_values_or_refusal(K, x, rhs, shift, intercept):
                 except BaseException as error:
                     # Stop new native chunks before shutdown joins the workers.
                     # Preserve the original exception and discard all outputs.
-                    cancelled.set()
                     primary_error = error
+                    publish_cancellation(cancelled)
+                    # Exact default pools are drained once by their owning
+                    # context, while omitted-worker evidence is still present.
+                    if (type(executor) is _DEFAULT_EXECUTOR
+                            and ThreadPoolExecutor is _DEFAULT_EXECUTOR
+                            and executor_for_call is _DEFAULT_EXECUTOR_FOR_CALL):
+                        raise
                     try:
                         cleanup = drain_started_before_registration(executor, error)
                         error.add_note('Interrupted-start recovery: ' + repr(cleanup))

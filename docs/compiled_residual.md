@@ -109,17 +109,44 @@ range checks, rounding checks and acceptance bounds remain unchanged.
 
 Eligible threaded evaluations reuse a lazily created worker pool within one
 `solve_kernel` invocation. The pool is owned by the calling process and thread,
-and is joined when that invocation exits, including exceptional exits.
+and cleanup runs when that invocation exits, including exceptional exits.
 Different fits, recovery attempts and ensemble learners do not share it.
 Changed helpers, unsupported operand types or unsupported rounding modes keep
 the existing dispatch path. There is no new public option for these internal
 optimizations.
 
+For an owned default executor, cleanup retries interrupted wake-up requests and
+uses checked CPython capabilities to establish worker completion. It retains
+ownership until completion is established and preserves the original task
+failure, or the first cleanup interruption when no earlier failure exists.
+
+After requesting wake-up, an exactly identified omitted worker that has not
+finished starting may receive a private 10 ms readiness wait, timed with
+`time.perf_counter()`. The deadline is fixed for that cleanup attempt; repeated
+interruptions do not restart it. Readiness and a valid completion token must be
+observed before the deadline. This is not a wall-clock limit on the call:
+scheduling, completion waits and separate cleanup attempts can take longer.
+
+If that startup remains unresolved, cleanup can still finish registered workers
+whose ownership and completion tokens remain proved. Whole-executor completion
+remains explicitly unproved and ownership is retained. A wake-up request or a
+partial drain is not proof that every worker stopped. Waiting for a known worker
+is not capped by the readiness budget and cannot finish if that work never
+terminates. Cleanup does not kill threads.
+
+Unsupported or replaced shutdown implementations have no completion guarantee.
+Custom executor factories retain their previous lifecycle. There is no new
+public option. This does not change signal handlers or guarantee protection
+from arbitrary asynchronous interruption. The extra checks add cleanup cost,
+particularly for tiny tasks, without changing residual arithmetic or numerical
+acceptance.
+
 Long checks divide each worker's rows into bounded native calls. The dispatcher
 returns to Python between chunks and polls threaded completion, allowing pending
 interruptions to be observed on Windows as well as other platforms. A failure,
-refusal or interruption stops remaining chunks; every submitted worker task finishes before
-returning, and partial output is discarded. One row remains indivisible, so this
+refusal or interruption requests cancellation of remaining chunks. The owned
+completion checks and explicit cleanup limits above apply; partial output is
+discarded. One row remains indivisible, so this
 is not a hard wall-clock cancellation guarantee. Small checks retain a single
 native call. Chunking preserves the arithmetic order within each row and does
 not change the numerical acceptance rules.
@@ -203,26 +230,118 @@ calculations. Sparse scores and the joint-affine calculation retain
 their existing arithmetic. Benefits depend on how many dense rows require
 accurate scoring; ordinarily accepted dot products do not use this entry.
 
+## Ordered linear-feature gradient reduction
+
+The current development source also builds a separate private
+`_ordered_reduction_accel` extension. Eligible dense named-linear L-BFGS reports
+use it automatically for the final sums of already-restored gradient terms.
+The six product-expansion planes retain their original order. Product formation,
+scaling, restoration checks, objective and gradient acceptance are unchanged.
+Beta/coefficient computation and the existing residual and score entries do not
+use this new extension. There is no new estimator selector.
+
+The facade admits GIL-enabled Windows/Linux x86-64 CPython 3.11 and later 3.x
+runtimes, with the existing binary64 and arithmetic-mode guards. It checks the
+package-owned callbacks, array layout and genuine native entry before use.
+The native call stages a complete private result and never publishes a partial
+tile. Unsupported input, a native refusal or an absent/unloadable binary retains
+the original checked sum; allocation failure follows the existing scalar replay.
+Unexpected exceptions retain their existing propagation behavior. An unsuccessful
+initial optional load is cached for the life of that Python process. Install or
+replace package binaries only between processes, then start a fresh interpreter.
+
+This reducer is serial and keeps the GIL: the residual worker-pool description
+above does not apply to it. It does not change BLAS/OpenMP thread limits and uses
+bounded private packing/output storage. Scalar gradient columns do not import
+the new facade or binary. Validation of this route covered CPython 3.12 on the
+approved Windows and Linux environments; forward runtime eligibility is not a
+claim that every later interpreter was tested. See the
+[reporting measurements](kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting)
+for the wider-workload gains and ordinary/portable-fallback costs.
+
+## Exact feature-expansion tiles
+
+A separate private `_feature_expansion_accel` extension accelerates qualified
+dense named-linear L-BFGS reports. The report dispatcher reuses existing
+report-specific score products, including supported native report outputs on
+Linux. The expansion helper reuses the existing compensated splits for native
+gradient tiles and eligible warm beta calculations. Products, exponent
+restoration, plane order, final sums, outward bounds and acceptance remain the
+same. It introduces no estimator parameter, solver method or new tolerance.
+
+The helper uses CPython's full ABI. Builds include it only for GIL-enabled
+64-bit x86-64 CPython 3.12 on Windows or Linux; its runtime interpreter-version,
+array, callback, floating-point mode and source-definition guards must also
+pass. It is not an abi3 extension. An unavailable, older or incompatible
+extension, active tracing/profiling, or a refused operand/context retains the
+original checked implementation. Installing a cp312 wheel does not establish
+that this private route qualified on a different interpreter micro version.
+Python support outside this native domain is preserved through fallback.
+
+The first eligible tile keeps the existing ordered-reduction path; subsequent
+use requires a genuinely qualified context. There is no numerical prewarming
+or cross-fit cache used to hide startup. Calls stage complete private output
+and retain the existing error and scalar recovery behavior. The tile helper
+is serial, holds the GIL, uses bounded scratch, and does not alter native
+thread limits. The residual worker-pool description above does not apply.
+An unsuccessful optional load is cached within that process; replace binaries
+between processes. Package code does not build or download anything at runtime.
+
+Qualified warm gradient/beta calls can combine original groups up to 16,384
+entries, with at most 64 feature columns and a sample width of 1,024. The first
+original group is unchanged; cold gradient setup continues through original
+groups until its context exists. Scalar and tail groups retain their original
+sizes. A refused larger attempt replays the original groups in order, with the
+same arithmetic, error precedence and outward bounds. This increases the
+maximum contiguous float64 feature-input copy from 16 KiB to 128 KiB per call;
+outputs, reusable splits and native scratch are separate from that input bound.
+Rebuild `_feature_expansion_accel` from matching sources for private
+`API_VERSION = 2` and the new capacity. Older binaries decline this route and
+retain the checked fallback; there is no new public option.
+
+The reviewed Windows/Linux CPython 3.12 measurements found larger and repeated
+fit benefits, plus cold-start and missing-extension costs. The smaller-buffer
+recomputing interface and separate native dual-reduction candidate were not
+selected. See [the measured scope and limitations](kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting).
+
 ## Building and installing
 
-An accelerated wheel is platform specific and is tagged
-`cp311-abi3-<platform>`, not `py3-none-any`. The stable ABI permits loading on
-CPython 3.11 and later; the platform, build and arithmetic guards above still apply.
-No compiler or tool download is invoked at runtime, and the extension does not
-depend on the NumPy C API.
+Accelerated wheels are platform specific. A qualified CPython 3.12 build that
+includes the full-ABI feature-expansion extension uses
+`cp312-cp312-<platform>`, never an abi3 label. Other accelerated builds retain
+the residual and ordered-reduction extensions in a
+`cp311-abi3-<platform>` wheel. The stable ABI applies to those two extensions,
+not to the new expansion helper; runtime arithmetic and build guards still
+apply. Portable wheels remain `py3-none-any`. No compiler or tool download is
+invoked at runtime, and none of these extensions uses the NumPy C API.
 
-Normal source builds use setuptools and a locally available C compiler. The
-extension is optional: a missing compiler can produce a functioning package
-using the previous arithmetic. Builds must use strict
-floating-point flags. MSVC uses `/fp:strict`; GCC/Clang builds disable implicit
-contraction, reassociation and fast-math.
+Source builds use setuptools and a locally available C compiler. In the current
+source, leaving `DWD_BUILD_ACCEL` unset, or setting it to any value other than `0`,
+requires `_residual_accel` and `_ordered_reduction_accel`, plus
+`_feature_expansion_accel` on the qualified build domain above.
+`DWD_BUILD_ACCEL=1` makes that intent explicit.
+Compiler or linker errors stop the build. After compilation, a missing or empty
+expected extension file for any required module also stops the build. This file check does not replace
+the runtime loading and numerical guards above.
 
-`DWD_BUILD_ACCEL=0` explicitly requests a portable build. Always use a separate
-clean source/build directory for portable and compiled wheel builds. For the
+`DWD_BUILD_ACCEL=0` explicitly requests a portable build without compiling any
+helper. Users without a compiler can choose that mode or install a published
+portable wheel. This changes the earlier automatic source-build fallback;
+published artifacts and numerical runtime fallbacks are unchanged.
+
+Builds retain strict floating-point flags. MSVC uses `/fp:strict`; GCC/Clang
+builds disable implicit contraction, reassociation and fast-math. For the
 audited Windows release build, `DWD_BUILD_ZIG` can name a local Zig executable.
-That explicit override fails the build if compilation fails; it never downloads
-a compiler or silently produces a wheel labeled as accelerated without the
-compiled helper.
+That explicit override remains strict and never downloads a compiler.
+
+The mode setting applies only when a source build actually runs. Installing a
+published or cached wheel does not invoke it, and a previously cached portable
+wheel may be reused even after a compiler becomes available. When changing
+mode, use a separate clean checkout or source-archive extraction and a fresh
+wheel output directory. Set the desired mode and build from that source with
+`python -m pip wheel --no-cache-dir --no-deps --wheel-dir new-wheelhouse .`.
+A clean build tree also avoids reusing earlier compiled products; the mode flag
+alone does not establish their freshness.
 
 The performance improvement is workload dependent. It targets models requiring
 compensated residual checks, particularly large ill-conditioned kernel systems.

@@ -226,7 +226,6 @@ class SparseFeatureDistances(unittest.TestCase):
                     del model.kernel_computation_
                     del model.kernel_
                     del model.kernel_kws_
-                    model.solver_mode = 'legacy'
                 before = storage(model._Xfit)
                 model = pickle.loads(pickle.dumps(model))
                 for batch in (None, 1, 3):

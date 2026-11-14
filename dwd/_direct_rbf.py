@@ -20,6 +20,7 @@ from scipy.spatial.distance import cdist
 _CHECK_ELEMENTS = 65536
 _MAX_DENSE_TILE_ELEMENTS = 262144
 _TINY = np.finfo(np.float64).tiny
+_MAX = np.finfo(np.float64).max
 
 
 def _finite_dense(array):
@@ -89,7 +90,21 @@ def _merged_squared_distance(X, i, Y, j):
     return total
 
 
-def _exceptional_kernel(X, i, Y, j, gamma_fraction):
+def _numpy_rbf_exp(exponent):
+    """Evaluate a nonnegative repaired exponent under the caller NumPy policy.
+
+    Positive infinity here represents a finite positive product outside the
+    binary64 exponent range. Saturating that argument to the largest finite
+    binary64 value preserves the rounded RBF value (zero), while a real scalar
+    exponential reports its underflow through NumPy. No warning or callback is
+    synthesized. Other routes keep their historical scalar libm arithmetic.
+    """
+    if math.isinf(exponent) and exponent > 0:
+        exponent = _MAX
+    return float(np.exp(-np.float64(exponent)))
+
+
+def _exceptional_kernel(X, i, Y, j, gamma_fraction, *, preserve_errors=False):
     squared = Fraction(0)
     for x, y in _pair_coordinates(X, i, Y, j):
         if x != y:
@@ -101,7 +116,11 @@ def _exceptional_kernel(X, i, Y, j, gamma_fraction):
     try:
         represented_exponent = float(exponent)
     except OverflowError:
+        if preserve_errors:
+            return _numpy_rbf_exp(math.inf)
         return 0.0
+    if preserve_errors:
+        return _numpy_rbf_exp(represented_exponent)
     # One scalar libm operation per pair prevents batch-length-dependent SIMD
     # exp dispatch. Exact distance/exponent arithmetic does not imply exact exp.
     return math.exp(-represented_exponent)
@@ -130,8 +149,13 @@ def accurate_rbf(X, Y=None, gamma=None, *, block_size=256):
     return _rbf_from_validated_features(X, Y, gamma, block_size)
 
 
-def _rbf_from_validated_features(X, Y, gamma, block_size):
-    """Private arithmetic core; callers must validate/canonicalize both inputs."""
+def _rbf_from_validated_features(X, Y, gamma, block_size, *, preserve_errors=False):
+    """Private core for validated/canonical inputs.
+
+    Only guarded-v2 repairs under nonordinary NumPy policies opt into scalar
+    NumPy multiplication/exponential. Public direct-RBF and historical callers
+    retain the default arithmetic, pair ordering, and exceptional-range rules.
+    """
     if X.shape[1] != Y.shape[1]:
         raise ValueError('X and Y must have the same feature count.')
     if gamma is None:
@@ -167,7 +191,14 @@ def _rbf_from_validated_features(X, Y, gamma, block_size):
                     distance = (float(distances[i-x_start, j-y_start])
                                 if dense else _merged_squared_distance(X, i, Y, j))
                     if not math.isfinite(distance) or distance <= small_distance:
-                        value = _exceptional_kernel(X, i, Y, j, gamma_fraction)
+                        if preserve_errors:
+                            value = _exceptional_kernel(
+                                X, i, Y, j, gamma_fraction, preserve_errors=True)
+                        else:
+                            value = _exceptional_kernel(X, i, Y, j, gamma_fraction)
+                    elif preserve_errors:
+                        exponent = np.multiply(np.float64(gamma), np.float64(distance))
+                        value = _numpy_rbf_exp(exponent)
                     else:
                         value = math.exp(-(gamma * distance))
                     output[i, j] = value

@@ -14,6 +14,7 @@ from dwd._acceleration_policy import resolve_acceleration
 from dwd._kernel_solver import solve_kernel
 from dwd._kernel_recovery import MMRecoveryExhausted
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV, solve_gen_kern_dwd
+from _kernel_reference import kernel_route
 
 X = np.random.RandomState(21620).normal(size=(16, 3))
 y = np.tile([-3, 7], 8)
@@ -37,18 +38,17 @@ def same_science(a, b):
 class RestartDefaultTests(unittest.TestCase):
     def test_01_policy_is_only_compatibility(self):
         self.assertEqual(tuple(inspect.signature(resolve_acceleration).parameters),
-                         ('requested', 'implementation', 'solver_mode', 'backend'))
+                         ('requested', 'implementation', 'backend'))
         for implementation in ('optimized', 'reference'):
-            for mode in ('schur', 'legacy'):
-                for backend in ('auto', 'cholesky', 'spectral', 'lbfgs'):
-                    options = dict(implementation=implementation, solver_mode=mode, backend=backend)
-                    eligible = implementation == 'optimized' and mode == 'schur' and backend != 'lbfgs'
-                    self.assertEqual(resolve_acceleration('auto', **options), 'restart' if eligible else None)
-                    self.assertIsNone(resolve_acceleration(None, **options))
-                    if eligible:
-                        self.assertEqual(resolve_acceleration('restart', **options), 'restart')
-                    else:
-                        with self.assertRaises(ValueError): resolve_acceleration('restart', **options)
+            for backend in ('auto', 'cholesky', 'spectral', 'lbfgs'):
+                options = dict(implementation=implementation, backend=backend)
+                eligible = implementation == 'optimized' and backend != 'lbfgs'
+                self.assertEqual(resolve_acceleration('auto', **options), 'restart' if eligible else None)
+                self.assertIsNone(resolve_acceleration(None, **options))
+                if eligible:
+                    self.assertEqual(resolve_acceleration('restart', **options), 'restart')
+                else:
+                    with self.assertRaises(ValueError): resolve_acceleration('restart', **options)
         for bad in (False, True, 1, [], {}, 'fista'):
             with self.assertRaises(ValueError): resolve_acceleration(bad)
 
@@ -66,11 +66,15 @@ class RestartDefaultTests(unittest.TestCase):
                   {'implementation': 'reference'}, {'backend': 'lbfgs'},
                   {'solver_mode': 'legacy'})
         for route in routes:
+            if route.get('solver_mode') == 'legacy':
+                with self.assertRaisesRegex(TypeError, 'solver_mode'):
+                    KernGDWD(**COMMON, **route).fit(X, y)
+                continue
             policy = resolve_acceleration('auto', **route)
             with self.subTest(route=route), warnings.catch_warnings():
                 warnings.simplefilter('ignore', FutureWarning)
-                a = KernGDWD(**COMMON, **route).fit(X, y)
-                b = KernGDWD(**COMMON, **route, acceleration=policy).fit(X, y)
+                a = kernel_route(**COMMON, **route).fit(X, y)
+                b = kernel_route(**COMMON, **route, acceleration=policy).fit(X, y)
                 same_science(a, b)
                 self.assertEqual(a.acceleration, 'auto')
                 self.assertEqual(a.requested_acceleration_, 'auto')
@@ -99,7 +103,7 @@ class RestartDefaultTests(unittest.TestCase):
             b = solve_kernel(K, signed, .1, max_iter=4, obj_tol=0., acceleration=policy)
             for got, expected in zip(a[:3], (b['alpha'], b['offset'], b['objective_history'])):
                 assert_array_equal(got, expected)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             solve_gen_kern_dwd(K, y, .1, solver_mode='legacy', acceleration='restart')
 
     def test_06_supplied_and_cached_eigenbasis(self):
@@ -121,14 +125,15 @@ class RestartDefaultTests(unittest.TestCase):
             old = factory()
             del old.acceleration
             restored = pickle.loads(pickle.dumps(old))
-            self.assertIsNone(restored.get_params()['acceleration'])
-            self.assertIsNone(clone(restored).acceleration)
+            self.assertEqual(restored.get_params()['acceleration'], 'auto')
+            self.assertEqual(clone(restored).acceleration, 'auto')
         old = KernGDWD(**COMMON)
         del old.acceleration
         old.fit(X, y)
-        plain = KernGDWD(**COMMON, acceleration=None).fit(X, y)
-        same_science(old, plain)
-        self.assertIsNone(old.acceleration_)
+        current = KernGDWD(**COMMON, acceleration='auto').fit(X, y)
+        same_science(old, current)
+        self.assertEqual(old.requested_acceleration_, 'auto')
+        self.assertEqual(old.acceleration_, 'restart')
 
     def test_08_fitted_policy_survives_constructor_mutation(self):
         fitted = KernGDWD(**COMMON).fit(X, y)
@@ -149,7 +154,7 @@ class RestartDefaultTests(unittest.TestCase):
         for name in ('acceleration_', 'requested_acceleration_', 'dual_coef_'):
             self.assertFalse(hasattr(model, name))
         for route in ({'implementation': 'reference'}, {'solver_mode': 'legacy'}, {'backend': 'lbfgs'}):
-            with self.assertRaises(ValueError):
+            with self.assertRaises(TypeError if ('solver_mode' in route or 'implementation' in route) else ValueError):
                 KernGDWD(**COMMON, acceleration='restart', **route).fit(X, y)
 
     def test_10_automatic_spectral_recovery_keeps_concrete_restart(self):

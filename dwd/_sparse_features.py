@@ -21,6 +21,24 @@ def promote_sparse_features(X, *, force_float64=False):
         return X.astype(dtype)
 
 
+def promote_kernel_query(X, basis):
+    """Select named pairwise working dtype before sparse format conversion.
+
+    Named pairwise kernels retain float32 only when both operands are float32.
+    Promote mixed-precision sparse queries before conversion or duplicate
+    aggregation can round their represented coordinates in float32. Callable
+    and precomputed kernels keep their separate numerical input contracts.
+    This does not convert fitted bases or repair historical duplicate bases.
+    """
+    return promote_sparse_features(
+        X, force_float64=getattr(basis, 'dtype', None) != np.dtype(np.float32))
+
+
+def promote_cosine_query(X, basis):
+    """Compatibility name for cosine fit/validation preparation callers."""
+    return promote_kernel_query(X, basis)
+
+
 def csr_is_canonical(X):
     """Inspect CSR storage without trusting mutable cached ordering flags.
 
@@ -33,7 +51,7 @@ def csr_is_canonical(X):
     return csr_array(X, copy=False).has_canonical_format
 
 
-def checked_prediction_basis(X):
+def checked_prediction_basis(X, *, kernel_name='RBF'):
     """Reject old norm/dot fitted bases with duplicate training coordinates.
 
     A model trained before sparse normalization may have coefficients for an
@@ -51,7 +69,7 @@ def checked_prediction_basis(X):
     result.sort_indices()
     if not csr_is_canonical(result):
         raise ValueError(
-            'Stored RBF training features contain duplicate sparse coordinates; '
+            f'Stored {kernel_name} training features contain duplicate sparse coordinates; '
             'the fitted coefficients may use an incorrect historical kernel. '
             'Refit the model with the original training data, labels and settings '
             'before prediction.')
@@ -82,3 +100,16 @@ def canonical_sparse_features(X, *, copy=True):
         if not np.isfinite(result.data[start:start + 65536]).all():
             raise ValueError('Sparse features have nonfinite values after summing duplicate coordinates.')
     return result
+
+
+def prepare_laplacian_features(X):
+    """Protect CSR storage from the pairwise Manhattan in-place conversion.
+
+    Leave summation, dtype selection and arithmetic errors to sklearn's
+    existing calculation. Dense and non-CSR inputs retain their normal path.
+    """
+    if not issparse(X) or X.format != 'csr':
+        return X
+    if csr_is_canonical(X):
+        return X
+    return X.copy()

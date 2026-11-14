@@ -93,7 +93,8 @@ def _common_evaluator_helpers_ok(mode):
             pairwise.safe_sparse_dot is not _SPARSE_DOT or
             _rbf.safe_sparse_dot is not _SPARSE_DOT):
         return False
-    if mode in ('guarded_sklearn_rel_v1','guarded_norm_sum_rel_v1') and (
+    if mode in ('guarded_sklearn_rel_v1','guarded_norm_sum_rel_v1',
+                'guarded_sklearn_rel_v2','guarded_norm_sum_rel_v2') and (
             not _GUARDED_SOURCE_OK or
             guarded.guarded_rbf is not _GUARDED_RBF or
             guarded.row_norms is not _ROW_NORMS or
@@ -136,7 +137,75 @@ def standard_kernel_sources_ok():
             and pairwise.PAIRWISE_KERNEL_FUNCTIONS.get('rbf') is _RBF)
 
 
-def prepare_norm_kernel(estimator,query,original_query):
+
+# Fresh, call-local validation reuse. No array values or validation state survive
+# a public prediction call. The original numerical core is unchanged.
+from sklearn.utils import validation as _validation_module
+from sklearn import _config as _config_module
+
+_ARRAY_CHECK = pairwise.check_array
+_FINITE_CHECK = _validation_module._assert_all_finite
+_CONFIG_GET = _config_module.get_config
+_CORE = guarded._guarded_rbf_validated
+_VALIDATION_SOURCE_OK = all((
+    _source_function(_ARRAY_CHECK, _validation_module, 'check_array'),
+    _source_function(_FINITE_CHECK, _validation_module, '_assert_all_finite'),
+    _source_function(_CONFIG_GET, _config_module, 'get_config'),
+    _source_function(_CORE, guarded, '_guarded_rbf_validated')))
+_VALIDATION_FUNCTIONS = (_CHECK, _ARRAY_CHECK, _FINITE_CHECK, _CONFIG_GET, _GUARDED_RBF, _CORE)
+_VALIDATION_CODES = tuple(getattr(f, '__code__', None) for f in _VALIDATION_FUNCTIONS)
+_VALIDATION_DEFAULTS = tuple(getattr(f, '__defaults__', None) for f in _VALIDATION_FUNCTIONS)
+_VALIDATION_KWDEFAULTS = tuple(dict(getattr(f, '__kwdefaults__', None) or {}) for f in _VALIDATION_FUNCTIONS)
+
+
+def _validation_sources_unchanged():
+    functions = (guarded.check_pairwise_arrays, pairwise.check_array,
+                 _validation_module._assert_all_finite, _config_module.get_config,
+                 guarded.guarded_rbf, guarded._guarded_rbf_validated)
+    return (_VALIDATION_SOURCE_OK and functions == _VALIDATION_FUNCTIONS and
+            pairwise.check_pairwise_arrays is _CHECK and ku.check_array is _ARRAY_CHECK and
+            _validation_module.check_array is _ARRAY_CHECK and
+            _validation_module._get_config is _CONFIG_GET and
+            all(getattr(f, '__code__', None) is code and getattr(f, '__defaults__', None) == defaults and
+                (getattr(f, '__kwdefaults__', None) or {}) == kwdefaults
+                for f, code, defaults, kwdefaults in zip(functions, _VALIDATION_CODES,
+                    _VALIDATION_DEFAULTS, _VALIDATION_KWDEFAULTS)) and
+            not _CONFIG_GET()['assume_finite'])
+
+
+def _same_dense_storage(left, right):
+    # Equal start address/shape/strides and exact native float64 identify the
+    # same represented elements, even when NumPy normalizes a dtype view.
+    return (type(left) is type(right) is np.ndarray and
+            left.dtype == right.dtype == np.dtype('float64') and
+            left.dtype.isnative and right.dtype.isnative and
+            left.dtype.metadata is right.dtype.metadata is None and
+            left.shape == right.shape and left.strides == right.strides and
+            left.flags.writeable == right.flags.writeable and
+            left.__array_interface__['data'][0] == right.__array_interface__['data'][0])
+
+
+def _dense_validation_candidate(train, query, original_query, mode):
+    return (mode == 'guarded_norm_sum_rel_v2' and
+            all(type(x) is np.ndarray and x.ndim == 2 and x.dtype == np.dtype('float64')
+                and x.dtype.isnative and x.dtype.metadata is None for x in (train, query, original_query)) and
+            _same_dense_storage(query, original_query) and query.flags.c_contiguous and
+            train.shape[0] > 0 and query.shape[0] > 0 and train.shape[1] == query.shape[1] > 0 and
+            _validation_sources_unchanged())
+
+
+def _contained_dense_batch(batch, query):
+    if (type(batch) is not np.ndarray or batch.ndim != 2 or batch.dtype != query.dtype or
+            batch.dtype.metadata is not None or batch.shape[1] != query.shape[1] or
+            batch.shape[0] <= 0 or batch.strides != query.strides or
+            batch.flags.writeable != query.flags.writeable):
+        return False
+    offset = batch.__array_interface__['data'][0] - query.__array_interface__['data'][0]
+    return (offset >= 0 and offset % query.strides[0] == 0 and
+            offset // query.strides[0] + batch.shape[0] <= query.shape[0])
+
+
+def prepare_norm_kernel(estimator,query,original_query,*,_validated_query=None):
     from .gen_kern_dwd import (KernGDWD,_ORIGINAL_TRAINING_KERNEL,_ORIGINAL_KNOWN_PSD_KERNEL)
     if not _SOURCE_OK or type(estimator) is not KernGDWD:
         return None
@@ -148,7 +217,8 @@ def prepare_norm_kernel(estimator,query,original_query):
         return None
     if getattr(estimator,'kernel_',estimator.kernel)!='rbf': return None
     mode=getattr(estimator,'kernel_computation_','sklearn')
-    if mode not in ('sklearn','norm_sum','guarded_sklearn_rel_v1','guarded_norm_sum_rel_v1'): return None
+    if mode not in ('sklearn','norm_sum','guarded_sklearn_rel_v1','guarded_norm_sum_rel_v1',
+                    'guarded_sklearn_rel_v2','guarded_norm_sum_rel_v2'): return None
     if not _common_evaluator_helpers_ok(mode): return None
     train=estimator._Xfit
     dense=all(type(x) is np.ndarray and x.ndim==2 and x.dtype==np.dtype('float64') and x.dtype.isnative
@@ -180,9 +250,24 @@ def prepare_norm_kernel(estimator,query,original_query):
     except MemoryError:
         return None
     gamma=1./train.shape[1] if gamma is None else gamma
+    validated_pair = None
+    if (_validated_query is query and
+            _dense_validation_candidate(train, query, original_query, mode)):
+        # The original public check_array has just validated this exact query.
+        # Fresh finite training norms established train finiteness this call.
+        validated_pair = (train, query)
     def compute(batch):
-        if mode in ('guarded_sklearn_rel_v1','guarded_norm_sum_rel_v1'):
+        if (validated_pair is not None and _validation_sources_unchanged() and
+                _contained_dense_batch(batch, query)):
+            return _CORE(validated_pair[0], batch, gamma=gamma, x_norm=norms,
+                         mode='norm_sum', preserve_errors=True)
+        if mode in ('guarded_sklearn_rel_v1','guarded_norm_sum_rel_v1',
+                    'guarded_sklearn_rel_v2','guarded_norm_sum_rel_v2'):
             from ._guarded_rbf import guarded_rbf
+            if mode in ('guarded_sklearn_rel_v2','guarded_norm_sum_rel_v2'):
+                return guarded_rbf(train,batch,gamma=gamma,x_norm=norms,
+                                   mode='norm_sum' if mode=='guarded_norm_sum_rel_v2' else 'sklearn',
+                                   preserve_errors=True)
             return guarded_rbf(train,batch,gamma=gamma,x_norm=norms,
                                mode='norm_sum' if mode=='guarded_norm_sum_rel_v1' else 'sklearn')
         if mode=='norm_sum':
@@ -194,3 +279,19 @@ def prepare_norm_kernel(estimator,query,original_query):
         return K
     return compute
 
+
+
+_ORIGINAL_PREPARE_NORM_KERNEL = prepare_norm_kernel
+_ORIGINAL_PREPARE_CODE = prepare_norm_kernel.__code__
+
+
+def prepare_public_norm_kernel(estimator, query, original_query):
+    """Private handoff only from the original post-check_array public call site.
+
+    Replaced prepare hooks still receive their original three arguments. Direct
+    prepare_norm_kernel calls do not receive a validation handoff.
+    """
+    live = prepare_norm_kernel
+    if live is _ORIGINAL_PREPARE_NORM_KERNEL and live.__code__ is _ORIGINAL_PREPARE_CODE:
+        return live(estimator, query, original_query, _validated_query=query)
+    return live(estimator, query, original_query)

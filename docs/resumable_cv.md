@@ -71,9 +71,11 @@ for classifiers. To use shuffled folds, supply a `StratifiedKFold` with an
 explicit integer `random_state`. The realized train/validation indices are
 included in the checkpoint identity.
 
-New estimators default to `affine_computation='auto'`, which selects joint
-affine scoring in corrected Schur mode. Set `affine_computation='standard'`
-for the previous scoring route, or `'joint'` explicitly. The policy
+New estimators default to `affine_computation='joint'`. The former `'auto'`
+alias is no longer accepted; replace it with `'joint'` in estimator settings
+and parameter grids. Explicit `'standard'` selects separate dot-product and
+intercept arithmetic; see [choosing numerical options](choosing_options.md)
+before overriding the precision-oriented joint default. The policy
 is recorded with estimator and candidate parameters; changing it requires a
 new run directory. Completed evaluations retain the chosen arithmetic when
 resumed, and the selected estimator uses it in the final refit. The source
@@ -320,6 +322,14 @@ receipts remain reusable when compatible. Increasing the count can change
 floating-point reductions and fitted values. It can also consume more CPU time
 without reducing elapsed time, so no universal speedup or cross-thread bitwise
 agreement is promised.
+
+Request more final native threads when the full-data scaling/fit is a material
+part of the intended workflow and representative measurements show useful
+scaling at an admissible memory cost. Keep the candidate, data and numerical
+settings fixed for that comparison; measure the complete scaling-plus-fit
+phase and inspect its returned diagnostics. Extra threads are not a substitute
+for a larger iteration budget or a tighter numerical target. Leave the default
+at one when the extra allocation has no demonstrated benefit.
 
 ## Supported scope
 

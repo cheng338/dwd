@@ -35,8 +35,19 @@ jobs:
         run: |
           python -m venv .venv
           python -c "import os,pathlib; p=pathlib.Path('.venv')/('Scripts' if os.name=='nt' else 'bin'); f=open(os.environ['GITHUB_PATH'],'a'); f.write(str(p.resolve())+os.linesep); f.close()"
-      - name: Build the wheel to be tested
-        run: python -m pip wheel --no-deps --wheel-dir .ci-wheels .
+      - name: Install the source-distribution build frontend
+        run: python -m pip install build
+      - name: Build the source distribution to be tested
+        run: python -m build --sdist --outdir .ci-sdists .
+      - name: Verify and extract the source distribution
+        id: sdist
+        run: >-
+          python -I -B tests/ci_sdist.py
+          --source . --sdist-dir .ci-sdists
+          --destination "${{ runner.temp }}/dwd-sdist"
+          --github-output
+      - name: Build the wheel from the verified source distribution
+        run: python -m pip wheel --no-deps --wheel-dir .ci-wheels "${{ steps.sdist.outputs.source }}"
       - name: Install the exact base wheel and plotting tests
         if: matrix.dependencies == 'base'
         run: python -I -B tests/ci_artifacts.py install --wheel-dir .ci-wheels --extras test-base
@@ -46,9 +57,10 @@ jobs:
       - name: Install the exact wheel and optional conic tests
         if: matrix.dependencies == 'socp'
         run: python -I -B tests/ci_artifacts.py install --wheel-dir .ci-wheels --extras test
-      - name: Prepare tests outside the package source tree
+      - name: Prepare tests from the verified source distribution
         run: >-
           python -I -B tests/ci_artifacts.py bundle
+          --source "${{ steps.sdist.outputs.source }}"
           --destination "${{ runner.temp }}/dwd-installed-tests"
       - name: Require the exact installed wheel and expected backend
         working-directory: ${{ runner.temp }}/dwd-installed-tests
@@ -56,6 +68,9 @@ jobs:
           python -I -B tests/ci_artifacts.py check
           --dwd-wheel-dir "${{ github.workspace }}/.ci-wheels"
           --backend "${{ matrix.backend == 'portable' && 'portable' || 'native' }}"
+          --route-contract current
+          --expected-platform "${{ runner.os == 'Windows' && 'windows' || 'linux' }}"
+          --expected-python "${{ matrix.python-version }}"
       - name: Run the complete bundled test suite
         working-directory: ${{ runner.temp }}/dwd-installed-tests
         run: python -I -B -m pytest tests -o "python_files=test*.py" -ra

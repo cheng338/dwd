@@ -32,10 +32,17 @@ def _reference_implicit(X, y, beta, offset, lambd, q, U, v, g, pi,
     return step[1:], step[0]
 
 
-def _reference_explicit(X, y, beta, offset, lambd, q, P_inv, X_beta=None):
+def _reference_explicit(X, y, beta, offset, lambd, q, P_inv, X_beta=None, *,
+                        _gradient=None, _solve=None):
+    assert _gradient is None, 'The reference must independently recompute its gradient.'
     gamma = _reference_gamma(X, y, beta, offset, lambd, q, X_beta)
     curvature = float(np.float64(q) + 2.0 + 1.0 / np.float64(q))
-    step = (X.shape[0] / curvature) * P_inv @ gamma
+    if _solve is None:
+        # Actual replaced hooks keep their original inverse-matrix protocol.
+        step = (X.shape[0] / curvature) * P_inv @ gamma
+    else:
+        # Isolate gradient reuse from inverse-versus-factor rounding.
+        step = (X.shape[0] / curvature) * _solve(gamma)
     return step[1:], step[0]
 
 
@@ -44,10 +51,18 @@ def _step_reference(implicit, enabled=True):
     if not enabled:
         yield
         return
-    name = 'get_step_implicit' if implicit else 'get_step_explicit'
-    reference = _reference_implicit if implicit else _reference_explicit
-    with patch.object(gdwd, name, reference):
-        yield
+    if implicit:
+        with patch.object(gdwd, 'get_step_implicit', _reference_implicit):
+            yield
+    else:
+        # The ordinary reference follows the built-in factor dispatch, while
+        # disabling reuse forces its independent loss-gradient evaluation.
+        # Replaced hooks still take the inverse route; self-restoring hooks
+        # return to the factor route on subsequent iterations.
+        with patch.object(gdwd, 'get_step_explicit', _reference_explicit), \
+                patch.object(gdwd, '_BUILTIN_EXPLICIT_STEP', _reference_explicit), \
+                patch.object(gdwd, '_REUSE_GRADIENT_DTYPE', np.dtype(np.float32)):
+            yield
 
 
 def _encoded(value):
@@ -168,15 +183,33 @@ class LinearGradientReuseTests(unittest.TestCase):
         for sparse in (False, True):
             X = csr_matrix(self.X) if sparse else self.X
             before = _encoded(X)
-            for mode in ('schur', 'legacy'):
+            for mode in ('schur',):
                 for implicit in (True, False):
                     for q in (.5, 1., 2.3):
                         with self.subTest(sparse=sparse, mode=mode, implicit=implicit, q=q):
-                            options = dict(solver_mode=mode, q=q)
+                            options = dict(q=q)
                             expected = _fit(X, self.y, implicit=implicit, reference=True, options=options)
                             actual = _fit(X, self.y, implicit=implicit, options=options)
                             self.assertModelsEqual(expected, actual, X)
                             self.assertEqual(before, _encoded(X))
+
+    def test_explicit_reference_uses_factor_action_without_inverse(self):
+        from dwd._explicit_factor import ExplicitFactor
+
+        for sparse in (False, True):
+            X = csr_matrix(self.X) if sparse else self.X
+            for mode in ('schur',):
+                with self.subTest(sparse=sparse, mode=mode):
+                    with patch.object(ExplicitFactor, 'solve', autospec=True,
+                                      side_effect=ExplicitFactor.solve) as solve, \
+                            patch.object(ExplicitFactor, 'inverse_for_hook',
+                                         side_effect=AssertionError(
+                                             'The ordinary reference must not form an inverse.')) as inverse:
+                        model = _fit(X, self.y, implicit=False, reference=True,
+                                     options=dict())
+                    self.assertEqual(model.n_iter_, 6)
+                    self.assertEqual(solve.call_count, model.n_iter_)
+                    inverse.assert_not_called()
 
     def test_reused_gradient_belongs_to_current_dense_or_sparse_iterate(self):
         for sparse in (False, True):
@@ -306,17 +339,25 @@ class LinearGradientReuseTests(unittest.TestCase):
 
     @unittest.skipUnless(np.finfo(np.longdouble).nmant > np.finfo(np.float64).nmant,
                          'This platform has no wider-than-float64 longdouble arithmetic.')
-    def test_wider_legacy_gradient_retains_original_precision(self):
-        X = self.X.astype(np.longdouble)
-        X[:, 0] += 3 * np.finfo(np.longdouble).eps
-        # The legacy explicit inverse uses NumPy linalg.inv, which does not
-        # support wider longdouble; exercise the supported implicit route.
-        options = dict(solver_mode='legacy', lambd=np.longdouble('.07'))
-        expected = _fit(X, self.y, options=options, reference=True)
-        with _observe() as observed:
-            actual = _fit(X, self.y, options=options)
-        self.assertModelsEqual(expected, actual, X)
-        self.assertEqual(observed['reuses'], 0)
+    def test_direct_gradient_keeps_wider_operand_precision(self):
+        # Public Schur fits validate at float64. Exercise the private gradient
+        # directly to retain coverage of its wider-operand arithmetic without
+        # invoking the retired solver or claiming wider end-to-end support.
+        X = np.array([[0.], [0.], [1.], [1.]], dtype=np.longdouble)
+        X[2, 0] += 8 * np.finfo(np.longdouble).eps
+        y = np.array([-1, -1, 1, 1])
+        beta = np.zeros(1, dtype=np.longdouble)
+        offset, penalty = np.longdouble(0), np.longdouble('.07')
+        before = X.copy()
+        expected = _reference_gamma(X, y, beta, offset, penalty, 1., None)
+        grad_b, grad_beta, residual = gdwd._linear_gradient(
+            X, y, 1., penalty, beta, offset)
+        self.assertEqual(grad_b, float(expected[0]))
+        assert_array_equal(grad_beta, expected[1:])
+        self.assertEqual(grad_beta.dtype, np.dtype(np.longdouble))
+        self.assertNotEqual(grad_beta[0], np.longdouble(float(grad_beta[0])))
+        self.assertTrue(np.isfinite(residual))
+        assert_array_equal(X, before)
 
     def _error_policy_fit(self, implicit, policy, action, reference):
         X, y = np.array([[-1.], [1.]]), np.array([-1, 1])

@@ -5,6 +5,7 @@ envelope is a conservative trigger under ordinary floating-point assumptions;
 it does not certify every unflagged distance or every downstream decision.
 """
 import math
+from contextlib import nullcontext
 import numpy as np
 from scipy.sparse import issparse
 from sklearn.metrics.pairwise import check_pairwise_arrays, euclidean_distances
@@ -76,7 +77,7 @@ def _equal(X, i, Y, j):
     return all(a == b for a, b in _pair_coordinates(X, i, Y, j))
 
 
-def _apply_pairs(K, packed, X, Y, gamma):
+def _apply_pairs(K, packed, X, Y, gamma, *, preserve_errors=False):
     # After public pairwise validation, identity proves each same-index row
     # denotes exactly the same represented feature vector. This is narrower
     # than self_kernel metadata, equal shapes, or copied equal-valued arrays.
@@ -109,18 +110,44 @@ def _apply_pairs(K, packed, X, Y, gamma):
                 # Inputs already passed the public finite/dtype checks and CSR
                 # normalization. Validate no full basis here. Only the selected
                 # rows are copied, within the explicit feature scratch target.
-                K[i, distinct] = _rbf_from_validated_features(
-                    X[i:i+1], rows[~identical] if dense else Y[distinct], gamma, 256)[0]
+                if preserve_errors:
+                    K[i, distinct] = _rbf_from_validated_features(
+                        X[i:i+1], rows[~identical] if dense else Y[distinct],
+                        gamma, 256, preserve_errors=True)[0]
+                else:
+                    K[i, distinct] = _rbf_from_validated_features(
+                        X[i:i+1], rows[~identical] if dense else Y[distinct], gamma, 256)[0]
     return K
 
 
-def guarded_rbf(X, Y, *, gamma=None, x_norm=None, mode='sklearn', self_kernel=False):
-    """Evaluate qualified, validated/canonical named RBF inputs only."""
+def guarded_rbf(X, Y, *, gamma=None, x_norm=None, mode='sklearn', self_kernel=False,
+                preserve_errors=False):
+    """Evaluate qualified, validated/canonical named RBF inputs only.
+
+    Historical fitted v1 routes keep their original masked arithmetic. New
+    v2 construction retains that behavior for ordinary warn/ignore policies,
+    but lets actual arithmetic, including repaired-pair exponent evaluation,
+    honor other caller policies. Error-bound bookkeeping retains its internal
+    masks. This does not promise identical event counts or scalar exp rounding
+    across the historical and policy-aware routes.
+    """
     X, Y = check_pairwise_arrays(X, Y)
+    return _guarded_rbf_validated(X, Y, gamma=gamma, x_norm=x_norm, mode=mode,
+                                 self_kernel=self_kernel, preserve_errors=preserve_errors)
+
+
+def _guarded_rbf_validated(X, Y, *, gamma=None, x_norm=None, mode='sklearn',
+                           self_kernel=False, preserve_errors=False):
+    """Private core for inputs qualified by the original public validator."""
     gamma = 1.0 / X.shape[1] if gamma is None else float(gamma)
     if gamma == 0.0:
         return np.ones((X.shape[0], Y.shape[0]), dtype=float)
-    with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+    errors = np.geterr() if preserve_errors else None
+    ordinary = (errors is None or (errors['under'] == 'ignore' and
+                all(value in ('warn', 'ignore') for value in errors.values())))
+    arithmetic = (np.errstate(over='ignore', invalid='ignore', under='ignore')
+                  if ordinary else nullcontext())
+    with arithmetic:
         x_norm = row_norms(X, squared=True) if x_norm is None else x_norm
         y_norm = x_norm if Y is X else row_norms(Y, squared=True)
         if mode == 'norm_sum':
@@ -141,7 +168,10 @@ def guarded_rbf(X, Y, *, gamma=None, x_norm=None, mode='sklearn', self_kernel=Fa
         packed = _packed_flags(K, x_norm, y_norm, X.shape[1])
         K *= -gamma
         np.exp(K, out=K)
-    _apply_pairs(K, packed, X, Y, gamma)
+    if preserve_errors and not ordinary:
+        _apply_pairs(K, packed, X, Y, gamma, preserve_errors=True)
+    else:
+        _apply_pairs(K, packed, X, Y, gamma)
     if mode == 'norm_sum' and self_kernel:
         for start in range(0, len(K), 128):
             stop = min(start + 128, len(K))

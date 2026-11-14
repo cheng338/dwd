@@ -122,10 +122,15 @@ def _finish_row(high, low, K, alpha, b, sparse, index):
         # fsum can overflow internally before finite terms cancel. Its inputs
         # are finite product terms here, so re-evaluate the original affine sum.
         return _exact_row(K, alpha, b, sparse, index), True
+    return _finish_score(score, len(high), K, alpha, b, sparse, index)
+
+
+def _finish_score(score, term_count, K, alpha, b, sparse, index):
+    """Apply the original affine allowance and exact-recovery checks."""
     # _products loses at most 2 eta per product under its documented model.
     # Match the residual helper's enlarged final-sum allowance, including
     # the scalar intercept and outward rounding of this bound itself.
-    allowance = math.nextafter(4.0 * _EPS * abs(score) + (2.0 * len(high) + 6.0) * _ETA,
+    allowance = math.nextafter(4.0 * _EPS * abs(score) + (2.0 * term_count + 6.0) * _ETA,
                                math.inf)
     if not math.isfinite(allowance) or abs(score) <= allowance:
         if score == 0.0:
@@ -152,9 +157,20 @@ def _expanded_row(K, alpha, b, sparse, index, split_alpha=None):
     return _finish_row(high, low, K, alpha, b, sparse, index)
 
 
+_NATIVE_REPORTING_HOOKS = (_finish_row, _finish_score, _exact_row,
+                           _zero_has_exact_products, _round_to_nearest_now, _expanded_row)
+
+
 def _expanded_dense_rows(K, alpha, b, indices, split_alpha, output, exact_used,
-                         batch_enabled=True):
+                         batch_enabled=True, *, reporting=False):
     """Bound product scratch and preserve row-order fallback behavior."""
+    if reporting is True:
+        from ._compiled_affine_scores import try_expanded_dense_rows
+        native = try_expanded_dense_rows(
+            K, alpha, b, indices, split_alpha, output, exact_used,
+            batch_enabled=batch_enabled, reporting=reporting)
+        if native is not None:
+            return native
     if K.dtype.kind == 'f' and K.dtype.itemsize > 8:
         batch_enabled = False
     capacity = min(_TILE_MAX_ROWS, max(1, _TILE_BYTES // (128 * len(alpha))))
@@ -233,7 +249,7 @@ def _cheap_accept(block, coefficient_upper, dot_scores, scores, b, gamma,
     return _affine_accept(dot_scores, scores, b, bound, denominator, sum_denominator)
 
 
-def affine_scores(K, alpha, b, *, policy='adaptive', return_info=False):
+def affine_scores(K, alpha, b, *, policy='adaptive', return_info=False, _reporting=False):
     """Evaluate query-by-training K @ alpha + b without a new prediction tie rule.
 
     ``policy='adaptive'`` retains an ordinary result only when the documented
@@ -248,6 +264,8 @@ def affine_scores(K, alpha, b, *, policy='adaptive', return_info=False):
     are supported. There is no extra full-sized product matrix. Native, Python
     and rational temporary storage remain proportional to a row, with bounded
     dense tiles; memory exhaustion propagates after row-wise retry where possible.
+    Adaptive non-binary64 CSR data are converted in bounded row blocks; ordinary,
+    bound and refined evaluation use the same stored binary64 contributions.
 
     Returns a float64 vector, or (vector, diagnostic counts) with return_info.
     The caller should retain the existing ``scores > 0`` classification rule.
@@ -268,7 +286,7 @@ def affine_scores(K, alpha, b, *, policy='adaptive', return_info=False):
             with np.errstate(over='ignore', invalid='ignore', under='ignore'):
                 split_alpha = _split_operand(alpha)
             _expanded_dense_rows(K, alpha, b, np.arange(K.shape[0]), split_alpha,
-                                 output, exact_used)
+                                 output, exact_used, reporting=_reporting)
         else:
             for index in range(K.shape[0]):
                 if not sparse and split_alpha is None:
@@ -277,19 +295,36 @@ def affine_scores(K, alpha, b, *, policy='adaptive', return_info=False):
                 output[index], exact_used[index] = _expanded_row(
                     K, alpha, b, sparse, index, split_alpha)
     else:
-        with np.errstate(over='ignore', invalid='ignore', under='ignore'):
-            dots = np.asarray(K @ alpha, dtype=float).reshape(-1)
-            output[:] = dots + b
+        bounded_sparse_input = sparse and K.dtype != np.dtype(float)
+        if bounded_sparse_input:
+            dots = np.empty(K.shape[0], dtype=float)
+        else:
+            with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+                dots = np.asarray(K @ alpha, dtype=float).reshape(-1)
+                output[:] = dots + b
         magnitude = np.abs(alpha)
         coefficient_upper = None if sparse else _dense_l1_upper(magnitude)
         cheap_enabled = not sparse
         eps, eta = _EPS, _ETA
         for start in range(0, K.shape[0], 128):
             stop = min(start + 128, K.shape[0])
+            sparse_values = None
             if sparse:
-                block = K[start:stop].astype(float, copy=True)
+                if bounded_sparse_input:
+                    # Convert data only: sparse astype can coalesce duplicates.
+                    # The slice owns its arrays and preserves CSR matrix/array
+                    # kind, stored contribution order and caller-owned input.
+                    block = K[start:stop]
+                    block.data = np.asarray(block.data, dtype=float)
+                else:
+                    block = K[start:stop].astype(float, copy=True)
                 if not np.isfinite(block.data).all():
                     raise FloatingPointError('Nonfinite query kernel values.')
+                if bounded_sparse_input:
+                    with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+                        dots[start:stop] = np.asarray(block @ alpha, dtype=float).reshape(-1)
+                        output[start:stop] = dots[start:stop] + b
+                    sparse_values = block.data
                 block.data = np.abs(block.data)
                 terms = np.diff(block.indptr).astype(float)
             else:
@@ -316,6 +351,8 @@ def affine_scores(K, alpha, b, *, policy='adaptive', return_info=False):
             with np.errstate(over='ignore', invalid='ignore', under='ignore', divide='ignore'):
                 absolute_sum = np.asarray(block @ magnitude).reshape(-1)
                 bound = _dot_bound(absolute_sum, gamma, underflow, sum_denominator)
+            if bounded_sparse_input:
+                block.data = sparse_values
             accepted = ((absolute_sum >= 0) & _affine_accept(
                 dots[start:stop], output[start:stop], b, bound, denominator, sum_denominator))
             fine_rows += int(np.count_nonzero(accepted))
@@ -327,10 +364,15 @@ def affine_scores(K, alpha, b, *, policy='adaptive', return_info=False):
                     with np.errstate(over='ignore', invalid='ignore', under='ignore'):
                         split_alpha = _split_operand(alpha)
                 batch_enabled = _expanded_dense_rows(
-                    K, alpha, b, indices, split_alpha, output, exact_used, batch_enabled)
+                    K, alpha, b, indices, split_alpha, output, exact_used, batch_enabled,
+                    reporting=_reporting)
                 continue
             for index in indices:
                 index = int(index)
+                if bounded_sparse_input:
+                    output[index], exact_used[index] = _expanded_row(
+                        block, alpha, b, True, index - start)
+                    continue
                 if not sparse and split_alpha is None:
                     with np.errstate(over='ignore', invalid='ignore', under='ignore'):
                         split_alpha = _split_operand(alpha)

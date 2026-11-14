@@ -9,18 +9,18 @@ from dwd.cv import run_cv
 
 
 class CVPrecisionCacheTests(unittest.TestCase):
-    def test_float32_lambda_path_prepares_once_per_fold_for_both_implementations(self):
+    def test_float32_lambda_path_prepares_once_per_fold_for_both_backends(self):
         rng=np.random.default_rng(704)
         X=rng.normal(size=(24,4)).astype(np.float32); y=np.tile([-1,1],12)
         original=KernGDWD.cv_init
-        for implementation in ('reference','optimized'):
+        for backend in ('spectral','cholesky'):
             for features in (X,csr_matrix(X)):
-                with self.subTest(implementation=implementation,sparse=hasattr(features,'toarray')):
+                with self.subTest(backend=backend,sparse=hasattr(features,'toarray')):
                     calls=[]
                     def observed(model,data):
                         calls.append(data.shape)
                         return original(model,data)
-                    model=KernGDWD(implementation=implementation,kernel='rbf',kernel_kws={'gamma':.3},
+                    model=KernGDWD(backend=backend,kernel='rbf',kernel_kws={'gamma':.3},
                         initialization='zero',stopping='fixed',max_iter=2)
                     with patch.object(KernGDWD,'cv_init',observed):
                         actual=run_cv(model,features,y,{'lambd':[.1,.2]},cv=2,refit_best=False)
@@ -36,9 +36,10 @@ class CVPrecisionCacheTests(unittest.TestCase):
         self.assertFalse(corrected._cv_cache_matches(changed))
         self.assertFalse(corrected._cv_cache_matches(X[::-1]))
         self.assertFalse(corrected._cv_cache_matches(csr_matrix(X)))
-        legacy=KernGDWD(kernel='rbf',solver_mode='legacy').cv_init(X)
-        self.assertTrue(legacy._cv_cache_matches(X))
-        self.assertFalse(legacy._cv_cache_matches(X.astype(np.float64)))
+        corrected._cv_geometry = 'incompatible_geometry'
+        self.assertFalse(corrected._cv_cache_matches(X))
+        with self.assertRaisesRegex(TypeError, 'solver_mode'):
+            KernGDWD(kernel='rbf', solver_mode='legacy')
 
 
 if __name__=='__main__': unittest.main(verbosity=2)

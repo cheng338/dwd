@@ -21,16 +21,18 @@ class LinearDWDAuditTests(unittest.TestCase):
         self.beta = self.rng.normal(size=4)
         self.eig = get_P0_eig(self.X)
 
-    def test_legacy_trajectory_preserved(self):
+    def test_correct_explicit_trajectory_matches_archived_explicit_solver(self):
         path = Path(__file__).resolve().parent / '_legacy' / 'gen_dwd.py'
         spec = importlib.util.spec_from_file_location('compat_gen_dwd', path)
         old = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(old)
-        for implicit in (True, False):
+        # The archived explicit system is mathematically correct. Its implicit
+        # legacy correction is retired and is not a target for new trajectories.
+        for implicit in (False,):
             args = dict(X=self.X, y=self.y, lambd=.03, q=2.,
                         beta_init=self.beta, offset_init=.1, obj_tol=0,
                         max_iter=40, implicit_P=implicit, P0_eig=self.eig)
-            before, after = old.solve_gen_dwd(**args), solve_gen_dwd(**args, solver_mode='legacy')
+            before, after = old.solve_gen_dwd(**args), solve_gen_dwd(**args)
             for a, b in zip(before, after):
                 assert_allclose(a, b, rtol=2e-11, atol=1e-12)
 
@@ -56,7 +58,7 @@ class LinearDWDAuditTests(unittest.TestCase):
     def test_corrected_implicit_trajectory_matches_explicit(self):
         args = dict(X=self.X, y=self.y, lambd=.03, q=2.,
                     beta_init=self.beta, offset_init=.1, obj_tol=0,
-                    max_iter=80, solver_mode='schur')
+                    max_iter=80)
         implicit = solve_gen_dwd(**args, implicit_P=True)
         explicit = solve_gen_dwd(**args, implicit_P=False)
         for a, b in zip(implicit, explicit):
@@ -65,12 +67,12 @@ class LinearDWDAuditTests(unittest.TestCase):
 
     def test_estimator_explicit_selection_rng_tags_and_diagnostics(self):
         model = GenDWD(lambd=.03, q=2., implicit_P=False, random_state=12,
-                       max_iter=8, obj_tol=0, solver_mode='schur')
+                       max_iter=8, obj_tol=0)
         a = clone(model).fit(self.X, self.y)
         b = clone(model).fit(self.X, self.y)
         expected = solve_gen_dwd(self.X, self.y, lambd=.03, q=2.,
                                  implicit_P=False, random_state=12, max_iter=8,
-                                 obj_tol=0, solver_mode='schur')
+                                 obj_tol=0)
         assert_allclose(a.coef_.ravel(), expected[0], rtol=1e-13, atol=1e-13)
         assert_array_equal(a.coef_, b.coef_)
         self.assertTrue(is_classifier(a))
@@ -84,7 +86,7 @@ class LinearDWDAuditTests(unittest.TestCase):
         self.assertFalse(a.converged_)
 
     def test_cache_valid_only_for_same_data_and_sparse_parity(self):
-        model = GenDWD(random_state=2, max_iter=12, solver_mode='schur')
+        model = GenDWD(random_state=2, max_iter=12)
         with patch('dwd.gen_dwd.get_P0_eig', wraps=get_P0_eig) as eig:
             model.cv_init(self.X)
             model.fit(self.X, self.y)
@@ -104,9 +106,9 @@ class LinearDWDAuditTests(unittest.TestCase):
     def test_validation_rejects_unsupported_or_undefined_inputs(self):
         for setting in ({'q': 0}, {'q': np.nan}, {'lambd': np.inf},
                         {'obj_tol': -1}, {'max_iter': -1}, {'solver_mode': 'typo'}):
-            with self.subTest(setting=setting), self.assertRaises(ValueError):
+            with self.subTest(setting=setting), self.assertRaises(TypeError if 'solver_mode' in setting else ValueError):
                 GenDWD(**setting).fit(self.X, self.y)
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaisesRegex(TypeError, 'sample_weight'):
             GenDWDCV().fit(self.X, self.y, sample_weight=np.ones(len(self.y)))
         with self.assertRaises(ValueError):
             GenDWD().fit(self.X, np.arange(len(self.y)))
@@ -125,11 +127,11 @@ class LinearDWDAuditTests(unittest.TestCase):
     def test_linear_cv_uses_cartesian_grid_and_refits_selected_solver(self):
         model = GenDWDCV(lambd_vals=[.02, .1], q_vals=[1., 2.],
                          cv=3, max_iter=5, random_state=9,
-                         solver_mode='schur', implicit_P=False).fit(self.X, self.y)
+                         implicit_P=False).fit(self.X, self.y)
         self.assertEqual(len(model.agg_cv_results_['params']), 4)
         self.assertEqual(model.best_estimator_.max_iter, 5)
         self.assertFalse(model.best_estimator_.implicit_P)
-        self.assertEqual(model.best_estimator_.solver_mode, 'schur')
+        self.assertNotIn('solver_mode', model.best_estimator_.get_params())
         self.assertEqual(model.predict(self.X).shape, self.y.shape)
 
 

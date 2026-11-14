@@ -45,21 +45,21 @@ class RBFConstructionTests(unittest.TestCase):
             actual = norm_sum_rbf(features, query, gamma=.5)
             assert_allclose(actual, expected[:, [5, 1, 5, 0]], rtol=2e-15, atol=2e-15)
 
-    def test_healthy_path_retains_sklearn_kernel(self):
+    def test_healthy_qualified_path_uses_symmetric_norm_sum_kernel(self):
         model = self.estimator()
         model._Xfit = self.X
         actual = model._compute_training_kernel(self.X)
-        expected = pairwise_kernels(self.X, self.X, metric='rbf', gamma=.5)
-        self.assertEqual(model.kernel_computation_, 'guarded_sklearn_rel_v1')
+        expected = norm_sum_rbf(self.X, self.X, gamma=.5, self_kernel=True)
+        self.assertEqual(model.kernel_computation_, 'guarded_norm_sum_rel_v2')
         self.assertEqual(model.kernel_symmetry_correction_, 0.)
         assert_array_equal(actual, expected)
 
     def test_reconstructed_policy_survives_cache_pickle_and_batched_queries(self):
-        for implementation in ('optimized', 'reference'):
-            with self.subTest(implementation=implementation), patch(
+        for backend in ('auto', 'spectral'):
+            with self.subTest(backend=backend), patch(
                     'dwd.kernel_utils.pairwise_kernels', side_effect=self.perturbed_self_kernel):
-                fresh = self.estimator(implementation=implementation).fit(self.X, self.y)
-                cached = self.estimator(implementation=implementation).cv_init(self.X).fit(self.X, self.y)
+                fresh = self.estimator(backend=backend).fit(self.X, self.y)
+                cached = self.estimator(backend=backend).cv_init(self.X).fit(self.X, self.y)
                 expected = fresh.decision_function(self.X.copy())
                 for model in (fresh, cached, pickle.loads(pickle.dumps(cached))):
                     self.assertEqual(model.kernel_computation_, 'norm_sum')

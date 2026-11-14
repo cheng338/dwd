@@ -1,11 +1,11 @@
-"""Guarded cleanup for one proven CPython Thread.start interruption window.
+"""Protected retirement for exclusively owned default CPython executors.
 
-Derived from the qualified C04 direct-v5 control. CPython's sentinel and
-joinable-handle bootstraps are admitted by capability and ownership checks,
-not by minor version. Unknown implementations decline this recovery; this
-is not a general asynchronous-exception safety claim.
-The caller must set its call-local cancellation event before invoking this
-helper, must exclusively own the executor, and must preserve the original error.
+The original startup-window adapter remains capability/ownership guarded. The
+owned-pool path publishes an idempotent public wake even when completion proof
+declines, and waits only on admitted raw completion primitives. It does not
+edit thread registries or claim general asynchronous-exception safety.
+Callers must publish their call-local cancellation event before cleanup (or
+pass it explicitly), own the executor exclusively and preserve the body error.
 """
 import concurrent.futures.thread as thread_impl
 import _thread
@@ -14,12 +14,13 @@ import sys
 import threading
 import time
 from types import BuiltinFunctionType, MethodDescriptorType
-from weakref import ReferenceType
+from weakref import ReferenceType, ref
 
 
 _START = threading.Thread.start
 _ADJUST = thread_impl.ThreadPoolExecutor._adjust_thread_count
 _WORKER = thread_impl._worker
+_SHUTDOWN = thread_impl.ThreadPoolExecutor.shutdown
 _LOWLEVEL = _thread.start_new_thread
 _SENTINEL = getattr(_thread, '_set_sentinel', None)
 _JOINABLE = getattr(_thread, 'start_joinable_thread', None)
@@ -33,6 +34,32 @@ _BOOTSTRAP_METHODS = {name: getattr(threading.Thread, name, None) for name in (
     '_bootstrap', '_bootstrap_inner', '_set_ident', '_set_tstate_lock', '_set_native_id')}
 
 
+# Only source retrieval is cached. Every admission still checks the live runtime
+# and callable bindings below. A changed code object or inspect hook invalidates
+# this two-entry cache; unavailable source is never cached as a successful proof.
+_SOURCE_CACHE = {}
+
+# Private evaluation policy: only exact owned post-launch, not-yet-ready workers
+# receive this additional readiness interval. It is not a total cleanup timeout.
+_STARTUP_READY_WAIT_SECONDS = 0.010
+
+
+def _cached_source(function, kind):
+    provider = inspect.getsourcelines if kind == 'lines' else inspect.getsource
+    code = getattr(function, '__code__', None)
+    provider_code = getattr(provider, '__code__', None)
+    cached = _SOURCE_CACHE.get(kind)
+    if (cached is not None and cached[0] is function
+            and cached[1] is code and cached[2] is provider
+            and cached[3] is provider_code):
+        return cached[4]
+    result = provider(function)
+    if kind == 'lines':
+        result = (tuple(result[0]), result[1])
+    _SOURCE_CACHE[kind] = (function, code, provider, provider_code, result)
+    return result
+
+
 def _qualified_startup():
     """Return the verified wait line and completion mechanism, or decline."""
     if sys.implementation.name != 'cpython':
@@ -42,7 +69,7 @@ def _qualified_startup():
             or _START.__qualname__ != 'Thread.start'):
         return None
     try:
-        lines, start = inspect.getsourcelines(_START)
+        lines, start = _cached_source(_START, 'lines')
     except (OSError, TypeError, AttributeError):
         return None
     # Source layout (including comments on the wait line) varies by release.
@@ -69,7 +96,7 @@ def _qualified_startup():
                 or _SENTINEL.__name__ != '_set_sentinel'):
             return None
         try:
-            sentinel_source = inspect.getsource(_BOOTSTRAP_METHODS['_set_tstate_lock'])
+            sentinel_source = _cached_source(_BOOTSTRAP_METHODS['_set_tstate_lock'], 'text')
         except (OSError, TypeError, AttributeError):
             return None
         if '_tstate_lock' not in sentinel_source:
@@ -137,8 +164,8 @@ def _owned_worker_arguments(worker, executor):
                for name, method in _CONTEXT_METHODS.items())
 
 
-def capture_started_worker(executor, error):
-    """Return the positively identified omitted worker, else decline unchanged.
+def _capture_postlaunch_worker(executor, error):
+    """Capture exact omitted-worker ownership before readiness or wake.
 
     In particular, an exception at the low-level start CALL itself is ambiguous
     and is not admitted. No global thread list, other executor or guessed name
@@ -171,12 +198,20 @@ def capture_started_worker(executor, error):
         return None
     if not _owned_worker_arguments(worker, executor):
         return None
-    # A successful low-level launch does not prove that bootstrap completed.
-    # A bootstrap error can leave _started unset forever. Admit only readiness
-    # already observed here; do not wait speculatively to establish it.
-    if _completion_token(worker, mechanism) is None:
+    return worker, mechanism
+
+
+def capture_started_worker(executor, error):
+    """Preserve the legacy ready-only capture contract.
+
+    A successful low-level launch does not prove bootstrap completion. This
+    entry point still declines an unset readiness flag without waiting.
+    """
+    captured = _capture_postlaunch_worker(executor, error)
+    if captured is None:
         return None
-    return worker
+    worker, mechanism = captured
+    return worker if _completion_token(worker, mechanism) is not None else None
 
 
 def _completion_token(worker, mechanism):
@@ -197,21 +232,374 @@ def _completion_token(worker, mechanism):
 def _wait_sentinels(sentinels):
     # Unlike interrupted Thread.join, this never releases another thread's
     # thread-state lock. CPython releases it when that thread state is cleared.
+    polls = 0
     while any(sentinel.locked() for sentinel in sentinels):
-        time.sleep(.01)
+        # Idle workers normally finish during these bounded scheduler yields.
+        # Longer active cleanup backs off without assuming a completion time.
+        time.sleep(0 if polls < 64 else .001)
+        polls += 1
 
 
 def _wait_completions(mechanism, tokens):
     if mechanism == 'sentinel':
         _wait_sentinels(tokens)
         return
+    polls = 0
     while not all(token.is_done() for token in tokens):
-        time.sleep(.01)
+        time.sleep(0 if polls < 64 else .001)
+        polls += 1
     # Early 3.13 is_done only observes thread-state teardown; it does not join
     # the OS thread. The builtin idempotent join completes that final step.
     # Retrying it after interruption never releases a foreign sentinel lock.
     for token in tokens:
         token.join(0)
+
+
+def publish_cancellation(cancelled):
+    """Publish the owned call event despite further KeyboardInterrupts.
+
+    The caller already owns the primary error. This does not catch unrelated
+    failures or promise protection against asynchronous exceptions at any byte.
+    """
+    while True:
+        try:
+            cancelled.set()
+            return
+        except KeyboardInterrupt:
+            pass
+
+
+def _unregistered_adjust_worker(executor, error):
+    """Whether this exact failed submit may have omitted a worker."""
+    trace = None if error is None else error.__traceback__
+    while trace is not None:
+        frame = trace.tb_frame
+        if frame.f_code is _ADJUST.__code__ and frame.f_locals.get('self') is executor:
+            worker = frame.f_locals.get('t')
+            if worker is not None and worker not in executor._threads:
+                return True
+        trace = trace.tb_next
+    return False
+
+
+class _OwnedShutdown:
+    """Weakly bound public-shutdown adapter for one exclusively owned pool."""
+
+    def __init__(self, executor):
+        self.executor_ref = ref(executor)
+        self.completed_workers = None
+
+    def completed(self, executor):
+        return (self.executor_ref() is executor and executor._shutdown is True
+                and self.completed_workers is not None
+                and self.completed_workers == frozenset(executor._threads))
+
+    def record_completion(self, executor):
+        self.completed_workers = frozenset(executor._threads)
+
+    def __call__(self, wait=True, *, cancel_futures=False):
+        executor = self.executor_ref()
+        if executor is None:
+            return
+        if not wait:
+            # Preserve the nonblocking public API; wake alone records no drain.
+            interruption = None
+            while True:
+                try:
+                    _check_shutdown_binding(executor)
+                    _SHUTDOWN(executor, wait=False, cancel_futures=cancel_futures)
+                    break
+                except KeyboardInterrupt as error:
+                    if interruption is None:
+                        interruption = error
+                except BaseException as failure:
+                    if interruption is not None:
+                        raise interruption from failure
+                    raise
+            if interruption is not None:
+                raise interruption
+            return
+        receipt, interruption = drain_owned_executor(executor, cancel_futures=cancel_futures)
+        if not receipt['drained']:
+            failure = RuntimeError('Owned executor was woken but completion is unproved; drain not established')
+            if interruption is not None:
+                raise interruption from failure
+            raise failure
+        if interruption is not None:
+            raise interruption
+
+
+_OWNED_SHUTDOWN_CALL = _OwnedShutdown.__call__
+_OWNED_SHUTDOWN_CODE = _OwnedShutdown.__call__.__code__
+_SHUTDOWN_CODE = _SHUTDOWN.__code__
+_CODE_BINDINGS = tuple((function, getattr(function, '__code__', None))
+                       for function in (_START, _ADJUST, _WORKER,
+                           *_BOOTSTRAP_METHODS.values(), *_CONTEXT_METHODS.values())
+                       if function is not None)
+
+
+def _owned_shutdown(executor):
+    shutdown = executor.shutdown
+    if (type(shutdown) is _OwnedShutdown
+            and _OwnedShutdown.__call__ is _OWNED_SHUTDOWN_CALL
+            and _OwnedShutdown.__call__.__code__ is _OWNED_SHUTDOWN_CODE
+            and shutdown.executor_ref() is executor):
+        return shutdown
+    return None
+
+
+def _check_shutdown_binding(executor):
+    if (type(executor) is not thread_impl.ThreadPoolExecutor
+            or thread_impl.ThreadPoolExecutor.shutdown is not _SHUTDOWN
+            or _SHUTDOWN.__code__ is not _SHUTDOWN_CODE
+            or _SHUTDOWN.__module__ != thread_impl.__name__
+            or _SHUTDOWN.__qualname__ != 'ThreadPoolExecutor.shutdown'
+            or (_owned_shutdown(executor) is None
+                and getattr(executor.shutdown, '__func__', None) is not _SHUTDOWN)):
+        raise RuntimeError('Owned default executor shutdown binding is unavailable; drain not established')
+
+
+def own_default_executor(executor):
+    """Install protected public shutdown without a strong executor cycle."""
+    _check_shutdown_binding(executor)
+    if _owned_shutdown(executor) is None:
+        executor.shutdown = _OwnedShutdown(executor)
+    return executor
+
+
+def drain_owned_executor(executor, error=None, cancelled=None, observe=None, *, cancel_futures=False):
+    """Wake an exclusively owned default pool, then prove admitted completion.
+
+    Requires the unchanged standard shutdown binding on an exactly owned pool.
+    Replaced shutdown methods are refused before claiming wake or completion.
+    Returns (receipt, first_cleanup_interrupt). The owner re-raises that first
+    interrupt after successful cleanup if no earlier body error exists. Wake
+    publication occurs even when completion qualification declines or raises.
+    An unproved receipt must not be interpreted as a drain, nor followed by a
+    Thread.join that can corrupt the available sentinel evidence.
+    """
+    first_interrupt = None
+    repeated = 0
+
+    def retry(function, *args):
+        nonlocal first_interrupt, repeated
+        while True:
+            try:
+                return function(*args)
+            except KeyboardInterrupt as interruption:
+                if first_interrupt is None:
+                    first_interrupt = interruption
+                repeated += 1
+
+    owned_shutdown = None
+    pending_startup = None
+    readiness_timing = None
+    readiness_outcome = None
+    readiness_report = None
+    partial_report = {'attempted': False, 'workers': 0,
+                      'completed': False, 'outcome': 'not_eligible'}
+
+    workers = ()
+    tokens = ()
+    mechanism = None
+    qualified = False
+    reason = 'Completion capability or owned-worker readiness is unavailable'
+
+    def capture():
+        nonlocal owned_shutdown
+        pending = None
+        _check_shutdown_binding(executor)
+        owned_shutdown = _owned_shutdown(executor)
+        if owned_shutdown is not None and owned_shutdown.completed(executor):
+            return tuple(executor._threads), (), None, True, None, None
+        startup = _qualified_startup()
+        if (startup is None
+                or threading.Thread.start is not _START
+                or thread_impl.ThreadPoolExecutor._adjust_thread_count is not _ADJUST
+                or thread_impl._worker is not _WORKER
+                or any(getattr(function, '__code__', None) is not code
+                       for function, code in _CODE_BINDINGS)):
+            return (), (), None, False, reason, None
+        mechanism = startup[1]
+        workers = tuple(executor._threads)
+        captured = _capture_postlaunch_worker(executor, error) if error is not None else None
+        possible_omitted = _unregistered_adjust_worker(executor, error)
+        omitted = None
+        tokens = tuple(_completion_token(worker, mechanism) for worker in workers)
+        if captured is not None:
+            worker, captured_mechanism = captured
+            started = getattr(worker, '_started', None)
+            if captured_mechanism == mechanism:
+                if type(started) is threading.Event and not started.is_set():
+                    if possible_omitted and all(token is not None for token in tokens):
+                        # Retain proved ownership before wake can finish the
+                        # worker and delete its target/args. Pending ownership
+                        # belongs to this same capture tuple across retry.
+                        pending = (worker, started, mechanism, frozenset(workers))
+                else:
+                    omitted_token = _completion_token(worker, mechanism)
+                    if omitted_token is not None:
+                        omitted = worker
+                        workers += (omitted,)
+                        tokens += (omitted_token,)
+        qualified = (not possible_omitted or omitted is not None) and all(
+            token is not None for token in tokens)
+        why = ('Possible omitted worker completion is unproved'
+               if possible_omitted and omitted is None else None if qualified else reason)
+        return workers, tokens, mechanism, qualified, why, pending
+
+    def request_wake():
+        # Unknown replacements are explicitly outside the owned-public-shutdown
+        # contract. KeyboardInterrupt during this check is still deferred.
+        _check_shutdown_binding(executor)
+        _SHUTDOWN(executor, wait=False, cancel_futures=cancel_futures)
+
+    def begin_readiness_wait():
+        nonlocal readiness_timing
+        if readiness_timing is not None:
+            return
+        budget = _STARTUP_READY_WAIT_SECONDS
+        if type(budget) is not float or not 0.0 <= budget <= 1.0:
+            raise ValueError('Private startup readiness budget must be a finite float in [0, 1] seconds')
+        now = time.perf_counter()
+        # This tuple is committed once. Retried actions never renew its deadline.
+        readiness_timing = (budget, now, now + budget)
+
+    def pending_binding_is_valid():
+        worker, started, saved_mechanism, registered = pending_startup
+        _check_shutdown_binding(executor)
+        startup = _qualified_startup()
+        return (startup is not None and startup[1] == saved_mechanism
+                and threading.Thread.start is _START
+                and thread_impl.ThreadPoolExecutor._adjust_thread_count is _ADJUST
+                and thread_impl._worker is _WORKER
+                and not any(getattr(function, '__code__', None) is not code
+                            for function, code in _CODE_BINDINGS)
+                and _owned_shutdown(executor) is owned_shutdown
+                and type(worker) is threading.Thread
+                and getattr(worker, '_started', None) is started
+                and type(started) is threading.Event
+                and frozenset(executor._threads) == registered
+                and worker not in executor._threads
+                and worker not in thread_impl._threads_queues)
+
+    def promote_pending_startup():
+        nonlocal readiness_outcome
+        worker, started, saved_mechanism, _ = pending_startup
+        deadline = readiness_timing[2]
+        while True:
+            if not pending_binding_is_valid():
+                readiness_outcome = ('unproved', None, time.perf_counter())
+                return None
+            if readiness_outcome is not None:
+                return readiness_outcome[1]
+            now = time.perf_counter()
+            if now >= deadline:
+                readiness_outcome = ('expired', None, now)
+                return None
+            if started.is_set():
+                token = _completion_token(worker, saved_mechanism)
+                observed = time.perf_counter()
+                if observed >= deadline:
+                    readiness_outcome = ('expired', None, observed)
+                    return None
+                if token is None:
+                    readiness_outcome = ('unproved', None, observed)
+                    return None
+                # One outcome commit preserves an in-budget observation even
+                # if later bookkeeping is interrupted after the deadline.
+                readiness_outcome = ('ready', token, observed)
+                return token
+            time.sleep(min(.001, deadline - now))
+
+    def readiness_metadata():
+        status, _, observed = readiness_outcome
+        budget, started_at, _ = readiness_timing
+        return {'eligible': True, 'attempted': True,
+                'budget_seconds': budget, 'outcome': status,
+                'elapsed_seconds': max(0.0, observed - started_at)}
+
+    # Capture tokens before wake can finish a worker and erase its target/args.
+    # The finally is also required for unsupported or failed capture: no token
+    # admission may bypass the idempotent public queue wake.
+    try:
+        try:
+            if cancelled is not None:
+                retry(cancelled.set)
+            workers, tokens, mechanism, qualified, reason, pending_startup = retry(capture)
+            if observe is not None:
+                retry(observe, 'captured', workers)
+        finally:
+            retry(request_wake)
+            if observe is not None:
+                retry(observe, 'shutdown-requested', workers)
+        if pending_startup is not None:
+            # Wake precedes any readiness delay. This budget bounds only the
+            # readiness policy, not scheduling, wake retries or the later drain.
+            retry(begin_readiness_wait)
+            if observe is not None:
+                retry(observe, 'startup-readiness-wait', (pending_startup[0],))
+            promoted = retry(promote_pending_startup)
+            readiness_report = retry(readiness_metadata)
+            if promoted is not None:
+                workers += (pending_startup[0],)
+                tokens += (promoted,)
+                qualified = True
+                reason = None
+            else:
+                reason = 'Owned omitted-worker readiness wait ended without completion proof: ' + readiness_report['outcome']
+        if not qualified and pending_startup is not None and tokens:
+            # Separate partial cleanup: the omitted worker remains unproved.
+            # Never record complete executor retirement from this branch.
+            def valid_registered_tokens():
+                return (pending_binding_is_valid()
+                        and len(workers) == len(tokens)
+                        and all(_completion_token(worker, mechanism) is token
+                                for worker, token in zip(workers, tokens)))
+
+            def drain_registered_only():
+                nonlocal partial_report
+                if not valid_registered_tokens():
+                    partial_report = {**partial_report, 'completed': False,
+                                      'outcome': 'unproved'}
+                    return
+                partial_report = {'attempted': True, 'workers': len(workers),
+                                  'completed': False, 'outcome': 'unproved'}
+                _wait_completions(mechanism, tokens)
+                if valid_registered_tokens():
+                    partial_report = {'attempted': True, 'workers': len(workers),
+                                      'completed': True, 'outcome': 'completed'}
+
+            retry(drain_registered_only)
+            if partial_report['completed'] and observe is not None:
+                retry(observe, 'partial-drained', workers)
+        if qualified:
+            if mechanism is not None:
+                retry(_wait_completions, mechanism, tokens)
+            if owned_shutdown is not None:
+                retry(owned_shutdown.record_completion, executor)
+            if observe is not None:
+                retry(observe, 'drained', workers)
+    except BaseException as cleanup_error:
+        # With no body error, the first cleanup interrupt remains primary even
+        # if a later non-interrupt failure prevents proof of completion.
+        if first_interrupt is not None and error is None and cleanup_error is not first_interrupt:
+            first_interrupt.add_note('Owned cleanup failed; final drain is not established.')
+            raise first_interrupt from cleanup_error
+        raise
+    receipt = {'qualified': qualified, 'drained': qualified,
+               'shutdown_requested': True, 'reason': reason,
+               'owned_workers': len(workers), 'repeated_interrupts': repeated,
+               'completion_mechanism': mechanism,
+               'all_captured_workers_completed': qualified,
+               'registry_mutation': False,
+               'scope': 'Exclusively owned default executor; admitted CPython completion tokens',
+               'previously_completed': qualified and mechanism is None,
+               'partial_registered_drain': partial_report,
+               'startup_readiness_wait': readiness_report if readiness_report is not None else {
+                   'eligible': False, 'attempted': False, 'budget_seconds': None,
+                   'outcome': 'not_eligible', 'elapsed_seconds': None}}
+    return receipt, first_interrupt
 
 
 def drain_started_before_registration(executor, error, observe=None):

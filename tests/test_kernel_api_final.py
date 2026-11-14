@@ -7,6 +7,7 @@ from numpy.testing import assert_allclose, assert_array_equal
 from scipy.sparse import csr_matrix
 from sklearn.base import clone, is_classifier
 from sklearn.exceptions import NotFittedError
+from legacy_solver_fixtures import load_legacy_case
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
 
@@ -34,7 +35,7 @@ class FinalKernelAPITests(unittest.TestCase):
 
     def test_defaults_retain_objective_rule_and_use_corrected_zero_initialization(self):
         defaults = KernGDWD()
-        self.assertEqual(defaults.solver_mode, 'schur')
+        self.assertNotIn('solver_mode', defaults.get_params())
         self.assertEqual(defaults.stopping, 'objective')
         self.assertEqual(defaults.obj_tol, 1e-5)
         self.assertEqual(defaults.max_iter, 100)
@@ -61,16 +62,18 @@ class FinalKernelAPITests(unittest.TestCase):
         assert_allclose(fitted.dual_coef_[0], solution[:-1], atol=2e-13, rtol=2e-13)
         assert_allclose(fitted.intercept_[0], solution[-1], atol=2e-13, rtol=2e-13)
 
-    def test_explicit_legacy_keeps_random_initialization_and_trajectory(self):
-        fitted = self.model(solver_mode='legacy', random_state=83).fit(self.X, self.y)
-        K = rbf_kernel(self.X, gamma=.3)
-        alpha, offset, history, _ = solve_gen_kern_dwd(
-            K, self.y, fitted.lambd, q=1, max_iter=8, obj_tol=0.,
-            random_state=83, solver_mode='legacy')
-        assert_array_equal(fitted.dual_coef_[0], alpha)
-        self.assertEqual(fitted.intercept_[0], offset)
-        assert_array_equal(fitted.objective_history_, history)
-        self.assertFalse(fitted.stationarity_checked_)
+    def test_current_prediction_preserves_fitted_state_and_removed_mode_rejects(self):
+        saved = load_legacy_case('kernel_rbf')
+        fitted = self.model().fit(saved['X'], saved['y'])
+        before = fitted.dual_coef_.copy(), fitted.intercept_.copy(), fitted.objective_history_.copy()
+        scores = fitted.decision_function(saved['query'])
+        assert np.isfinite(scores).all()
+        assert_array_equal(fitted.predict(saved['query']), fitted.classes_[(scores > 0).astype(int)])
+        for name, value in zip(('dual_coef_', 'intercept_', 'objective_history_'), before):
+            assert_array_equal(getattr(fitted, name), value)
+        self.assertTrue(fitted.stationarity_checked_)
+        with self.assertRaisesRegex(TypeError, 'solver_mode'):
+            self.model(solver_mode='legacy', random_state=83).fit(self.X, self.y)
 
     def test_clone_and_grid_search_keep_notation_and_new_controls(self):
         base = self.model(initialization='zero', backend='spectral', prediction_batch_size=3)
@@ -181,9 +184,9 @@ class FinalKernelAPITests(unittest.TestCase):
 
     def test_weights_unsupported_legacy_options_and_failed_refit(self):
         for model in (self.model(), KernGDWDCV()):
-            with self.assertRaisesRegex(NotImplementedError, 'Sample weights'):
+            with self.assertRaisesRegex(TypeError, 'sample_weight'):
                 model.fit(self.X, self.y, sample_weight=np.ones(24))
-        with self.assertRaisesRegex(ValueError, 'Legacy mode'):
+        with self.assertRaisesRegex(TypeError, 'solver_mode'):
             self.model(solver_mode='legacy', backend='cholesky').fit(self.X, self.y)
         fitted = self.model().fit(self.X, self.y)
         with self.assertRaises((FloatingPointError, ValueError)):

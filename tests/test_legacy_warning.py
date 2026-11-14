@@ -1,11 +1,11 @@
-"""Visible legacy-fit warnings without changes to saved-model prediction."""
+"""Removed selectors fail explicitly; current prediction and persistence are quiet."""
 
 import pickle
 import unittest
 import warnings
 
 import numpy as np
-from numpy.testing import assert_array_equal
+from numpy.testing import assert_array_equal, assert_allclose
 from sklearn.base import clone
 from sklearn.metrics.pairwise import rbf_kernel
 
@@ -29,16 +29,16 @@ class LegacyWarningTests(unittest.TestCase):
 
     def model(self, **changes):
         options = dict(kernel='rbf', kernel_kws={'gamma': .2},
-                       solver_mode='legacy', max_iter=2, random_state=4)
+                       max_iter=2, random_state=4)
         options.update(changes)
         return KernGDWD(**options)
 
-    def test_each_fit_entrypoint_warns(self):
+    def test_each_fit_entrypoint_rejects_without_warning(self):
         calls = [
             lambda: solve_gen_kern_dwd(
                 self.K, self.y, .1, solver_mode='legacy', max_iter=2,
                 random_state=4),
-            lambda: self.model().fit(self.X, self.y),
+            lambda: self.model(solver_mode='legacy').fit(self.X, self.y),
             lambda: KernGDWDCV(
                 kernel='rbf', kernel_kws_vals=[{'gamma': .2}],
                 lambd_vals=[.1], q_vals=[1.], cv=2, solver_mode='legacy',
@@ -47,34 +47,34 @@ class LegacyWarningTests(unittest.TestCase):
         for position, call in enumerate(calls):
             with self.subTest(entrypoint=position), warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter('always')
-                call()
-            self.assertTrue(self.legacy_warnings(caught))
+                with self.assertRaisesRegex(TypeError, 'solver_mode'):
+                    call()
+            self.assertFalse(self.legacy_warnings(caught))
 
     def test_prediction_and_pickle_do_not_warn(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', FutureWarning)
-            model = self.model().fit(self.X, self.y)
-        expected = model.decision_function(self.query)
+        model, query = self.model().fit(self.X, self.y), self.X[:5].copy()
+        expected = model.decision_function(query)
+        assert_array_equal(model.predict(query), model.classes_[(expected > 0).astype(int)])
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
             restored = pickle.loads(pickle.dumps(model))
-            assert_array_equal(restored.decision_function(self.query), expected)
-            assert_array_equal(restored.predict(self.query), model.predict(self.query))
+            assert_array_equal(restored.decision_function(query), expected)
+            assert_array_equal(restored.predict(query), model.predict(query))
         self.assertFalse(self.legacy_warnings(caught))
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
-            refitted = clone(restored).fit(self.X, self.y)
-        self.assertTrue(self.legacy_warnings(caught))
-        assert_array_equal(refitted.decision_function(self.query), expected)
+            clone(restored).fit(self.X, self.y)
+        self.assertFalse(self.legacy_warnings(caught))
+        assert_array_equal(restored.decision_function(query), expected)
 
     def test_corrected_mode_does_not_emit_legacy_warning(self):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
-            solve_gen_kern_dwd(self.K, self.y, .1, solver_mode='schur', max_iter=2)
-            self.model(solver_mode='schur').fit(self.X, self.y)
+            solve_gen_kern_dwd(self.K, self.y, .1, max_iter=2)
+            self.model().fit(self.X, self.y)
         self.assertFalse(self.legacy_warnings(caught))
 
-    def test_invalid_low_level_inputs_fail_before_warning(self):
+    def test_invalid_low_level_inputs_do_not_bypass_retirement(self):
         base = dict(K=self.K, y=self.y, lambd=.1,
                     solver_mode='legacy', max_iter=2, random_state=4)
         for changes in ({'q': 0}, {'lambd': -1}, {'max_iter': -1},
@@ -82,15 +82,15 @@ class LegacyWarningTests(unittest.TestCase):
                         {'offset_init': np.inf}):
             with self.subTest(changes=tuple(changes)), warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter('always')
-                with self.assertRaises(ValueError):
+                with self.assertRaises(TypeError):
                     solve_gen_kern_dwd(**dict(base, **changes))
             self.assertFalse(self.legacy_warnings(caught))
 
-    def test_invalid_estimator_input_fails_before_warning(self):
+    def test_invalid_estimator_input_does_not_bypass_retirement(self):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
-            with self.assertRaises(ValueError):
-                self.model(q=0).fit(self.X, self.y)
+            with self.assertRaises(TypeError):
+                self.model(q=0, solver_mode='legacy').fit(self.X, self.y)
         self.assertFalse(self.legacy_warnings(caught))
 
 

@@ -84,7 +84,7 @@ class GuardedRBFTests(unittest.TestCase):
             X=np.repeat(rng.normal(size=(4,3)),20,axis=0);y=np.tile([-1,1],40)
             model=KernGDWD(kernel='rbf',kernel_kws={'gamma':.3},q=1,lambd=1e-12,max_iter=20,
                            stopping='fixed',initialization='zero',random_state=7,backend='auto').fit(X,y)
-            assert model.kernel_computation_=='guarded_sklearn_rel_v1'
+            assert model.kernel_computation_=='guarded_norm_sum_rel_v2'
             K=model._compute_kernel(model._Xfit)
             scores=[model.decision_function(X.copy(),prediction_batch_size=b) for b in (1,7,80,None)]
             assert all(np.array_equal(scores[0],s) for s in scores)
@@ -104,10 +104,11 @@ class GuardedRBFTests(unittest.TestCase):
             small=X[::4].copy();ys=y[::4].copy();ys[::2]=1;ys[1::2]=-1
             cached=KernGDWD(kernel='rbf',kernel_kws={'gamma':.3},lambd=1e-3,max_iter=5,stopping='fixed',initialization='zero').cv_init(small)
             assert cached._cv_cache_matches(small)
+            cached_policy=cached._cv_kernel_computation
             cached._cv_kernel_computation='sklearn'
             assert not cached._cv_cache_matches(small)
             record('old-cache-rejected',rejected=True)
-            cached._cv_kernel_computation='guarded_sklearn_rel_v1'
+            cached._cv_kernel_computation=cached_policy
             old=ku.pairwise_kernels
             calls=[]
             def wrapper(*args,**kwargs):
@@ -117,7 +118,10 @@ class GuardedRBFTests(unittest.TestCase):
                 assert cached._cv_cache_matches(small)
                 hooked=fit(small,ys)
                 assert hooked.kernel_computation_=='sklearn'
-                before=len(calls);model._compute_kernel(X[:3]);assert len(calls)>before
+                # A historical sklearn-mode predictor still observes this hook.
+                historical=pickle.loads(pickle.dumps(model))
+                historical.kernel_computation_='guarded_sklearn_rel_v2'
+                before=len(calls);historical._compute_kernel(X[:3]);assert len(calls)>before
                 assert pn.prepare_norm_kernel(model,X,X) is None
             finally:ku.pairwise_kernels=old
             record('post-import-hook',preserved=True,guarded_owned_cache_preserved=True)
@@ -171,7 +175,7 @@ class GuardedRBFTests(unittest.TestCase):
                     a=model.decision_function(X,prediction_batch_size=None)
                     b=model.decision_function(X,prediction_batch_size=7)
                     assert np.array_equal(a,b)
-                    if policy=='raise':assert not model._guarded_rbf_eligible()
+                    if policy=='raise':assert model._guarded_rbf_eligible()
                 record('fitted-error-policy',policy=policy,batches_equal=True)
             # A fitted mode must retain its corrected construction if callers later
             # alter np.seterr. Use a synthetic fitted coefficient state here so the

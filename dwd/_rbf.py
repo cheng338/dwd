@@ -1,7 +1,8 @@
-"""Consistent finite-precision construction of a named RBF kernel.
+"""Finite-precision helpers for named RBF construction and prediction.
 
-Used only after an internally generated RBF self-kernel fails the existing
-symmetry tolerance. This is not a repair of a caller-supplied kernel matrix.
+These helpers support the existing norm-sum fallback and prediction of fitted
+norm-sum models. Qualified new self kernels use the guarded norm-sum path
+upfront. This is not a repair of caller-supplied matrices or a proof of PSD.
 """
 
 import numpy as np

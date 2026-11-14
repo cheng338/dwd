@@ -1,3 +1,6 @@
 # These frozen test oracles are verified by their exact byte hashes.
 # Preserve their original line endings on every checkout.
 tests/fixtures/performance_oracle/*.py -text
+tests/_legacy/linear_gradient_inverse_reference.py -text
+tests/fixtures/scalar_feature_diagnostics.py -text
+tests/fixtures/ir21_baseline_gen_dwd.py -text

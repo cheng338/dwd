@@ -29,7 +29,7 @@ class ScoreReconstructionRecoveryTests(unittest.TestCase):
         self.y = np.array([-1., -1., 1., 1.])
 
     def model(self, **kwargs):
-        options = dict(kernel='precomputed', implementation='optimized',
+        options = dict(kernel='precomputed', 
                        initialization='zero', lambd=.1, max_iter=0, stopping='fixed')
         options.update(kwargs)
         return KernGDWD(**options)

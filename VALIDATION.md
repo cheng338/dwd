@@ -1,5 +1,558 @@
 # Validation
 
+## Native-loader initialization-order correction (2026-11-10)
+
+The complete-suite follow-up identified a package acceleration lifecycle defect.
+The November 9 fused-gradient path could capture the ordered reducer's cold
+loader state before that reducer finished loading. A subsequent legitimate
+initialization then invalidated the immutable context, and its intentionally
+sticky mutation guard kept refusing fusion. DWD 1.3.19 has no fused context or
+ordered native reducer, so this specific defect is absent from the release.
+The November 8 lazy loader alone did not introduce it; the November 9 context
+capture introduced the interaction. The earlier fixture prewarming preserved
+checks but did not repair the package lifecycle, as clarified below.
+
+The correction adds a definition-owned loader-completion state. Only normal
+terminal loading outcomes, including expected negative caches, publish exact
+True. Cold, reentrant, concurrent in-flight and unexpectedly interrupted loading
+cannot qualify a first context. The original path runs while loading is
+incomplete; a later eligible call captures the completed state. The completion
+binding joins the unchanged final native guard. Existing contexts are never
+rebased, and later mutations still refuse. No C source, binary interface,
+arithmetic order, numerical acceptance, public option or solver default changed.
+No environment or dependency was modified, and pytest/psutil remain validation
+tools rather than new runtime dependencies.
+
+Isolated Python 3.12 validation used Windows dwd_aocl and Robust Linux mkl202602:
+
+| Selection | Windows | Robust |
+| --- | ---: | ---: |
+| Full DWD suite, 5,377 collected | 5,307 passed; 70 skipped | 5,354 passed; 23 skipped |
+| Focused native, 845 selected | 845 passed | 843 passed; 2 skipped |
+
+Both full suites and both focused native runs exited zero. The full suites include all 20 new fresh-process
+cases covering genuine gradient/beta acceptance, cold/warm order, expected
+negative caches, reentrancy, blocked concurrent loading, unexpected exceptions,
+malformed completion flags and post-capture mutation refusal. Relevant numerical
+checks retain exact Fraction-reference comparisons. The previous 268 blocked
+nodes now all pass on Windows; on Linux 267 pass and one reaches its pre-existing
+platform skip for an unavailable audited flush-mode control. All other earlier
+skip nodes and reasons are unchanged. Focused and full counts overlap and must
+not be added as unique tests.
+
+The local portable selection completed 420 passes and 349 test skips among 769
+selected nodes. Its additional native-core module collection skip accounts for
+76 unavailable native-only selections; pytest's console counts that module as
+one additional skip. The initial selection guard refusal occurred before any
+test execution and remains recorded. An earlier restricted-permission local
+full attempt and its sandbox-specific hard-link/socket failures also remain
+recorded separately; the complete normal-user run above passed. Isolated
+source snapshots and recorded dependency-file hashes were unchanged during the runs. Captured
+proven process owners were closed; transient unproven discoveries are retained,
+so these receipts do not assert universal descendant coverage.
+
+A separate finite cost panel compared the frozen pre-fix development source
+with the correction, using 96 fresh children per host: six ABBA blocks for each
+of two shapes and cold/warm modes. It used one native thread and serial children
+because these small private-helper measurements require isolation, not parallel
+throughput. Cold timing includes the first and second complete gradient calls;
+their sum excludes the untimed state-observation gap. Warm gradient and beta
+batches contain 256 calls each. Oracles, process observations and genuine native
+qualification are outside timers. Both hosts completed all children with exit
+zero, exact checked outputs and unchanged relevant source/artifact hashes.
+
+| First two cold helper calls | Pre-fix median | Corrected median | Median paired corrected/pre-fix |
+| --- | ---: | ---: | ---: |
+| Windows, 2 x 8 | 1.063 ms | 1.414 ms | 1.367 |
+| Windows, 32 x 63 | 1.279 ms | 1.697 ms | 1.360 |
+| Robust, 2 x 8 | 2.541 ms | 3.751 ms | 1.464 |
+| Robust, 32 x 63 | 2.974 ms | 4.392 ms | 1.451 |
+
+This exposes a one-time initialization cost of about 0.35-0.42 ms on Windows
+and 1.21-1.42 ms on Robust in these cases; deferral does not eliminate that cost.
+Warm paired median ratios range from 0.995 to 1.008 on Windows and 0.978 to 1.036
+on Robust, with variation between blocks. These are descriptive helper timings,
+not a universal no-slowdown, statistical precision, total-fit or vendor/version
+comparison. Untimed qualification is not a per-timed-call native-entry counter.
+The measured one-time startup cost is accepted to avoid prematurely capturing mutable
+loader state and permanently disabling the eligible fused path after legitimate
+initialization. This correction does not close the separate accumulated
+wide-feature reporting-cost question.
+
+## Shared-fold performance decision (2026-11-09)
+
+A direct follow-up compared the current explicit shared-fold helper, current
+ordinary `GridSearchCV.fit`, and the released ordinary implementation. It used
+Windows `dwd_aocl` with 16 native threads and Robust Linux `mkl202602` with 20,
+with serial searches (`n_jobs=1`). The baseline requested training scores;
+separate candidate controls covered `return_train_score=False` for two cases.
+Within-host inputs, folds and numerical oracles were shared, while current
+ownership and route-specific checks remained in force. This was not a causal
+comparison of numerical-library vendors or versions.
+
+Each host completed 21 profiled qualification children and 252 unprofiled
+baseline timing children containing 756 searches. Separate comparisons of three
+private training-identity candidates completed 54 six-search children and 54
+four-search children per host. All scientific checks passed. Focused baseline
+and candidate selections totaled 776 passing test executions per host, plus
+three local measurement-harness checks. These counts include tests repeated
+across different candidates; they are not counts of unique tests.
+
+The original timing policy admitted 247/54/54 baseline/first-candidate/final-
+candidate children locally and 227/52/52 on Robust. Excluded observations were
+preserved, with no replacement runs. Saved-data audits and independent reviews
+verified the supplied artifacts, scientific joins, known process closures and
+paired statistics. Source-graph entries whose bytes were absent from the audit
+archive were checked through retained origin and before/after hash records;
+this is not a claim that reviewers physically rehashed those unavailable files.
+
+The accepted decision retains the existing helper as an explicit,
+workload-specific option. Ordinary search is preferred in the measured
+configurations where it is faster; fitted ownership and numerical guards stay
+in place. The candidate shortcuts added no identified correctness improvement
+and did not establish reliable whole-search benefit sufficient to justify their
+extra state or dispatch complexity. No candidate was integrated, and no package
+algorithm, default, dependency or environment was changed. See the
+[direct comparisons and use guidance](docs/shared_fold_search.md#when-to-use-it).
+
+## Exact feature-report expansion integration (2026-11-09)
+
+The reviewed B + G-S + warm-beta Q implementation is integrated into DWD's
+private dense named-linear L-BFGS reporting path. It reuses existing score
+products and compensated splits, then uses guarded native gradient tiles and
+eligible warm-context beta calculations. Optimizer work, model mathematics,
+ordered sums, outward bounds, callbacks, acceptance thresholds and error
+recovery are unchanged. There is no new public selector or default solver
+change. C-dual and the smaller-buffer G-R alternative were not selected.
+No ensemble-dwd source change was needed for this integration.
+
+Native and portable wheels were built in isolated directories on Windows
+`dwd_aocl` and Linux Robust `mkl202602`. Each native wheel contains the
+original two accelerators plus the full-ABI feature-expansion extension and
+has the `cp312-cp312` tag. Each portable wheel has no native extensions and
+uses `py3-none-any`. Wheel records, all 67 package payload files, source
+and license inclusion, extension linkage and loaded module origins were
+checked against the frozen source. These are internal development artifacts,
+not a published release or an installation into the working environments.
+
+All four configurations passed the focused integration selection:
+
+| Environment | Wheel | Passed tests | Skipped records | Passed subtests |
+| --- | --- | ---: | ---: | ---: |
+| Windows dwd_aocl | Native | 984 | 2 | 75 |
+| Robust mkl202602 | Native | 983 | 3 | 75 |
+| Windows dwd_aocl | Portable | 579 | 332 | 29 |
+| Robust mkl202602 | Portable | 580 | 331 | 29 |
+
+There were no failures or errors in these accepted runs. The native selection
+collected 986 cases from 19 modules. Portable wheels collected 910 cases from
+18 modules; the existing native-only ordered-core module contributes one
+additional collection-skip record to the 911-record JUnit report. Subtests
+are listed separately and are not additional top-level cases. This is a
+focused regression selection, not a complete package suite or a count of
+unique cases across environments.
+
+Portable skips principally cover calls requiring absent compiled extensions.
+The native skips cover an inapplicable interpreter-refusal test, two Linux
+floating-point controls without an existing audited platform control, and
+Windows' denied test-symlink creation. The latter is also skipped in the
+Windows portable run; Windows settings were left unchanged. Independent
+preflight processes verified genuine unprofiled native gradient/beta acceptance
+and the portable absence/fallback routes before the pytest runs.
+
+Coverage includes independent scalar arithmetic, exponent restoration,
+cancellation and underflow, complete-result publication, refused operands,
+array layouts, callback and context changes, stale-context refusal without
+rebasing, missing/old extensions, warm beta and reporting dispatch, exact
+fallback, build-domain and ABI rules, CI routes and source-archive contracts.
+All runs used Python 3.12.15, pytest 9.1.1 and psutil 7.2.2; NumPy 2.5.4,
+SciPy 1.18.1 and scikit-learn 1.9.1 were recorded. Native limits were 16 on
+Windows and 20 on Robust, with existing `MKL_CBWR=AUTO` unchanged. The local
+runtime census contained both AOCL-BLAS 5.3.0 and MKL 2026.2; Robust contained
+MKL 2026.2. Loaded-library presence alone does not attribute each operation
+to a provider. No numerical-library version cause is claimed.
+
+The accepted child runs exited zero, with psutil verifying closure of the
+direct child and descendants admitted by its identity/ancestry checks. Three
+local transient discovery observations were not admitted as owned; their
+identity and exit remain unverified. No forced cleanup or monitor errors
+occurred in the accepted phases. This does not claim visibility of every
+short-lived process. No working-package installation, dependency edit,
+environment-file change or OS-setting change was made.
+
+Earlier unsuccessful validation attempts remain recorded. The fixture was
+changed to initialize the ordered helper before constructing a native context,
+and an explicit stale-context refusal regression was added. Those changes
+preserved mutation checks but did not repair premature context construction in
+the package. The November 10 full-suite investigation identified that separate
+initialization-order defect; see the correction above. Later harness checks
+were narrowed to recognize one byte-pinned scalar test oracle and the portable
+native-only module skip. No arithmetic mismatch was demonstrated by these
+failures. The accepted native tests and portable preflight were retained when
+only the portable test continuation remained. Production source and built wheel
+payloads were unchanged by those earlier fixture/harness corrections.
+
+These integration checks add no performance measurements. The completed
+600 fixed-work comparison fits and 144 separate precompiled-control fits
+remain the evidence for selection, including ordinary cold-start and
+missing-extension costs. Larger/repeated-fit improvements are not a universal
+speedup, a release-versus-release comparison, or a total-CV/convergence claim.
+See [the measured scope and adverse cases](docs/kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting)
+and [the native build/fallback limits](docs/compiled_residual.md#exact-feature-expansion-tiles).
+The new full-ABI accelerator is qualified only within its stated CPython 3.12
+build/runtime domain; these runs do not establish execution on other Python
+versions. Unsupported native domains retain the checked portable path.
+
+## Shared-fold contiguous-row integration (2026-11-06)
+
+The reviewed contiguous-row optimization is now the internal standard within
+`fit_shared_fold_search`. It shares a private immutable view only for an exact
+increasing contiguous row selection; other selections retain the original
+gather-and-snapshot path. The helper remains explicitly selected. Ordinary
+`GridSearchCV.fit`, `KernMD.fit`, and the separate `KernGDWD` CV defaults,
+public eligibility rules, numerical operations and final-refit ownership are
+unchanged. No ensemble package source change was needed.
+
+The integrated implementation is byte-identical to the E candidate reviewed
+in the completed comparison studies. The integration added three tested
+regression modules alongside the existing shared-search and fitted-ownership
+modules. Each of four isolated runs passed the same 164 pytest cases with no
+skips, xfails or unrun items: Windows `dwd_aocl`, Windows `dwd_mkl`,
+WSL `dwd_mkl_wsl` and WSL `dwd_aocl_wsl`. This is 656 test executions,
+not 656 distinct tests or a complete package-suite run. All used Python 3.12.15,
+pytest 9.1.1 and 16 native threads, with psutil monitoring of owned processes.
+The runs completed with actual exit zero and captured process closure; isolated
+source origins, native limits and environment restoration were verified.
+
+Coverage includes an independent exact-arithmetic linear oracle, complete score
+tables and candidate selection, ordered and duplicate indices, exact endpoint
+checks and fallback, C/Fortran/strided/read-only inputs, private-view lifetime,
+caller mutation, cloning, pickling, final public ownership, repeated use, and
+cleanup after errors and interruptions. The endpoint metadata-width case was
+validated on these 64-bit hosts; it makes no separate 32-bit validation claim.
+
+The first WSL AOCL attempt stopped before test collection because the saved
+inventory checker expected to add an AOCL descriptor that the current adapter
+already reports. The AOCL library hash, direct getter version and 16-thread
+setting matched the saved admission. Only the isolated test harness was adapted
+to verify the single recognized descriptor against the direct getters and exact
+metadata, while continuing to reject duplicates or conflicts. The failed
+admission was retained, and the subsequent focused run passed. No dependency,
+installed package, environment file or OS setting was changed.
+
+These integration checks do not add performance evidence. The completed
+comparisons, including measured adverse cases and the distinction between
+predecessor/ordinary-search and updated-helper/predecessor comparisons, remain
+as documented in [the shared-fold guide](docs/shared_fold_search.md). They do not
+establish a universal speedup, a numerical-library causal effect or an updated
+helper/ordinary-search ratio.
+
+## CV default grids and estimator display (2026-11-04)
+
+The CV representation defect and the HTML-resource decoding defect have
+different causes. Tuple defaults in `GenDWDCV` and `KernGDWDCV` eliminate
+scikit-learn's ambiguous comparison of an ndarray signature default and remove
+shared mutable default grids. The same generated float64 values and candidate
+order are retained; caller-supplied arrays are not converted or copied by this
+change. The existing invalid-name `set_params` preflight remains in place.
+
+The retained fix is limited to package source, tests and documentation. The
+temporary installed sklearn backport was outside the authorized package-only
+scope and has been reverted on both validation hosts. Their original sklearn
+1.9.1 renderers still have the non-UTF-8 HTML limitation described below.
+The passing backport checks are historical evidence for a temporary
+configuration, not a claim that the current environments have been repaired.
+
+In the isolated investigation, the tuple candidate preserved each host's
+baseline results for five bounded CV workflows: default-grid dense linear and
+RBF fits, custom-grid sparse linear and precomputed-kernel fits, and a kernel
+keyword grid. Each variant used 229 base fits and 12 preparations. Candidate
+order, folds, scores, selected parameters, coefficients, intercepts and
+predictions matched its own host baseline exactly in the saved non-timing
+records. These were two-update regression workloads, not convergence or
+performance studies; cross-host coefficient equality is not claimed. The tuple
+candidate also passed 122 selected regression tests and 22 subtests per host.
+
+The original local HTML checks exposed a second problem in sklearn 1.9.1:
+its estimator renderer opened the UTF-8 `estimator.js` asset without an encoding.
+GBK/cp936 on Windows and ASCII under Linux's C locale cannot decode that asset.
+Adding `encoding="utf-8"` to that one read was tested on isolated copies of
+the complete installed sklearn package, with no other dependency-file delta.
+
+On each approved host, four separate process configurations tested the
+original and corrected renderer with UTF-8 mode both disabled and enabled.
+Each configuration passed 35 pytest cases covering direct, inherited and MIME
+HTML display across ten estimator/container shapes, plain-text display,
+Unicode escaping, native/CSS read controls and bounded concurrent rendering.
+The original non-UTF-8 configurations reproduced 90 expected decoding failures
+per host; these are successful failure-reproduction checks, not successful
+renders. Both corrected configurations rendered all 90 attempted outputs per
+host/configuration. Their full HTML digests and lengths matched that host's
+working original UTF-8 reference after normalizing only generated identifiers.
+Text results and CSS hashes also matched. No fits were run in this HTML panel.
+
+The eight completed HTML-stage receipts record actual exit zero and captured
+owned-process closure without timeout, forced cleanup, monitor errors or
+unproven discovery. The tests used Python 3.12.15, sklearn 1.9.1, pytest 9.1.1
+and psutil 7.2.2, with native pool limits of 16 locally and 20 on Robust. The
+local dwd_aocl environment loaded both AOCL and MKL; neither defect is attributed
+to either numerical library. Earlier failures and the precollection harness
+failure remain preserved. Completed numerical work was not repeated.
+
+The isolated investigation did not alter installed dependencies or locale settings.
+The HTML backport changes resource decoding, not script/CSS content or solver
+arithmetic. No numerical overhead benchmark or new browser-execution claim is
+made. See [dependency limitation](docs/dependency_display.md) for the current
+package boundary. The later temporary-dependency checks below are separate
+from this isolated evidence.
+
+
+### Historical integration checks with a temporary dependency backport
+
+Before the dependency restoration, the package source passed 172 focused tests
+and 22 subtests on each approved host. The temporarily patched installed renderer
+passed 35 display checks in each of two encoding modes per host. Native
+GBK/cp936 on Windows and ASCII under Linux's C locale remained unchanged;
+all corrected HTML outputs matched the working UTF-8 references. These
+historical checks are separate from the investigation counts above and do not
+establish successful non-UTF-8 rendering with the restored original renderer.
+
+The temporary dependency bytes and distribution metadata were verified, with
+original-byte backups retained. Windows owner/group restoration was needed
+after replacement; the original owner, group and DACL were restored and
+verified before testing. The Linux mode/ownership checks passed. Captured owned
+test processes closed; one local API-stage transient discovery was not admitted
+as owned, and its identity/exit remains unverified. No new package wheel or
+release was published by this source integration.
+
+The original renderer bytes have since been restored on both hosts. Restoration
+verified the original 1,071-file Windows and 1,002-file Linux sklearn inventories
+and seven distribution-metadata files per host. The Windows file's four hard
+links and original owner, group and DACL were also verified. The tuple package
+changes remain; the earlier dependency-application and test receipts are
+preserved as history. No dependency backport or locale change is retained as
+part of this package fix.
+
+## Kernel fitted-state detection (2026-11-04)
+
+`KernGDWD.cv_init()` prepares a reusable kernel cache but does not fit a
+predictor. Generic scikit-learn fitted detection now uses the same four state
+attributes already required by prediction. Preparation metadata alone cannot
+make the estimator fitted; a successfully fitted but nonconverged model still
+qualifies. Explicit attribute queries retain scikit-learn's usual semantics.
+
+The isolated investigation reproduced the previous mismatch on local Windows
+`dwd_aocl` and Robust Linux `mkl202602`. Each host passed 51 focused tests and
+80 existing regression tests with 73 subtests. Coverage included preparation,
+cache reuse, failure and interruption cleanup, cloning, serialization,
+pipelines, subclasses, four solver backends and dense, sparse, precomputed and
+rank-deficient inputs. Real baseline fitted objects retained exactly equal
+saved predictions under the candidate.
+
+The integrated regression module contains the same 50 self-contained cases;
+the investigation-only baseline-file check remains separate saved evidence.
+Those 50 portable cases passed on both hosts using the exact integrated source,
+Python 3.12.15, pytest and psutil monitoring, with native pool limits of 16
+locally and 20 on Robust. The named local environment loaded both AOCL and MKL;
+this is not an AOCL-only attribution claim. No full-suite or additional
+Python-version validation is claimed for this change.
+
+A targeted test verified that direct preparation, fitting and prediction do
+not invoke the new generic hook. Generic fitted-status queries perform up to
+four attribute checks; no separate timing benchmark or universal zero-overhead
+claim is made. Numerical code, convergence criteria and defaults are unchanged.
+
+## Guarded native affine reporting: isolated evidence (2026-11-02)
+
+Final kernel stationarity reporting can use the optional native evaluator for
+joint affine scores on qualified dense binary64 inputs. Each row retains the
+original order: expanded high products, expanded low products, then the
+intercept. The original allowance, exact-zero and rational-recovery checks
+still follow. Runtime, arithmetic-hook, buffer and alias guards preserve the
+Python fallback when the native entry is unavailable or refuses. Public affine
+prediction defaults, optimizer steps, stopping and acceptance tolerances are
+unchanged. Dense reporting still requires quadratic work; this does not remove
+compensated reporting or substitute separately rounded kernel scores plus an
+intercept.
+
+The isolated candidate completed 116 focused tests on local Windows dwd_aocl
+and 108 passed plus eight expected prior Windows-only skips on Robust Linux
+mkl202602. All 39 new native-affine tests passed on both hosts. These checks
+covered exact native/Python output and reporting-count parity, cancellation,
+subnormal and overflowing intermediates, exact-zero/rational recovery, buffer
+ownership, custom hooks, caller rounding state and complete report/solver
+outputs. These are prior isolated candidate results.
+
+Subsequent integrated-source validation completed with 112 passed and no skips
+on local Windows, and 104 passed plus eight expected prior Windows-only skips
+on Robust Linux; neither run had a failure. All 39 new native-affine tests and
+both public-consumer tests passed on both hosts. The Python 3.12.15 harnesses
+used native thread limits of 16 and 20 respectively, with MKL_CBWR=AUTO. The
+retained two-row public fixtures temporarily used one native thread and restored
+the caller setting. Saved execution receipts verified state restoration and
+closure of captured processes. The separate performance evidence below remains
+from the isolated candidate; it was not rerun as an integration benchmark.
+
+A separate balanced helper panel compared the frozen original Python helper
+(A), the candidate portable helper (B) and the candidate native reporting path
+(C). Five sizes, 32, 128, 512, 1,500 and 3,000, used the same represented dyadic
+Gram matrix, coefficients and intercept within each host. Each size had two
+mirrored six-arm blocks, A-B-C-C-B-A and C-B-A-A-B-C, with fixed repetitions.
+Each host completed five cost tests, 336 measured helper calls, 15 warmups and
+one untimed native-route probe, with zero fits. Every measured output and
+reporting-count dictionary matched exactly across arms. Construction, hashes
+and qualification assertions were outside the timers.
+
+For 3,000 rows, the ranges of the two block means per helper call were:
+
+| Target | Original Python (A) | Candidate Python (B) | Native reporting (C) |
+|---|---:|---:|---:|
+| Local Windows, 16 native threads | 364.243-366.743 ms | 364.546-367.072 ms | 136.906-136.995 ms |
+| Robust Linux, 20 native threads | 1,066.946-1,070.489 ms | 1,080.380-1,105.657 ms | 198.546-202.424 ms |
+
+The native path was faster in every measured block. The portable helper
+timings varied: at this size B/A was about
+1.00083-1.00090 locally and 1.01259-1.03285 on Robust; smaller cells had mixed
+differences. B used the portable helper with the reporting flag disabled, so
+this is not a measurement of an unavailable-native guard followed by fallback.
+These are whole-helper measurements, not the isolated cost of one added Python
+function call. Two blocks do not establish a universal speedup or a no-slowdown
+claim. Process CPU includes all process threads during each interval and is
+not exclusive function CPU.
+
+Separate prepared-kernel profiles used eight fixed solver updates and two
+repetitions per size, with original and candidate runs in separate sessions.
+They excluded kernel construction and estimator preprocessing; they are
+attribution evidence, not a balanced complete-fit benchmark or time to
+convergence. Comparisons remain within each host, and no numerical-library
+cause or cross-host speed claim follows. No complete suite, installed-wheel
+validation or additional Python-version qualification is claimed here.
+
+## Bounded exact linear recovery in local source
+
+The corrected built-in dense float64 implicit Schur path now attempts bounded
+exact recovery when its shifted augmented-Gram spectrum is nonpositive or its
+free-intercept correction denominator is invalid. Eligibility requires a
+positive represented penalty shift. The exact system is
+`P = Z.T @ Z + s * diag(0, I)`, with `Z = [1, X]`, the original represented
+features and represented positive shift `s`. Its next-iterate right-hand side
+is `Z.T @ (Z @ theta_old - h)`, where `h` is the represented computed
+loss-gradient vector used by the MM update. A cached exact rational LDL
+factorization supplies each next iterate; exact adjacent rounding cells verify
+nearest-even binary64 coordinates, including the intercept, before assignment.
+
+This preserves the MM target and free intercept without eigenvalue clipping,
+added regularization, feature transformation, rank truncation or an empirical
+accuracy threshold. Successful ordinary paths, supplied-eigensystem validation,
+the existing zero-shift rank guard, legacy/custom-hook behavior and stopping
+criteria remain unchanged. The exact coordinate contract concerns the computed
+`h`; it does not make nonlinear gradient evaluation or public score arithmetic
+exact, certify already-accepted positive-spectrum solves, or guarantee convergence.
+
+The recovery defaults admit at most 16 features and 65,536 feature entries.
+The cumulative managed exact-work allowance is 10,000,000 units per fit, with
+32,768-bit managed integer bounds and a 1 GiB modeled-workspace cap. These are
+availability limits: unsupported or exhausted cases refuse rather than change
+the model or weaken accuracy. Source-defined work and storage models are not
+hard wall-time or RSS guarantees; conversion/serialization temporaries and
+caller-retained diagnostics are separately outside those models.
+
+### Prior isolated investigation
+
+The isolated implementation completed 25 unique pytest items per environment:
+16 exact-helper, eight routing and one cost item. Both Python 3.12 targets used
+MKL_CBWR=AUTO, with 16 native threads on local Windows dwd_aocl and 20 on Robust
+Linux mkl202602; the rational arithmetic itself is serial. All final items
+passed without skips. Local evidence retains 16 helper and five unaffected
+routing passes, plus three corrected test-plumbing cases and the cost item;
+the initial failed test receipts remain preserved. Source, environment state
+and captured-process closure checks passed. This is focused validation, not a
+new complete package suite or installed-wheel claim.
+
+Both natural failure cases returned on both hosts. The original far-outlier
+case reached 100 updates and stopped at `max_iter`; the structural case reached
+29 updates and stopped at `objective_tolerance`. Both retained
+`converged_ = False`. Every applied next vector matched its exact fixed-`h`
+coordinate oracle, and no increase in the separately evaluated exact original
+objective was observed on those trajectories. This observation is not a new
+acceptance criterion or a convergence guarantee. Native rounding can change
+`h` across hosts, so complete trajectories are not claimed bit-identical.
+
+Each environment also completed eight instrumented public fits for absolute
+cost: one warmup and three measured fits per case, each with ten fixed updates.
+Preparation, exact factorization/solves, rounding checks and in-fit observation
+were timed; model/observer construction and independent post-fit oracle,
+serialization and analysis were outside the timer.
+
+| Case | Shape | Local median | Robust median |
+|---|---:|---:|---:|
+| Original far outlier | 10 x 3 | 8.9571 ms | 22.304146 ms |
+| Structural intercept/feature direction | 128 x 8 | 191.6515 ms | 452.825068 ms |
+
+These are three-observation medians for ten updates, not time to convergence,
+percentage overhead against a successful baseline, a comparison with earlier
+noncontemporaneous research timings, or a universal latency bound. The
+structural cost is material and is justified by correctness and availability,
+not memory savings. No numerical-library version regression is inferred.
+
+### Integration validation
+
+The integrated source passed 410 focused pytest items in each approved
+environment: local Windows dwd_aocl and Robust Linux mkl202602. Both used
+Python 3.12.15 and pytest 9.1.1, with MKL_CBWR=AUTO and native thread limits of
+16 and 20 respectively. The selection comprises 25 maintained recovery tests
+and 385 neighboring regressions: 94 zero-shift rank, 88 gradient/hook
+compatibility, 152 explicit-system and 51 factor-fault tests. Every item passed;
+there were no skips or expected failures.
+
+Tests use an independent exact Gaussian-elimination and binary64-cell oracle
+to check the returned vectors, each applied next state and final coefficients.
+They also cover malformed supplied pairs, both recovery branches, late hook
+changes, forged proof data, changed inputs, resource refusal, ordinary paths,
+caching and cross-validation. The test observer wraps the actual return value;
+the package contains no investigation observer or test-only logging API.
+
+Both hosts verified frozen source hashes, isolated package imports, restored
+environment/thread settings and successful actual exits. The psutil monitor
+confirmed closure of captured processes; unobserved transient descendants are
+outside that claim. Independent reviews cleared the source extraction, tests
+and both-host results. Earlier investigation and cost receipts remain intact.
+These were focused source-integration checks, not a complete suite or wheel
+installation test. No benchmark panel was repeated for this integration.
+
+## Zero-shift linear rank admission in local source
+
+The implicit and explicit linear solvers now share the existing column-scaled
+SVD rank check when the represented MM penalty shift is zero. Focused tests
+cover exact augmented-design dependencies, supplied/cached eigenpairs, numerical
+rank resolution, feature scaling, positive-shift preservation, public cleanup
+and both package and scikit-learn cross-validation. Exact small-system oracles
+check accepted steps independently of the production eigendecomposition.
+
+Paired measurements of the isolated candidate used dense full-rank synthetic
+designs of 128 x 8, 1,024 x 32 and 4,096 x 64, with 25 fixed MM updates per fit.
+Each environment completed 198 fits: 18 warmups and 180 measured fits across nine
+cells (zero penalty with and without a cached eigensystem, plus a positive-
+penalty control). Each cell had five ABBA/BAAB blocks. Native thread limits
+were 16 in the local Windows dwd_aocl environment and 20 in Robust mkl202602;
+both used Python 3.12 and MKL_CBWR=AUTO. Comparisons were within each environment.
+
+At 4,096 x 64, median paired additional time for zero-penalty fits was about
+2.88 ms uncached / 3.00 ms cached locally (+71% / +90%), and 4.28 ms uncached /
+4.30 ms cached on Robust (+34% / +40%). Positive-penalty controls had mixed
+timing differences and skip the added SVD. Accepted scientific outputs matched
+within each comparison cell. These are short, fixed-work, single-process
+measurements, not time to convergence, full-CV timing, significance estimates
+or universal overhead bounds. Coarse local process-CPU ticks often read zero;
+the reported comparisons use wall time.
+
+The rank check requires a dense augmented copy, including for sparse inputs,
+and its cost grows with problem size. It is justified by correctness rather
+than memory savings. It does not introduce a minimum-norm coefficient policy,
+prove exact rank at floating-point boundaries, guarantee reliable inversion
+of every ill-conditioned Gram matrix, or establish a finite unregularized
+optimum for separable data. Other numerical checks remain in force.
+
 ## Version 1.3.19: current-target source validation
 
 The pre-release source snapshot completed the same 1,245 DWD pytest items on

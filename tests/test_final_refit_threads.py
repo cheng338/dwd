@@ -88,9 +88,9 @@ FOLDS = list(StratifiedKFold(2, shuffle=True, random_state=19).split(X, y))
 PARAMS = {'lambd': [.05, .2]}
 
 
-def model(implementation='optimized'):
+def model():
     return KernGDWD(kernel='rbf', kernel_kws={'gamma': .12}, random_state=31,
-                    stopping='fixed', max_iter=3, implementation=implementation)
+                    stopping='fixed', max_iter=3)
 
 
 def run_example(path, **options):

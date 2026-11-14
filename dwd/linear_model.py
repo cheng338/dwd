@@ -16,6 +16,12 @@ class LinearClassifierMixin(ClassifierMixin):
     Positive scores select classes_[1]; zero scores select classes_[0].
     """
 
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.classifier_tags.multi_class = False
+        tags.input_tags.sparse = True
+        return tags
+
     def decision_function(self, X):
         check_is_fitted(self, ['coef_', 'intercept_', 'classes_'])
 

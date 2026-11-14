@@ -2,7 +2,7 @@
 
 
 def resolve_residual_check_order(requested, *, implementation='optimized',
-                                 solver_mode='schur', backend='auto', K_eig=None):
+                                 backend='auto', K_eig=None):
     """Return the supported concrete policy for one actual solve route.
 
     Explicit values preserve their historical validation. Auto is conservative
@@ -13,7 +13,7 @@ def resolve_residual_check_order(requested, *, implementation='optimized',
     """
     if not isinstance(requested, str) or requested not in ('auto', 'refinement_first', 'adaptive'):
         raise ValueError("residual_check_order must be 'auto', 'refinement_first' or 'adaptive'.")
-    compatible = (implementation == 'optimized' and solver_mode == 'schur'
+    compatible = (implementation == 'optimized'
                   and backend in ('auto', 'cholesky'))
     if requested == 'auto':
         return 'adaptive' if compatible and K_eig is None else 'refinement_first'

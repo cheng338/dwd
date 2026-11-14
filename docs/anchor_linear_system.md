@@ -3,7 +3,7 @@
 The optimized solver normally uses Cholesky. If its original and mean-centered
 representations fail the numerical checks, a bounded LU recovery solves the
 same original constrained equations in another set of coordinates. The
-repaired reference implementation retains its eigenbasis route.
+checked spectral paths retain their eigenbasis route.
 
 Write the MM equation as `(K + delta I) alpha + s 1 = rhs`, with
 `sum(alpha) = t`. In ordinary MM, `t=0`; refinement also solves equations with

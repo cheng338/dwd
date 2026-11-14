@@ -1,3 +1,25 @@
+# Unreleased: prediction validation and shared-fold search
+
+Eligible dense batched `KernGDWD` predictions using guarded norm-sum RBF now
+reuse the query validation already performed by the public prediction call.
+Fresh training norms and checks of storage and helper bindings qualify this
+reuse; other cases retain the checked path. The kernel arithmetic, validation
+rules and caller error-policy handling are unchanged, and no validation cache
+survives the call. See [kernel prediction](docs/kernel_dwd.md#kernels-batching-and-caches).
+
+The explicit `fit_shared_fold_search` helper retains its private fold-token
+registry through the ordinary final refit and clears it during helper exit
+cleanup. This removes the earlier pre-refit release. Logical cache-use
+statistics remain available, and the returned public estimator still owns its
+training features. Registry storage can overlap the final owned copy; the
+lifetime change is not a universal speedup. See
+[shared-fold ownership](docs/shared_fold_search.md#state-and-ownership).
+
+These changes add no public setting and preserve prediction and CV defaults.
+The shared-fold route remains opt-in. Performance depends on the workload and
+runtime; neither change establishes a universal whole-call speedup. The published
+1.3.19 release notes below describe the earlier release, not these source changes.
+
 # DWD 1.3.19 — October 26, 2026
 
 This maintenance release corrects sparse input promotion, improves final

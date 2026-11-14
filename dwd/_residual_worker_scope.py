@@ -4,9 +4,30 @@ from contextlib import contextmanager
 from functools import wraps
 from threading import get_ident
 import os
+from ._residual_startup_cleanup import drain_owned_executor, own_default_executor
 
 
 _SCOPE = ContextVar('dwd_residual_worker_scope', default=None)
+
+
+def _drain_default_executor(executor, error=None):
+    """Return a deferred interrupt only after positively established drain."""
+    try:
+        receipt, interruption = drain_owned_executor(executor, error=error)
+        if error is not None:
+            error.add_note('Interrupted-start recovery: ' + repr(receipt))
+        if not receipt['drained']:
+            failure = RuntimeError('Owned executor was woken but completion is unproved; drain not established')
+            if interruption is not None and error is None:
+                raise interruption from failure
+            raise failure
+        return interruption
+    except BaseException as cleanup_error:
+        if error is not None and cleanup_error is not error:
+            error.add_note('Owned executor cleanup failed; final drain is not established. '
+                           'See the chained cleanup error.')
+            raise error from cleanup_error
+        raise
 
 
 class ResidualWorkerScope:
@@ -23,16 +44,22 @@ class ResidualWorkerScope:
         self.token = _SCOPE.set(self)
         return self
 
-    def drain(self):
-        executor, self.executor = self.executor, None
-        self.workers = None
+    def drain(self, error=None):
+        executor = self.executor
         if executor is not None:
-            executor.shutdown(wait=True)
+            interruption = _drain_default_executor(executor, error)
+            # Keep ownership while wake or completion may still need recovery.
+            self.executor = None
+            self.workers = None
+            if interruption is not None and error is None:
+                raise interruption
+        else:
+            self.workers = None
 
     def __exit__(self, *exc):
         try:
             self.closed = True
-            self.drain()
+            self.drain(exc[1])
         finally:
             _SCOPE.reset(self.token)
         return False
@@ -60,21 +87,34 @@ def executor_for_call(workers, factory, default_factory, allow_reuse):
         # Retire a previous qualified pool before entering that fallback.
         if scope is not None and scope.eligible():
             scope.drain()
-        with factory(max_workers=workers) as executor:
-            yield executor
+        if factory is not default_factory:
+            # Preserve caller-provided executor/subclass context semantics.
+            with factory(max_workers=workers) as executor:
+                yield executor
+        else:
+            executor = own_default_executor(factory(max_workers=workers))
+            try:
+                yield executor
+            except BaseException as error:
+                _drain_default_executor(executor, error)
+                raise
+            else:
+                interruption = _drain_default_executor(executor)
+                if interruption is not None:
+                    raise interruption
         return
     scope.busy = True
     try:
         if scope.workers != workers:
             scope.drain()
         if scope.executor is None:
-            scope.executor = factory(max_workers=workers)
+            scope.executor = own_default_executor(factory(max_workers=workers))
             scope.workers = workers
         try:
             yield scope.executor
-        except BaseException:
+        except BaseException as error:
             # The dispatcher has already set its call-local cancellation event.
-            scope.drain()
+            scope.drain(error)
             raise
     finally:
         scope.busy = False

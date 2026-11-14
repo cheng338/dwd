@@ -11,6 +11,7 @@ from sklearn.utils.validation import check_is_fitted
 from dwd.utils import pm1
 from dwd.linear_model import LinearClassifierMixin
 from dwd._fit_state import fit_with_cleanup
+from dwd._conic_persistence import PersistentProblem
 from dwd._sparse_features import canonical_sparse_features, promote_sparse_features, csr_is_canonical
 from scipy.sparse import issparse
 
@@ -56,7 +57,7 @@ class DWD(LinearClassifierMixin, BaseEstimator):
         self.solver_kws = solver_kws
 
     @fit_with_cleanup
-    def fit(self, X, y, sample_weight=None):
+    def fit(self, X, y):
         """Fit the model according to the given training data.
 
         Parameters
@@ -67,9 +68,6 @@ class DWD(LinearClassifierMixin, BaseEstimator):
 
         y : array-like, shape = [n_samples]
             Target vector relative to X
-
-        sample_weight : None
-            Sample weights are unsupported and rejected explicitly.
 
         Returns
         -------
@@ -88,7 +86,6 @@ class DWD(LinearClassifierMixin, BaseEstimator):
         # fit DWD
         self.coef_, self.intercept_, self.eta_, self.d_, self.problem_ = \
             solve_dwd_socp(X, y, C=self.C_,
-                           sample_weight=sample_weight,
                            solver_kws=self.solver_kws)
 
         self.coef_ = self.coef_.reshape(1, -1)
@@ -120,7 +117,7 @@ class DWD(LinearClassifierMixin, BaseEstimator):
         return direction, intercept
 
 
-def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
+def solve_dwd_socp(X, y, C=1.0, *, solver_kws=None):
     """
     Solves distance weighted discrimination optimization problem.
 
@@ -134,9 +131,6 @@ def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
 
     C: float
         Strictly positive tuning parameter.
-
-    sample_weight: None
-        Sample weights are unsupported and rejected explicitly.
 
     solver_kws: dict
         Keyword arguments passed to cvxpy.Problem.solve.
@@ -158,10 +152,6 @@ def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
 
     if not isinstance(C, Real) or not np.isfinite(C) or C <= 0:
         raise ValueError("Penalty term must be positive; got (C={})".format(C))
-
-    # TODO: add sample weights
-    if sample_weight is not None:
-        raise NotImplementedError
 
     X = promote_sparse_features(X, force_float64=True)
     X, y = check_real_X_y(X, y,
@@ -188,7 +178,7 @@ def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
     rho = cp.Variable(shape=n_samples)
     sigma = cp.Variable(shape=n_samples)
 
-    # Unweighted objective; non-None sample weights were rejected above.
+    # Unweighted objective.
     v = np.ones(n_samples)
     objective = v.T @ (rho + sigma + C * eta)
 
@@ -203,7 +193,7 @@ def solve_dwd_socp(X, y, C=1.0, sample_weight=None, solver_kws=None):
     constraints.append(cp.SOC(rho, cp.vstack([sigma, np.ones(n_samples)]), axis=0))
 
     # solve problem
-    problem = cp.Problem(cp.Minimize(objective),
+    problem = PersistentProblem(cp.Minimize(objective),
                          constraints=constraints)
 
     problem.solve(**(solver_kws or {}))

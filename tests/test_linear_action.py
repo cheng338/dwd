@@ -101,7 +101,7 @@ class KernelLinearActionTests(unittest.TestCase):
             with self.assertRaises(ValueError): validate_linear_action(bad)
         for options in ({'backend': 'spectral'}, {'backend': 'lbfgs'},
                         {'implementation': 'reference'}, {'solver_mode': 'legacy'}):
-            with self.assertRaises(ValueError): KernGDWD(**COMMON, linear_action='inverse', **options).fit(X, Y)
+            with self.assertRaises(TypeError if ('solver_mode' in options or 'implementation' in options) else ValueError): KernGDWD(**COMMON, linear_action='inverse', **options).fit(X, Y)
         values, vectors = eigh(K)
         with self.assertRaises(ValueError):
             solver.solve_kernel(K, Y, .1, linear_action='inverse', K_eig=(vectors, values))
@@ -186,7 +186,7 @@ class KernelLinearActionTests(unittest.TestCase):
         b = solver.solve_kernel(K, Y, .1, max_iter=3, obj_tol=0., linear_action='inverse')
         for got, want in zip(a[:3], (b['alpha'], b['offset'], b['objective_history'])):
             assert_array_equal(got, want)
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaises(TypeError):
             solve_gen_kern_dwd(K, Y, .1, implicit_P=False, linear_action='inverse')
 
     def test_17_spectral_subclass_owns_its_action_without_new_base_attributes(self):
