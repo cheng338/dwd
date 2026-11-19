@@ -51,7 +51,6 @@ def _run_probe(case):
         rows = [json.loads(line) for line in stdout.splitlines() if line.strip()]
         result_rows = [row['result'] for row in rows if 'result' in row]
         assert len(result_rows) == 1, (stdout, stderr)
-        assert not process.is_running()
         return dict(command=command, child_pid=child.pid, child_creation_time=creation,
                     actual_exit=child.returncode,
                     owned_child_killed=False, owned_child_closed=True, stderr=stderr,

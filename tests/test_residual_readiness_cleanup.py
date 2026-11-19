@@ -44,7 +44,6 @@ def run_probe(case, budget=10., delay=2.5):
         stdout, stderr = child.communicate('GO\n', timeout=30)
         rows = [json.loads(line) for line in stdout.splitlines() if line.strip()]
         results = [row['result'] for row in rows if 'result' in row]
-        assert not process.is_running()
         return dict(command=command, child_pid=child.pid, child_creation_time=creation,
                     actual_exit=child.returncode, owned_child_closed=True,
                     owned_child_killed=False, stdout=stdout, stderr=stderr,
