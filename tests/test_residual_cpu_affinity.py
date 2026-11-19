@@ -325,20 +325,28 @@ def test_public_kernel_fit_observes_the_restricted_child_cap(tmp_path, record_pr
     if result['status'] == 'unsupported':
         pytest.skip(result['reason'])
     assert result['status'] == 'complete'
-    assert result['worker_counts'] and all(row == [2048, 1] for row in result['worker_counts'])
+    assert result['restricted_affinity'] == result['original_affinity'][:1]
     assert result['n_iter'] == 1 and result['backend'] == 'cholesky'
     assert result['feature_shape'] == [2048, 1]
     assert result['psd_validation'] == 'internally constructed PSD kernel (known family)'
     assert result['eigenvalue_check_seconds'] == 0.
     assert result['setup_blas_budget'] == 1 and result['residual_blas_budget'] == budget
-    assert result['dispatch_records'] and all(len(row['affinity']) == 1 for row in result['dispatch_records'])
-    assert result['control'] == 'injected ordinary-bound unavailability; real native recovery'
+    assert result['control'] == 'injected ordinary-bound unavailability; real compensated recovery'
     assert result['ordinary_bound_constructor_calls'] > 0 and result['test_hooks_restored']
-    assert result['linear_system_diagnostics']['ordinary_residual_declines'] > 0
-    assert result['linear_system_diagnostics']['native_residual_attempts'] > 0
-    assert result['linear_system_diagnostics']['native_residual_attempts'] == (
-        result['linear_system_diagnostics'].get('native_residual_checks', 0)
-        + result['linear_system_diagnostics'].get('native_residual_declines', 0))
-    assert result['linear_system_diagnostics']['compensated_residual_checks'] > 0
+    diagnostics = result['linear_system_diagnostics']
+    assert diagnostics['ordinary_residual_declines'] > 0
+    assert diagnostics['native_residual_attempts'] > 0
+    assert diagnostics['native_residual_attempts'] == (
+        diagnostics.get('native_residual_checks', 0) + diagnostics.get('native_residual_declines', 0))
+    assert diagnostics['compensated_residual_checks'] > 0
+    if sys.platform != 'win32' and sys.version_info[:2] == (3, 11):
+        # CPython 3.11 lacks sumprod; the separate compiled qualification is Windows-only.
+        assert diagnostics.get('native_residual_checks', 0) == 0
+        assert result['portable_residual_calls'] == diagnostics['compensated_residual_checks']
+        assert result['worker_counts'] == [] and result['dispatch_records'] == []
+    else:
+        assert result['worker_counts'] and all(row == [2048, 1] for row in result['worker_counts'])
+        assert result['dispatch_records'] and all(
+            row['affinity'] == result['restricted_affinity'] for row in result['dispatch_records'])
     assert result['input_unchanged'] and result['finite_predictions'] and result['finite_parameters']
     assert set(result['original_affinity']) == set(result['restored_affinity'])

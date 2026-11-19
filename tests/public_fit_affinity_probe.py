@@ -31,8 +31,8 @@ def main():
     result = dict(status='pending', pid=owner.pid, creation_time=owner.create_time(),
                   package_root=str(package_root), worker_counts=[], dispatch_records=[],
                   setup_blas_budget=1, residual_blas_budget=args.budget,
-                  control='injected ordinary-bound unavailability; real native recovery',
-                  ordinary_bound_constructor_calls=0)
+                  control='injected ordinary-bound unavailability; real compensated recovery',
+                  ordinary_bound_constructor_calls=0, portable_residual_calls=0)
     original, changed = None, False
     try:
         if not hasattr(owner, 'cpu_affinity'):
@@ -44,7 +44,8 @@ def main():
             result['original_affinity'] = original
             owner.cpu_affinity(original[:1])
             changed = True
-            assert owner.cpu_affinity() == original[:1]
+            result['restricted_affinity'] = owner.cpu_affinity()
+            assert result['restricted_affinity'] == original[:1]
         except (psutil.AccessDenied, NotImplementedError) as error:
             result.update(status='unsupported', reason=type(error).__name__ + ': ' + str(error))
             return
@@ -72,6 +73,12 @@ def main():
         original_count = compiled._worker_count
         original_dispatch = native._dispatch_compiled_values
         original_bounds = linear.OrdinaryResidualBounds
+        original_portable = linear.compensated_residual
+
+        def observed_portable(*args, **kwargs):
+            actual = original_portable(*args, **kwargs)
+            result['portable_residual_calls'] += 1
+            return actual
 
         def unavailable_ordinary_bounds(*positional, **keywords):
             result['ordinary_bound_constructor_calls'] += 1
@@ -113,6 +120,7 @@ def main():
         compiled._worker_count = observed_count
         native._dispatch_compiled_values = observed_dispatch
         linear.OrdinaryResidualBounds = unavailable_ordinary_bounds
+        linear.compensated_residual = observed_portable
         try:
             with threadpool_limits(limits=1, user_api='blas'):
                 result['setup_pools'] = threadpool_info()
@@ -144,12 +152,12 @@ def main():
             compiled._worker_count = original_count
             native._dispatch_compiled_values = original_dispatch
             linear.OrdinaryResidualBounds = original_bounds
+            linear.compensated_residual = original_portable
             result['test_hooks_restored'] = (
                 compiled._worker_count is original_count
                 and native._dispatch_compiled_values is original_dispatch
-                and linear.OrdinaryResidualBounds is original_bounds)
-        assert result['worker_counts'] and result['dispatch_records']
-        assert all(row == [2048, 1] for row in result['worker_counts'])
+                and linear.OrdinaryResidualBounds is original_bounds
+                and linear.compensated_residual is original_portable)
         assert result['n_iter'] == 1 and result['finite_predictions'] and result['finite_parameters']
         assert result['input_unchanged'] and result['eigenvalue_check_seconds'] == 0.
         assert result['psd_validation'] == 'internally constructed PSD kernel (known family)'

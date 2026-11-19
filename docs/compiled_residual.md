@@ -331,7 +331,7 @@ this documentation does not change bounds, tolerances, defaults or dispatch.
 
 ## Ordered linear-feature gradient reduction
 
-DWD 2.0.0 also builds a separate private
+DWD 2.0.1 also builds a separate private
 `_ordered_reduction_accel` extension. Eligible dense named-linear L-BFGS reports
 use it automatically for the final sums of already-restored gradient terms.
 The six product-expansion planes retain their original order. Product formation,
@@ -435,7 +435,7 @@ the runtime loading and numerical guards above.
 
 Set `DWD_BUILD_ACCEL=0` to build a portable wheel without a compiler.
 This flag applies during a source build. An existing wheel retains the helpers
-it was built with. The DWD 2.0.0 Windows CPython 3.12 native wheel contains all
+it was built with. The DWD 2.0.1 Windows CPython 3.12 native wheel contains all
 three helpers. The portable wheel contains no compiled extension.
 
 Builds retain strict floating-point flags. MSVC uses `/fp:strict`; GCC/Clang

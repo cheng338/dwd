@@ -1,6 +1,6 @@
 # DWD 1.3.9 changes and validation scope
 
-This page records the historical 1.3.9 behavior. For DWD 2.0.0
+This page records the historical 1.3.9 behavior. For DWD 2.0.1
 defaults and supported combinations, see the [kernel guide](kernel_dwd.md).
 
 This October 3, 2026 release of the fork, developed under Chang Cheng's guidance,

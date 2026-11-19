@@ -34,7 +34,7 @@ validation and recovery, clears fitted state after failed fits, fixes
 cross-validation issues, and repairs the examples. The DWD formulations and
 unregularized intercepts follow the cited methods.
 
-When upgrading to DWD 2.0.0, remove `solver_mode`, kernel `implementation` and
+When upgrading to DWD 2.0.1, remove `solver_mode`, kernel `implementation` and
 kernel `implicit_P` from estimator settings and parameter grids. Replace
 `initialization='auto'` with `'zero'` and `affine_computation='auto'` with
 `'joint'`. Omit training `sample_weight`, including `None`. Users of the
@@ -149,19 +149,19 @@ object does not remove stale requests.
 
 # Installation
 
-DWD 2.0.0 requires Python 3.11+ and scikit-learn 1.6+. Download a compatible
-wheel from the [2.0.0 release assets](https://github.com/cheng338/dwd/releases/tag/v2.0.0).
+DWD 2.0.1 requires Python 3.11+ and scikit-learn 1.6+. Download a compatible
+wheel from the [2.0.1 release assets](https://github.com/cheng338/dwd/releases/tag/v2.0.1).
 The native wheel for 64-bit Windows and standard CPython 3.12 contains three
 compiled helpers for residuals, ordered reductions and feature expansions.
 
 ```shell
-python -m pip install ./dwd-2.0.0-cp312-cp312-win_amd64.whl
+python -m pip install ./dwd-2.0.1-cp312-cp312-win_amd64.whl
 ```
 
 The portable wheel supports Python 3.11+:
 
 ```shell
-python -m pip install ./dwd-2.0.0-py3-none-any.whl
+python -m pip install ./dwd-2.0.1-py3-none-any.whl
 ```
 
 To build from the source distribution, extract it and run
@@ -645,7 +645,7 @@ they have not been relabeled as new release results.
 
 # Release history
 
-See the [2.0.0 release notes](RELEASE_NOTES.md) and [validation history](VALIDATION.md).
+See the [2.0.1 release notes](RELEASE_NOTES.md) and [validation history](VALIDATION.md).
 
 ## Changes in 1.3.19
 

@@ -1,5 +1,16 @@
 # Validation
 
+## DWD 2.0.0 source tag tests
+
+For the November 19 DWD 2.0.0 source tag, six of eight GitHub Actions jobs
+passed. Both Ubuntu CPython 3.11 jobs recorded the same 18 failures. In 17
+cases the test helper could not resolve the setuptools platform-error class,
+so the simulated compiler or linker failure was never exercised. In the
+remaining case the fit completed and the probe required native residual
+dispatch on a platform that uses portable compensated recovery. DWD 2.0.1
+corrects the test expectations.
+[Full matrix and job logs](https://github.com/cheng338/dwd/actions/runs/44582975747).
+
 ## November 19, 2026 paired release comparison
 
 DWD 2.0.0 and Ensemble DWD 0.4.0 follow the candidates tested as **DWD
@@ -49,8 +60,8 @@ Subsequent edits added the dissertation citation, revised the documentation,
 removed a machine-specific directory from two fixture manifests and updated
 release versions, dependency pins and related test expectations. Those edits
 postdate the full suites and timings above. The hashes identify the measured
-candidates. Use the checksums accompanying the 2.0.0/0.4.0 distributions for
-the renumbered files.
+candidates. For DWD 2.0.1 and Ensemble DWD 0.4.0, use the checksums
+accompanying those distributions.
 
 ## Native-loader initialization-order correction (2026-11-10)
 
