@@ -50,7 +50,7 @@ class CurrentZeroCertificate(unittest.TestCase):
         fits = []
         for policy in ['standard', 'joint']:
             # Preserve the ordinary-MM iterate that creates this exact boundary.
-            fit = KernGDWD(kernel='linear', lambd=0.1, q=1.0, implementation='optimized', max_iter=5, stopping='fixed', initialization='zero', random_state=7, affine_computation=policy, acceleration=None).fit(X, y)
+            fit = KernGDWD(kernel='linear', lambd=0.1, q=1.0, max_iter=5, stopping='fixed', initialization='zero', random_state=7, affine_computation=policy, acceleration=None).fit(X, y)
             fits.append(fit)
         for key in ['dual_coef_', 'intercept_', 'objective_history_']:
             np.testing.assert_array_equal(getattr(fits[0], key), getattr(fits[1], key))

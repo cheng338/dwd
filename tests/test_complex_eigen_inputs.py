@@ -31,9 +31,9 @@ class ComplexEigenInputTests(unittest.TestCase):
         self.K = self.X @ self.X.T + np.eye(len(self.X))
 
     def cases(self):
-        for mode in ('schur', 'legacy'):
-            yield GenDWD(max_iter=0, solver_mode=mode), self.X, 'P0_eig', get_P0_eig(self.X)
-            yield KernGDWD(kernel='precomputed', max_iter=0, solver_mode=mode), self.K, 'K_eig', get_K_eig(self.K)
+        for mode in ('schur',):
+            yield GenDWD(max_iter=0), self.X, 'P0_eig', get_P0_eig(self.X)
+            yield KernGDWD(kernel='precomputed', max_iter=0), self.K, 'K_eig', get_K_eig(self.K)
 
     def assert_rejected_without_warning(self, action, pattern):
         with warnings.catch_warnings(record=True) as caught:
@@ -46,7 +46,7 @@ class ComplexEigenInputTests(unittest.TestCase):
         for model, data, parameter, (vectors, values) in self.cases():
             for part, original in ((0, vectors), (1, values)):
                 for form, malformed in _complex_forms(original):
-                    with self.subTest(model=type(model).__name__, mode=model.solver_mode,
+                    with self.subTest(model=type(model).__name__,
                                       part=part, form=form):
                         supplied = [vectors, values]
                         supplied[part] = malformed
@@ -66,7 +66,7 @@ class ComplexEigenInputTests(unittest.TestCase):
 
     def test_failed_complex_cache_refit_clears_fitted_state(self):
         for model, data, parameter, (vectors, values) in self.cases():
-            with self.subTest(model=type(model).__name__, mode=model.solver_mode):
+            with self.subTest(model=type(model).__name__):
                 model.fit(data, self.y, **{parameter: (vectors, values)})
                 malformed = np.asarray(vectors, dtype=object)
                 malformed.flat[-1] = np.complex128(malformed.flat[-1] + 1j)
@@ -82,12 +82,12 @@ class ComplexEigenInputTests(unittest.TestCase):
 
     def test_valid_real_cache_forms_preserve_exact_fitted_values(self):
         for model, data, parameter, (vectors, values) in self.cases():
-            # Use a deterministic start for legacy mode as well.
+            # Keep the same explicit random-state control for both estimators.
             model.set_params(random_state=17, max_iter=2)
             for supplied in ((vectors, values),
                              (vectors.tolist(), values.tolist()),
                              (vectors.astype(object), values)):
-                with self.subTest(model=type(model).__name__, mode=model.solver_mode):
+                with self.subTest(model=type(model).__name__):
                     # Compare the same input representation with the old dtype
                     # check. List/array layouts can themselves round differently.
                     with patch.object(eigen, 'contains_complex', np.iscomplexobj):
@@ -97,12 +97,7 @@ class ComplexEigenInputTests(unittest.TestCase):
                     with warnings.catch_warnings(record=True) as caught:
                         warnings.simplefilter('always')
                         model.fit(data, self.y, **{parameter: supplied})
-                    if isinstance(model, KernGDWD) and model.solver_mode == 'legacy':
-                        self.assertEqual(len(caught), 1)
-                        self.assertIs(caught[0].category, FutureWarning)
-                        self.assertIn("solver_mode='legacy' uses historical kernel update equations", str(caught[0].message))
-                    else:
-                        self.assertEqual(caught, [])
+                    self.assertEqual(caught, [])
                     assert_array_equal(model.decision_function(data), expected_scores)
                     assert_array_equal(model.objective_history_, expected_history)
 

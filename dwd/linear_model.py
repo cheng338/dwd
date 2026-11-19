@@ -4,6 +4,8 @@ from sklearn.utils.validation import check_is_fitted
 from sklearn.utils.extmath import safe_sparse_dot
 
 import numpy as np
+from scipy.sparse import issparse
+from ._integer_sparse import prepare_integer_linear_query
 
 __all__ = ['LinearClassifierMixin']
 
@@ -16,9 +18,17 @@ class LinearClassifierMixin(ClassifierMixin):
     Positive scores select classes_[1]; zero scores select classes_[0].
     """
 
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.classifier_tags.multi_class = False
+        tags.input_tags.sparse = True
+        return tags
+
     def decision_function(self, X):
         check_is_fitted(self, ['coef_', 'intercept_', 'classes_'])
 
+        if issparse(X) and X.dtype.kind in "iu":
+            X = prepare_integer_linear_query(X)
         X = check_array(X, accept_sparse=['csr', 'csc', 'coo'])
         if X.shape[1] != self.coef_.shape[1]:
             raise ValueError('Feature count differs from training data.')

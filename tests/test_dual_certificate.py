@@ -100,8 +100,12 @@ class FeasibleDualCertificateTests(unittest.TestCase):
 
     def test_invalid_negative_quadratic_is_not_hidden_by_fallback(self):
         y = np.r_[-np.ones(6), np.ones(6)]
-        with self.assertRaisesRegex(ValueError, 'negative dual quadratic'):
-            kernel_dual_lower_bound(-np.eye(12), y, np.ones(12), .1, 1.)
+        lower, info = kernel_dual_lower_bound(-np.eye(12), y, np.ones(12), .1, 1.)
+        self.assertIsNone(lower)
+        self.assertIs(info['dual_objective_is_lower_bound'], False)
+        self.assertEqual(info['fallback_reason'], 'certified_negative_dual_quadratic')
+        self.assertEqual(info['kernel_assumption'],
+                         'symmetric positive-semidefinite represented kernel (contradicted)')
         with self.assertRaises(ValueError):
             solve_kernel(-np.eye(12), y, .1, max_iter=1)
 

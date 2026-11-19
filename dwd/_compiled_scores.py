@@ -24,8 +24,9 @@ _GIL_DISABLED = sysconfig.get_config_var('Py_GIL_DISABLED')
 def _supported(*, reporting=False):
     """Keep general scoring on Windows; also admit qualified Linux reporting.
 
-    The Linux qualification covers the final stationarity K*w operation, not
-    joint affine evaluation or a change to general prediction dispatch.
+    Linux opt-in covers reporting scores, including final stationarity K*w.
+    Joint affine reporting uses the separate _compiled_affine_scores facade.
+    Neither reporting route changes general prediction dispatch on Linux.
     """
     return (sys.implementation.name == 'cpython'
             and (sys.platform == 'win32' or (reporting is True and sys.platform == 'linux'))

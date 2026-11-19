@@ -3,7 +3,9 @@
 For a symmetric positive-semidefinite represented kernel, the primal objective
 and reported gap remain numerical estimates. Only the dual
 endpoint is rounded outward, conditional on ordinary IEEE binary64 with gradual
-underflow and correctly rounded Decimal ln/exp/sqrt. No iterate is modified.
+underflow and correctly rounded Decimal ln/exp/sqrt. A specific contradiction
+to the PSD assumption leaves the dual endpoint unavailable; it does not change
+the accepted numerical problem or establish global optimality. No iterate is modified.
 """
 from decimal import Decimal, localcontext, ROUND_CEILING, ROUND_FLOOR
 from fractions import Fraction
@@ -16,10 +18,22 @@ from ._quadratic_bounds import _compensated_dot
 _DENOMINATOR = 1 << 52
 # A diagnostic-work budget, never a rank or positive-eigenvalue cutoff.
 _EXACT_ENTRY_BUDGET = 4096
+_PSD_CONTRADICTION_REASONS = frozenset((
+    'certified_negative_dual_quadratic', 'negative_constant_kernel'))
 
 
 class _AsymmetricKernel(ValueError):
     """The nonzero dual formula does not certify this literal score map."""
+
+
+class _PSDContradiction(ValueError):
+    """A specific certificate observation contradicts the PSD assumption."""
+
+    def __init__(self, reason):
+        if type(reason) is not str or reason not in _PSD_CONTRADICTION_REASONS:
+            raise ValueError('Unknown PSD-certificate contradiction reason.')
+        self.reason = reason
+        super().__init__(reason)
 
 
 def _fraction(value):
@@ -111,7 +125,7 @@ def _quadratic_upper(K, signed, target):
             is_constant = False
     if is_constant:
         if constant < 0:
-            raise ValueError('A negative constant kernel is not positive semidefinite.')
+            raise _PSDContradiction('negative_constant_kernel')
         total = sum((_fraction(value) for value in signed), Fraction(0))
         return _fraction(constant) * total * total, 'exact_constant'
     if not _round_to_nearest():
@@ -147,11 +161,13 @@ def _quadratic_upper(K, signed, target):
 
 
 def kernel_dual_lower_bound(K, y, raw_slopes, lambd, q):
-    """Return a feasible dual lower bound, never a convergence declaration.
+    """Return a conditional dual endpoint, or None on a PSD contradiction.
 
-    Zero slopes give a valid bound of zero. Select that explicitly if it is
-    stronger than the candidate bound or nonzero arithmetic cannot be bounded.
-    A certified negative quadratic is rejected, never clipped or hidden.
+    Under the declared kernel assumptions, zero slopes give a bound of zero.
+    Select it when stronger or when nonzero arithmetic cannot be bounded.
+    A certified negative quadratic or negative constant kernel instead returns
+    None with a false lower-bound flag; zero is not a bound for an indefinite
+    literal objective. This reporting policy changes no iterate or tolerance.
     """
     rho = feasible_dual_slopes(raw_slopes, y)
     penalty, n = _fraction(lambd), len(y)
@@ -160,12 +176,16 @@ def kernel_dual_lower_bound(K, y, raw_slopes, lambd, q):
         quadratic_upper, method = _quadratic_upper(
             K, y * rho, _fraction(1e-10) * (4 * penalty * n * n))
         if quadratic_upper < 0:
-            raise ValueError('A certified negative dual quadratic is incompatible with a PSD kernel.')
+            raise _PSDContradiction('certified_negative_dual_quadratic')
         candidate = _conjugate_mean_lower(rho, q) - quadratic_upper / (4 * penalty * n * n)
         if candidate < 0:
             dual, fallback = 0., 'zero_slopes_give_a_stronger_certified_bound'
         else:
             dual = _float_lower(candidate)
+    except _PSDContradiction as exc:
+        if type(exc.reason) is not str or exc.reason not in _PSD_CONTRADICTION_REASONS:
+            raise
+        dual, fallback = None, exc.reason
     except _AsymmetricKernel:
         # The current fit policy accepts tiny asymmetry. Do not strengthen that
         # policy or claim the symmetric-kernel dual for an asymmetric score map.
@@ -177,10 +197,13 @@ def kernel_dual_lower_bound(K, y, raw_slopes, lambd, q):
         'slope_quantum': 2. ** -52,
         'dual_quadratic_method': method,
         'fallback_reason': fallback,
-        'dual_objective_is_lower_bound': True,
-        'kernel_assumption': ('nonnegative represented RKHS penalty'
-                              if fallback == 'asymmetric_kernel_no_nonzero_dual_certificate'
-                              else 'symmetric positive-semidefinite represented kernel'),
+        'dual_objective_is_lower_bound': dual is not None,
+        'kernel_assumption': (
+            'symmetric positive-semidefinite represented kernel (contradicted)'
+            if dual is None else (
+                'nonnegative represented RKHS penalty'
+                if fallback == 'asymmetric_kernel_no_nonzero_dual_certificate'
+                else 'symmetric positive-semidefinite represented kernel')),
         'primal_objective_and_gap_are_estimates': True,
         'arithmetic_assumptions': 'IEEE binary64 with gradual underflow; faithfully rounded math.fsum; correctly rounded Decimal ln/exp/sqrt',
     }

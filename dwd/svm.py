@@ -6,12 +6,13 @@ from sklearn.base import BaseEstimator  # , TransformerMixin, ClassifierMixin
 
 from dwd.linear_model import LinearClassifierMixin
 from dwd._fit_state import fit_with_cleanup
+from dwd._conic_persistence import PersistentProblem
 from dwd.utils import pm1
 from dwd._validation import check_real_X_y
 from dwd._sparse_features import promote_sparse_features
 
 
-def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
+def solve_svm(X, y, C, *, solver_kws=None):
     """
     Solves soft-margin SVM problem.
 
@@ -30,9 +31,6 @@ def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
     C: float
         Strictly positive tuning parameter.
 
-    sample_weight: None
-        Sample weights are unsupported and rejected explicitly.
-
     solver_kws: dict
         Keyword arguments to cp.solve
 
@@ -50,8 +48,6 @@ def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
 
     y_hat = np.sign(x.dot(beta) + intercept)
     """
-    if sample_weight is not None:
-        raise NotImplementedError('Sample weights are not implemented for SVM.')
     if not isinstance(C, Real) or not np.isfinite(C) or C <= 0:
         raise ValueError('C must be finite and strictly positive.')
     X = promote_sparse_features(X, force_float64=True)
@@ -67,11 +63,15 @@ def solve_svm(X, y, C, sample_weight=None, solver_kws=None):
     intercept = cp.Variable()
     C = cp.Parameter(value=C, nonneg=True)
 
-    loss = cp.sum(cp.pos(1 - cp.multiply(y, X @ beta + intercept)))
+    # Apply the binary labels to constant data before the affine map.
+    # This preserves the free intercept and mean-hinge objective while avoiding
+    # incorrect inferred bounds on a product of labels and a variable expression.
+    margin = cp.multiply(y, X) @ beta + cp.multiply(y, intercept)
+    loss = cp.sum(cp.pos(1 - margin))
     reg = cp.norm(beta, 1)
     objective = loss / n_samples + C * reg
 
-    problem = cp.Problem(cp.Minimize(objective))
+    problem = PersistentProblem(cp.Minimize(objective))
     problem.solve(**(solver_kws or {}))
     if problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
         raise RuntimeError(f'SVM conic solver failed with status {problem.status!r}.')
@@ -95,14 +95,14 @@ class SVM(LinearClassifierMixin, BaseEstimator):
         self.solver_kws = solver_kws
 
     @fit_with_cleanup
-    def fit(self, X, y, sample_weight=None):
+    def fit(self, X, y):
         X = promote_sparse_features(X, force_float64=True)
         X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
         self.classes_ = np.unique(y)
         self.n_features_in_ = X.shape[1]
 
         self.coef_, self.intercept_, self.problem_ = \
-            solve_svm(X, y, C=self.C, sample_weight=sample_weight,
+            solve_svm(X, y, C=self.C,
                       solver_kws=self.solver_kws)
 
         self.coef_ = self.coef_.reshape(1, -1)

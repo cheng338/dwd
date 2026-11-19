@@ -24,6 +24,7 @@ from dwd._kernel_recovery import MMRecoveryExhausted
 from dwd._spectral_linear_system import SpectralLinearSystem
 from dwd.cv import run_cv
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
+from _kernel_reference import kernel_route
 
 
 EXTENDED = dict(max_entries=65536, max_rank=32, max_bits=8192,
@@ -42,7 +43,7 @@ class ExactRecoveryPolicyTests(unittest.TestCase):
         options = dict(kernel='rbf', kernel_kws={'gamma': .3}, max_iter=2,
                        stopping='fixed', initialization='zero', random_state=7)
         options.update(overrides)
-        return KernGDWD(**options)
+        return kernel_route(**options)
 
     def test_default_helper_calls_and_extended_caps_apply_to_every_action(self):
         K = np.eye(5) + .25 * np.ones((5, 5))
@@ -134,14 +135,22 @@ import numpy as np
 import dwd
 assert Path(dwd.__file__).resolve() == Path(sys.argv[2]).resolve()
 from dwd.gen_kern_dwd import KernGDWD
+from dwd._kernel_solver import solve_kernel
 from threadpoolctl import threadpool_limits
 names = ('dwd._exact_kernel_factor', 'dwd._certified_kernel_mm')
 assert all(name not in sys.modules for name in names)
 with threadpool_limits(1):
  for policy in ('standard', 'extended'):
   for impl in ('reference', 'optimized'):
-   KernGDWD(kernel='precomputed', implementation=impl, max_iter=2,
-            stopping='fixed', exact_recovery=policy).fit(np.eye(6), [-1, 1, -1, 1, -1, 1])
+   if impl == 'reference':
+    initial = np.random.normal(size=6)
+    initial /= np.linalg.norm(initial)
+    solve_kernel(np.eye(6), np.tile([-1., 1.], 3), 1.,
+                 implementation='reference', alpha_init=initial, max_iter=2,
+                 stopping='fixed', exact_recovery=policy)
+   else:
+    KernGDWD(kernel='precomputed', max_iter=2,
+             stopping='fixed', exact_recovery=policy).fit(np.eye(6), [-1, 1, -1, 1, -1, 1])
 assert all(name not in sys.modules for name in names)
 '''
         env = dict(os.environ, OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
@@ -296,16 +305,16 @@ assert all(name not in sys.modules for name in names)
                 KernGDWDCV(exact_recovery=value).fit(self.X, self.y)
             with self.assertRaisesRegex(ValueError, 'exact_recovery'):
                 solver.solve_kernel(np.eye(2), np.array([-1., 1.]), .1, exact_recovery=value)
-        with self.assertRaisesRegex(ValueError, 'requires solver_mode'):
+        with self.assertRaisesRegex(TypeError, 'solver_mode'):
             self.model(solver_mode='legacy', exact_recovery='extended').fit(self.X, self.y)
-        with self.assertRaisesRegex(ValueError, 'requires solver_mode'):
+        with self.assertRaisesRegex(TypeError, 'solver_mode'):
             KernGDWDCV(solver_mode='legacy', exact_recovery='extended').fit(self.X, self.y)
-        legacy = self.model(kernel='linear', kernel_kws=None, solver_mode='legacy').fit(self.X, self.y)
-        self.assertEqual(legacy.exact_recovery_, 'standard')
-        legacy.set_params(exact_recovery='invalid')
+        corrected = self.model(kernel='linear', kernel_kws=None).fit(self.X, self.y)
+        self.assertEqual(corrected.exact_recovery_, 'standard')
+        corrected.set_params(exact_recovery='invalid')
         with self.assertRaises(ValueError):
-            legacy.fit(self.X, self.y)
-        self.assertFalse(hasattr(legacy, 'exact_recovery_'))
+            corrected.fit(self.X, self.y)
+        self.assertFalse(hasattr(corrected, 'exact_recovery_'))
 
 
 if __name__ == '__main__':

@@ -1,0 +1,243 @@
+{
+  "capture_script_sha256": "241adf73da955ea0fc85d731643bb0db7d584d6cd30f3fa664653f5202ca0be5",
+  "case_names": [
+    "linear_implicit",
+    "linear_explicit",
+    "linear_cv",
+    "kernel_rbf",
+    "kernel_precomputed",
+    "kernel_cv",
+    "laplacian",
+    "cosine_mixed",
+    "cosine_float32",
+    "polynomial",
+    "precomputed_error_policy"
+  ],
+  "cases": {
+    "cosine_float32": {
+      "class": "dwd.gen_kern_dwd.KernGDWD",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 3,
+      "nested_solver_mode": null,
+      "pickle_sha256": "01b957387f1b8269b3b0d0b0becac39b58179b8a0828c90ab34c724f057ae245",
+      "prepared_cache": false,
+      "warnings": [
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        }
+      ]
+    },
+    "cosine_mixed": {
+      "class": "dwd.gen_kern_dwd.KernGDWD",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 3,
+      "nested_solver_mode": null,
+      "pickle_sha256": "e26cc3d964f8e5a965cf450c7015827b92ca78dc9fb5cab76589812060c01497",
+      "prepared_cache": false,
+      "warnings": [
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        }
+      ]
+    },
+    "kernel_cv": {
+      "class": "dwd.gen_kern_dwd.KernGDWDCV",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 3,
+      "nested_solver_mode": "legacy",
+      "pickle_sha256": "30278faca9f2c895fbb6f29d85543424d83fcda49b1ea3667bda017a45c6b209",
+      "prepared_cache": false,
+      "warnings": [
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        },
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        },
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        }
+      ]
+    },
+    "kernel_precomputed": {
+      "class": "dwd.gen_kern_dwd.KernGDWD",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 3,
+      "nested_solver_mode": null,
+      "pickle_sha256": "1720f730f3d3a8430da9e0037a3331424b9ec49b92375c4e932002ad08965b14",
+      "prepared_cache": false,
+      "warnings": [
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        }
+      ]
+    },
+    "kernel_rbf": {
+      "class": "dwd.gen_kern_dwd.KernGDWD",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 3,
+      "nested_solver_mode": null,
+      "pickle_sha256": "e1c6209b2e15107d3511d8c6fd29b315fddfe3a30a5a32b086597abe43378fcf",
+      "prepared_cache": true,
+      "warnings": [
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        }
+      ]
+    },
+    "laplacian": {
+      "class": "dwd.gen_kern_dwd.KernGDWD",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 3,
+      "nested_solver_mode": null,
+      "pickle_sha256": "e6f6a3e005535699c88a1ec4153b7e0fb5a56cd1fdd6a5b442c6327a9a22b65a",
+      "prepared_cache": false,
+      "warnings": [
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        }
+      ]
+    },
+    "linear_cv": {
+      "class": "dwd.gen_dwd.GenDWDCV",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 3,
+      "nested_solver_mode": "legacy",
+      "pickle_sha256": "d130cfe93602156f0695e93f8b201a8c6916c07b50d064a97b774eca9b3c6355",
+      "prepared_cache": false,
+      "warnings": []
+    },
+    "linear_explicit": {
+      "class": "dwd.gen_dwd.GenDWD",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 3,
+      "nested_solver_mode": null,
+      "pickle_sha256": "1e5529c0eaab29ba2c5f4e59c1bab4dd786b5f9948c85223642d7b6c17bedada",
+      "prepared_cache": false,
+      "warnings": []
+    },
+    "linear_implicit": {
+      "class": "dwd.gen_dwd.GenDWD",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 3,
+      "nested_solver_mode": null,
+      "pickle_sha256": "7b16955a1622e16f4fe3b16c4d5899092e5bd2e274fb06d6ceb58ad876cc5be5",
+      "prepared_cache": true,
+      "warnings": []
+    },
+    "polynomial": {
+      "class": "dwd.gen_kern_dwd.KernGDWD",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 8,
+      "nested_solver_mode": null,
+      "pickle_sha256": "cb0d22228a256685c6160e84cfe7bf9ad515c3897b27312afbedbbaf37a75d9f",
+      "prepared_cache": false,
+      "warnings": [
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        }
+      ]
+    },
+    "precomputed_error_policy": {
+      "class": "dwd.gen_kern_dwd.KernGDWD",
+      "fitted_solver_mode": "legacy",
+      "n_iter": 8,
+      "nested_solver_mode": null,
+      "pickle_sha256": "dc69382c4d12eca9f435f943b204300fd21829a423fb12e649040ad5c4aa5704",
+      "prepared_cache": false,
+      "warnings": [
+        {
+          "category": "FutureWarning",
+          "message": "solver_mode='legacy' uses historical kernel update equations. Use solver_mode='schur' for new fits; existing saved models remain readable."
+        }
+      ]
+    }
+  },
+  "environment": {
+    "dwd": "1.3.19",
+    "numpy": "2.5.4",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python": "3.12.15 | packaged by conda-forge | (main, Oct 13 2026, 16:44:09) [MSC v.1944 64 bit (AMD64)]",
+    "scipy": "1.18.1",
+    "sklearn": "1.9.1"
+  },
+  "fixture_sha256": "904f7f707acfcbb865d5f3a54e191c025d3936198015bbc544442c311318581f",
+  "purpose": "Genuine pre-retirement fitted prediction states; not new correctness claims",
+  "required_source_pins": {
+    "dwd/_fit_state.py": "f0a28ff82c8ec9311feab2a9d2e29fdbd8b161d92649e11c96650ed39e7b76e3",
+    "dwd/cv.py": "409adf9ba23e8a4586f861ecb65d5ed3fc83c33cb3d3a081db811119be82fbc9",
+    "dwd/gen_dwd.py": "54d83898b36bbbe55601dc2f27a1c889bc84aec286ff4da4db54a917e991142c",
+    "dwd/gen_kern_dwd.py": "d1513a32453d39a980e12e1d9f9c78ea4bef2cbde69f6ddaaa135a906c867eb7",
+    "dwd/kernel_utils.py": "429c0ed68412b6dbe1291a858a9594d1953bc58d015f6b280ed82a1ca1244fba",
+    "dwd/linear_model.py": "155c76ea8804b9ea8dbcbcdeeedc1511e9c47f07531275c37c57661bc20235c7"
+  },
+  "schema": 1,
+  "source_sha256": {
+    "dwd/__init__.py": "509f9fcf702b358a26e457c0f2cb6ca8cdba427aa978b61b099626729ea768de",
+    "dwd/_accelerated_mm.py": "54959017e3298e5a44f6dfd9aca05a4d129f5d5a242365be474278636be7b287",
+    "dwd/_acceleration_policy.py": "c474c3d1a6f33d4129e4ee7389455610ec6ff884c4eea0eb8d417e2895dd3001",
+    "dwd/_affine_scores.py": "68ca630ffced103c7bed6f8300ca1afa6eb73bc60496d74d3857bc23cc3b5f98",
+    "dwd/_anchor_linear_system.py": "cc57837efeabe0feb3c9e6668014870ea8b8bae16564c13764f6d668a15d43cf",
+    "dwd/_certified_kernel_mm.py": "1d3dccba4d5d2b2f2faff074ff6941c09f95fa0ad8e4adabde6e8b51aded9f10",
+    "dwd/_compensated_residual.py": "c96f91ce4f9551db4b03a4dc653300c180e05ab6f64e4a8266a8eb3e36e7c9c8",
+    "dwd/_compiled_affine_scores.py": "578c995096787471ef7efdd332144fc89f03e305a17da2a532a44f4698b3305e",
+    "dwd/_compiled_residual.py": "6f4db94f706ef7855dd25d3486f1b89b6e188424e27a67d326db290e2145a46e",
+    "dwd/_compiled_scores.py": "d55ae328b8ec8be3143cce3e82b31f2cb0860fd7b6d80f158bd796ad7f0f8b50",
+    "dwd/_direct_rbf.py": "0e9344df8c0392a15b4a5ddca2f5c5dd73359eb34f69d4dfa34c90e1cfda1b4c",
+    "dwd/_dual_certificate.py": "b6f12b6349c5991194439de74e16128f21abb535199fe87b6f6d9055ce833ce4",
+    "dwd/_eigen.py": "9dec21c085edffa5644407e1ad6a01cd36333c056f6c150fe162e4fa87f01d34",
+    "dwd/_exact_kernel_factor.py": "34075df04ee0b6a941412becff1ad7e766a0c5e50501c5a64e9cfd76e15fc823",
+    "dwd/_exact_linear_mm.py": "a5a1999cb542fc5f56f2788bb2714c4fda8046f18951eca9ea4e7dca074b96dc",
+    "dwd/_explicit_factor.py": "671a1d6fa1b83120d1c38bc35ffd198c29ad5aecbc14dcc9c68637d80ca121c1",
+    "dwd/_fit_state.py": "f0a28ff82c8ec9311feab2a9d2e29fdbd8b161d92649e11c96650ed39e7b76e3",
+    "dwd/_guarded_rbf.py": "fb79daa8b94e72d10095b9a7cf9ec2a450179923d768d188dcef33f42c113db6",
+    "dwd/_implicit_recovery.py": "2151cd6034f20b629421c57352b59b5e0ad14185ed79b54b8d95ae845d5d9688",
+    "dwd/_kernel_linear_system.py": "5e168fc29a93de26b0498c0bbce63ce42b519ca91160911d5f33772980e0257b",
+    "dwd/_kernel_mm_recovery.py": "f70b232676555616c34b2173d5552914dfd30915027f6d1e1eacdbc76dde07a7",
+    "dwd/_kernel_recovery.py": "ce0695ffdf7b4fd09ad74e9fbfa7b3b9881a7a1f1941cc22a986a5bd97e9b0c3",
+    "dwd/_kernel_scores.py": "6c1bc498610ca19d1a937069d38792f2f5087a8d841ad7a38b599dae8563793c",
+    "dwd/_kernel_solver.py": "23402536bc4a872160f7dc5e18cbdae8c84fb805b9566f17c16a76118b43e80c",
+    "dwd/_linear_action.py": "df2e89698095ad209c9669f131390a8f892858f667368e63466efc3a65a9e0ed",
+    "dwd/_linear_feature_diagnostics.py": "6c01a818b2c633ca0040137ac9260cfaf21882b0f57c0cc2332ab1e9b3831080",
+    "dwd/_native_residual.py": "17f26a149faa3319206cdf2472de150c7078a47f25cd7251b5322a265b73f6b6",
+    "dwd/_objective_mean.py": "2225feaea06ddd566e47abecdce5f845955948d341e19e9a092fd0c25fea588f",
+    "dwd/_ordinary_residual_bounds.py": "dfa668ce7364d61d1531dc093b5131ff8eff6afa3af5f8863f03a82cf99e1dfb",
+    "dwd/_prediction_norms.py": "05b43d68186073176d9718e1d74d376bf24de8abddad83e444fd053d776af4d3",
+    "dwd/_psd_policy.py": "6822f96dfd171bf4c22b4910c788a95c358fa97fd9946605303046f8241805a0",
+    "dwd/_quadratic_bounds.py": "5ff76770c2b404aae62ed552e4e860cfe3554c80efbc1df3ac4d85d1b1fdad8c",
+    "dwd/_rbf.py": "b99c4ca8e38add813faf6902751dc5d4baa59b48ec5c060729b19f8d171bb488",
+    "dwd/_rbf_self_construction.py": "9916b610bbf06486547dd0cbb997fb782423b56e5e62283e5a01790d00e45cfe",
+    "dwd/_readout_refinement.py": "947603d2b623e554c2b8902ba8ae33a2d9af018e816aabd4288c7039e1b10c35",
+    "dwd/_reference_mm.py": "ec885ee477b3b7693d4cafa9614afc9e243af13e69eb0bf5f4408b4a4d0a6d52",
+    "dwd/_residual_accel.pyd": "287a31eda05158a74b3ab585c3ac6dad0b474671088ed677375bc1a008160781",
+    "dwd/_residual_order.py": "2c5b94eb514ab35692c3f6dc13caffa610016beabe300420caf4df76c6d5764f",
+    "dwd/_residual_startup_cleanup.py": "910907a3cd064d1af796ab4bbd942ad2adaa1e9f2391b2510f86912062266d52",
+    "dwd/_residual_worker_scope.py": "25cf1388bd21ecac41132cb0530f34c35d86f3a13c0cb50f19e774498a998462",
+    "dwd/_sparse_features.py": "1d693db21b81eadebbb8d4ca4e6154d79300da6b228990ac2c59ad5f15ec97dc",
+    "dwd/_spectral_linear_system.py": "a44182a00a2623c914686929f857debd4729fc355609cfb7bb379e04ec981496",
+    "dwd/_validation.py": "554926a7263945c05d3975acf51e3db77eeb6ffccb946bae080be84ef20cd921",
+    "dwd/cv.py": "409adf9ba23e8a4586f861ecb65d5ed3fc83c33cb3d3a081db811119be82fbc9",
+    "dwd/gen_dwd.py": "54d83898b36bbbe55601dc2f27a1c889bc84aec286ff4da4db54a917e991142c",
+    "dwd/gen_kern_dwd.py": "d1513a32453d39a980e12e1d9f9c78ea4bef2cbde69f6ddaaa135a906c867eb7",
+    "dwd/kern_md.py": "bc65b196ea40f06736c04e2e34e5aefbd841211ded54ce314258be3f588cab58",
+    "dwd/kernel_utils.py": "429c0ed68412b6dbe1291a858a9594d1953bc58d015f6b280ed82a1ca1244fba",
+    "dwd/linear_model.py": "155c76ea8804b9ea8dbcbcdeeedc1511e9c47f07531275c37c57661bc20235c7",
+    "dwd/literal_diagnostics.py": "b5bc8eb911709aa66956510c6476c993f6c2d0be7cb466a016549e0edfc8509a",
+    "dwd/model_selection.py": "d790fab4f2e97b4fc7adfb88d9f19edfa01433cc9b3c2d7f59a6d30cc139df51",
+    "dwd/profiling.py": "4ef77475010a71c0812a0cea1b0ecf20be085a83a21f0051e6ae1ccd92500167",
+    "dwd/sim_fun.py": "ef7a3808202830625a721de3c2b30c0efb89fe5fcd71d83ddd70b02d2a749394",
+    "dwd/socp_dwd.py": "78d0b0bfc704444e896f5e852e8b7bbcdec750417a02af7719bbf1ab30047703",
+    "dwd/svm.py": "a14cf4cce445b65d8e349f38398a13b26ef4ab949aa3f77d94312bf83a5ee1c5",
+    "dwd/utils.py": "b3be9e4568ee46f5cdaf36f596e3313afed345baa9cacc4f868176319e3c7e94",
+    "dwd/viz.py": "fa66d5b1f8a13f47517ccdb9f6d6b7a4b4d5fe7bbd2d4585c5b90745faf66451"
+  }
+}

@@ -31,7 +31,7 @@ class PredictionNormReuseTests(unittest.TestCase):
         cls.X = rng.normal(size=(32, 7))
         cls.y = np.tile([-3, 7], 16)
         cls.Q = rng.normal(size=(13, 7))
-        # Keep the fitted scientific policy explicit; separate tests exercise auto.
+        # Keep these fitted policies explicit; separate tests exercise the defaults.
         opts = dict(kernel='rbf', kernel_kws={'gamma': .17}, lambd=.05,
                     max_iter=8, stopping='fixed', affine_computation='standard',
                     residual_check_order='refinement_first')

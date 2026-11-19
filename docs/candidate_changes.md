@@ -1,6 +1,6 @@
 # DWD 1.3.9 changes and validation scope
 
-This page records the historical 1.3.9 behavior. For current development
+This page records the historical 1.3.9 behavior. For DWD 2.0.0
 defaults and supported combinations, see the [kernel guide](kernel_dwd.md).
 
 This October 3, 2026 release of the fork, developed under Chang Cheng's guidance,
@@ -39,8 +39,9 @@ Reported probe time overlaps accurate-assessment time; timing counters must not
 be added as though all were exclusive. An accurate-first miss can add work.
 
 The generalized kernel DWD objective uses a mean loss plus `lambd * ||f||^2`,
-where the norm excludes the intercept. For `q=1`, the dissertation's `lambda/2`
-convention therefore uses twice this `lambd`.
+where the norm excludes the intercept. For `q=1`, the `lambda/2` convention
+in [Chang Cheng's dissertation](https://doi.org/10.25394/PGS.34548831.v1)
+therefore uses twice this `lambd`.
 Sampling, objective normalization and regularization are unchanged by
 these performance changes. Benchmark adoption of adaptive ordering requires a
 separate method identity; results obtained with different policies must not be mixed.
@@ -62,8 +63,9 @@ subsequent successful fit can still reuse the validated private preparation.
 These changes do not introduce a new objective, intercept penalty, regularizer
 or stopping rule.
 
-Separate validation receipts record the development-build benchmarks and source
-checks. These bounded checks are not a completed MNIST search or a claim that
+The development benchmarks and source checks are summarized here. The original
+validation records were kept separately from this distribution. These bounded checks are not a completed
+MNIST search or a claim that
 all selectable historical modes have been re-proved correct. The final
 development source suite passed 509 tests with three skips; native and portable
 wheel installations and eight checks from the extracted source archive also

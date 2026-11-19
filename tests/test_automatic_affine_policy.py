@@ -1,4 +1,4 @@
-"""Automatic scoring, historical policies and fitted-state ownership."""
+"""Default joint scoring, historical policies and fitted-state ownership."""
 import pickle
 import tempfile
 import unittest
@@ -12,6 +12,7 @@ from sklearn.exceptions import NotFittedError
 from sklearn.model_selection import GridSearchCV
 from threadpoolctl import threadpool_limits
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
+from _kernel_reference import kernel_route
 from dwd.cv import run_cv
 
 class AutomaticAffinePolicyTests(unittest.TestCase):
@@ -28,14 +29,14 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
     def model(self, **kw):
         options = dict(kernel='linear', lambd=0.1, max_iter=5, stopping='fixed', initialization='zero', random_state=7)
         options.update(kw)
-        return KernGDWD(**options)
+        return kernel_route(**options)
 
     def test_constructor_clone_parameter_defaults(self):
         for cls in (KernGDWD, KernGDWDCV):
-            self.assertEqual(signature(cls).parameters['affine_computation'].default, 'auto')
-            self.assertEqual(cls.affine_computation, 'standard')
+            self.assertEqual(signature(cls).parameters['affine_computation'].default, 'joint')
+            self.assertEqual(cls.affine_computation, 'joint')
             obj = cls()
-            self.assertEqual(obj.get_params()['affine_computation'], 'auto')
+            self.assertEqual(obj.get_params()['affine_computation'], 'joint')
             copied = clone(obj).get_params()
             self.assertEqual(set(copied), set(obj.get_params()))
             for key, value in obj.get_params().items():
@@ -55,17 +56,17 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
 
     def test_new_default_recovers_natural_boundary(self):
         # The affine-policy fixture depends on five ordinary MM updates.
-        auto = self.model(acceleration=None).fit(self.X, self.y)
+        default = self.model(acceleration=None).fit(self.X, self.y)
         standard = self.model(affine_computation='standard', acceleration=None).fit(self.X, self.y)
         joint = self.model(affine_computation='joint', acceleration=None).fit(self.X, self.y)
-        self.assertEqual(auto.affine_computation, 'auto')
-        self.assertEqual(auto.affine_computation_, 'joint')
-        self.assertEqual(auto.predict(self.query)[0], 7)
+        self.assertEqual(default.affine_computation, 'joint')
+        self.assertEqual(default.affine_computation_, 'joint')
+        self.assertEqual(default.predict(self.query)[0], 7)
         self.assertEqual(standard.predict(self.query)[0], -3)
         for name in ('dual_coef_', 'intercept_', 'objective_history_'):
-            np.testing.assert_array_equal(getattr(auto, name), getattr(standard, name))
-            np.testing.assert_array_equal(getattr(auto, name), getattr(joint, name))
-        np.testing.assert_array_equal(auto.decision_function(self.query), joint.decision_function(self.query))
+            np.testing.assert_array_equal(getattr(default, name), getattr(standard, name))
+            np.testing.assert_array_equal(getattr(default, name), getattr(joint, name))
+        np.testing.assert_array_equal(default.decision_function(self.query), joint.decision_function(self.query))
 
     def test_fitted_policy_ownership_mutation_and_refit(self):
         obj = self.model(acceleration=None).fit(self.X, self.y)
@@ -84,41 +85,43 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
         vals, vecs = eigh(K)
         for opts, fitopts in [({}, {}), ({'backend': 'cholesky'}, {}), ({'backend': 'spectral'}, {}), ({'backend': 'lbfgs'}, {}), ({'implementation': 'reference'}, {}), ({}, {'K': K, 'K_eig': (vecs, vals)})]:
             with self.subTest(opts=opts, fitopts=bool(fitopts)):
-                auto = self.model(max_iter=2, **opts).fit(self.Xn, self.yn, **fitopts)
+                default = self.model(max_iter=2, **opts).fit(self.Xn, self.yn, **fitopts)
                 joint = self.model(max_iter=2, affine_computation='joint', **opts).fit(self.Xn, self.yn, **fitopts)
-                self.assertEqual(auto.affine_computation_, 'joint')
+                self.assertEqual(default.affine_computation_, 'joint')
                 for name in ('dual_coef_', 'intercept_', 'objective_history_'):
-                    np.testing.assert_array_equal(getattr(auto, name), getattr(joint, name))
-                np.testing.assert_array_equal(auto.decision_function(self.Xn.copy()), joint.decision_function(self.Xn.copy()))
+                    np.testing.assert_array_equal(getattr(default, name), getattr(joint, name))
+                np.testing.assert_array_equal(default.decision_function(self.Xn.copy()), joint.decision_function(self.Xn.copy()))
 
-    def test_legacy_resolves_standard_and_preserves_explicit_rejection(self):
-        auto = self.model(solver_mode='legacy', kernel='rbf', kernel_kws={'gamma': 1.0}).fit(self.X, self.y)
-        standard = self.model(solver_mode='legacy', kernel='rbf', kernel_kws={'gamma': 1.0}, affine_computation='standard').fit(self.X, self.y)
-        self.assertEqual(auto.affine_computation_, 'standard')
-        np.testing.assert_array_equal(auto.decision_function(self.query), standard.decision_function(self.query))
-        with self.assertRaises(ValueError):
-            self.model(solver_mode='legacy', affine_computation='joint').fit(self.X, self.y)
+    def test_fitted_standard_policy_is_owned_and_removed_mode_rejects(self):
+        fitted = self.model(affine_computation='standard').fit(self.Xn, self.yn)
+        self.assertEqual(fitted.affine_computation_, 'standard')
+        expected = fitted.decision_function(self.Xn)
+        fitted.set_params(affine_computation='joint')
+        np.testing.assert_array_equal(fitted.decision_function(self.Xn), expected)
+        for policy in ('standard', 'joint'):
+            with self.subTest(policy=policy), self.assertRaisesRegex(TypeError, 'solver_mode'):
+                self.model(solver_mode='legacy', affine_computation=policy).fit(self.X, self.y)
 
-    def test_auto_validation_and_zero_iteration_use_concrete_policy(self):
+    def test_default_validation_and_zero_iteration_use_concrete_policy(self):
         for opts in ({}, {'backend': 'spectral'}, {'backend': 'lbfgs'}, {'implementation': 'reference'}):
             with self.subTest(opts=opts):
-                auto = self.model(stopping='validation', **opts).fit(self.X, self.y, validation_data=(self.query, np.array([7])))
+                default = self.model(stopping='validation', **opts).fit(self.X, self.y, validation_data=(self.query, np.array([7])))
                 joint = self.model(stopping='validation', affine_computation='joint', **opts).fit(self.X, self.y, validation_data=(self.query, np.array([7])))
-                self.assertEqual(auto.validation_history_, joint.validation_history_)
-                self.assertEqual(auto.returned_iteration_, joint.returned_iteration_)
+                self.assertEqual(default.validation_history_, joint.validation_history_)
+                self.assertEqual(default.returned_iteration_, joint.returned_iteration_)
         seed = self.model(acceleration=None).fit(self.X, self.y)
         zero = self.model(max_iter=0, stopping='validation').fit(self.X, self.y, alpha_init=seed.dual_coef_[0], offset_init=float(seed.intercept_[0]), validation_data=(self.query, np.array([7])))
         self.assertEqual(zero.validation_history_[0]['score'], 1.0)
 
     def test_cv_cache_identity_and_actual_use(self):
         obj = self.model().cv_init(self.X)
-        self.assertEqual(obj._cv_affine_computation, 'auto')
+        self.assertEqual(obj._cv_affine_computation, 'joint')
         self.assertTrue(obj._cv_cache_matches(self.X))
         with patch.object(obj, '_compute_training_kernel', side_effect=AssertionError('cache expected')):
             obj.fit(self.X, self.y)
         self.assertEqual(obj.affine_computation_, 'joint')
         obj.set_params(affine_computation='joint')
-        self.assertFalse(obj._cv_cache_matches(self.X))
+        self.assertTrue(obj._cv_cache_matches(self.X))
         obj.set_params(affine_computation='standard')
         self.assertFalse(obj._cv_cache_matches(self.X))
         obj.cv_init(self.X).fit(self.X, self.y)
@@ -134,24 +137,31 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
             with self.assertRaises(NotFittedError):
                 obj.predict(self.X)
 
-    def test_cv_estimator_default_and_legacy(self):
-        for mode, expected in [('schur', 'joint'), ('legacy', 'standard')]:
-            cv = KernGDWDCV(lambd_vals=[0.1], q_vals=[1.0], cv=2, max_iter=2, stopping='fixed', random_state=7, solver_mode=mode).fit(self.Xn, self.yn)
-            self.assertEqual(cv.affine_computation, 'auto')
+    def test_cv_estimator_current_policies_and_fitted_ownership(self):
+        for requested, expected in [(None, 'joint'), ('standard', 'standard'), ('joint', 'joint')]:
+            options = {} if requested is None else {'affine_computation': requested}
+            constructor = KernGDWDCV(lambd_vals=[0.1], q_vals=[1.0], cv=2, max_iter=2, stopping='fixed', random_state=7, **options)
+            cv, query = constructor.fit(self.Xn, self.yn), self.Xn.copy()
+            self.assertEqual(cv.affine_computation, expected)
             self.assertEqual(cv.affine_computation_, expected)
             self.assertEqual(cv.best_estimator_.affine_computation_, expected)
-            scores = cv.decision_function(self.Xn.copy())
+            scores = cv.decision_function(query)
             cv.set_params(affine_computation='standard')
-            np.testing.assert_array_equal(cv.decision_function(self.Xn.copy()), scores)
-            np.testing.assert_array_equal(pickle.loads(pickle.dumps(cv)).decision_function(self.Xn.copy()), scores)
+            np.testing.assert_array_equal(cv.decision_function(query), scores)
+            np.testing.assert_array_equal(pickle.loads(pickle.dumps(cv)).decision_function(query), scores)
 
     def test_run_cv_and_sklearn_grid_mixed_policies(self):
-        grid = {'affine_computation': ['auto', 'standard', 'joint'], 'lambd': [0.1]}
+        grid = {'affine_computation': ['standard', 'joint'], 'lambd': [0.1]}
         results = run_cv(self.model(max_iter=2), self.Xn, self.yn, grid, cv=2, refit_best=False)[3]
-        self.assertEqual(len(results['params']), 3)
-        self.assertEqual(results['mean_test_score'][0], results['mean_test_score'][2])
+        self.assertEqual(len(results['params']), 2)
+        for policy in ('standard', 'joint'):
+            separate = run_cv(self.model(max_iter=2, affine_computation=policy),
+                              self.Xn, self.yn, {'lambd': [0.1]}, cv=2,
+                              refit_best=False)[3]
+            index = results['params'].index({'affine_computation': policy, 'lambd': 0.1})
+            self.assertEqual(results['mean_test_score'][index], separate['mean_test_score'][0])
         search = GridSearchCV(self.model(max_iter=2), grid, cv=2, n_jobs=1).fit(self.Xn, self.yn)
-        expected = 'joint' if search.best_params_['affine_computation'] == 'auto' else search.best_params_['affine_computation']
+        expected = search.best_params_['affine_computation']
         self.assertEqual(search.best_estimator_.affine_computation_, expected)
 
     def test_guarded_affine_exact_fallback(self):
@@ -179,7 +189,7 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
         self.assertEqual(model.backend_, 'spectral')
         self.assertEqual(model.diagnostics_['spectral_restart']['restarts'], 1)
 
-    def test_auto_fit_with_optional_native_helper_disabled(self):
+    def test_default_fit_with_optional_native_helper_disabled(self):
         from dwd import _compiled_residual, _native_residual
         with patch.object(_compiled_residual, '_ACCEL', None), patch.object(_native_residual, '_native_supported', return_value=False):
             model = self.model(acceleration=None).fit(self.X, self.y)
@@ -189,8 +199,9 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
     def test_restart_default_affine_scores_match_exact_returned_state(self):
         models = {}
         for acceleration in ('auto', 'restart'):
-            for affine in ('auto', 'standard', 'joint'):
-                model = self.model(acceleration=acceleration, affine_computation=affine).fit(self.X, self.y)
+            for affine in (None, 'standard', 'joint'):
+                options = {} if affine is None else {'affine_computation': affine}
+                model = self.model(acceleration=acceleration, **options).fit(self.X, self.y)
                 models[acceleration, affine] = model
                 self.assertEqual(model.acceleration_, 'restart')
                 if affine != 'standard':
@@ -202,8 +213,8 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
                     self.assertEqual(model.predict(self.query)[0], model.classes_[int(exact > 0)])
                 for name in ('dual_coef_', 'intercept_', 'objective_history_'):
                     np.testing.assert_array_equal(getattr(model, name),
-                                                  getattr(models[acceleration, 'auto'], name))
-        for affine in ('auto', 'standard', 'joint'):
+                                                  getattr(models[acceleration, None], name))
+        for affine in (None, 'standard', 'joint'):
             a, b = models['auto', affine], models['restart', affine]
             for name in ('dual_coef_', 'intercept_', 'objective_history_'):
                 np.testing.assert_array_equal(getattr(a, name), getattr(b, name))

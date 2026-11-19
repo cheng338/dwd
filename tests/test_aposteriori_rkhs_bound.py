@@ -138,7 +138,7 @@ class AposterioriRKHSTests(unittest.TestCase):
         lambd = shift/(n/2.)
         states = []
         # The independent recurrence below is ordinary MM, without momentum.
-        model = KernGDWD(kernel='precomputed', implementation='optimized', initialization='zero',
+        model = KernGDWD(kernel='precomputed', initialization='zero',
                         acceleration=None, lambd=lambd, max_iter=5, stopping='fixed',
                         callback=lambda s: states.append(dict(s)))
         model.fit(K, y)

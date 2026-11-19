@@ -6,6 +6,465 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 2.0.0
+
+- Remove the unused private feature-gradient interface that recomputed operand
+  splits, together with its test selector. The selected implementation reuses
+  existing splits in gradient tiles and uses an existing context for eligible
+  coefficient calculations. Numerical guards and fallback paths still apply.
+
+- Clarify `KernelScaler.transform` copy ownership and its opt-in in-place
+  failure behavior. The default copy preserves input on overflow refusal;
+  `copy=False` has no rollback and can modify aliases before raising. Add
+  focused copy-contract regressions without changing scaling arithmetic.
+
+- Sum duplicate signed and unsigned integer sparse coordinates exactly before
+  their single float64 conversion, including linear prediction and supported
+  precomputed queries. Preserve floating and Boolean input policies and
+  separate callable-return/direct-score contracts. This strengthens the
+  prior entry-wise conversion contract; affected fits and predictions can
+  change. Verified-unique linear queries retain ordinary dot-product conversion
+  without an extra float64 copy. Historical records are not rewritten, and
+  precomputed training remains dense-only.
+
+- Remove the redundant root-logger warning around the optional CVXPY
+  import. Preserve the original import failure so applications retain
+  control of their logging configuration.
+
+- Clarify that linear `P0_eig` is used and validated only with
+  `implicit_P=True`. Explicit fitting ignores this optional argument and
+  prepares its own checked factor. Solver behavior is unchanged.
+
+- Keep the historical 2D notebook kernel examples independent of optional
+  CVXPY. Missing CVXPY skips only the linear SOCP cells; unrelated import
+  and solver failures remain visible. Clarify that the combined figure
+  script requires CVXPY, and clear stale outputs only in changed cells.
+
+- Document that generalized linear and kernel DWD can have non-unique free
+  intercepts and different predictions at equal global objective values.
+  Include an exact example and comparison guidance; solvers, prediction rules,
+  numerical checks and defaults are unchanged.
+
+- Clarify that exact-recovery rank, entry, bit and operation caps apply
+  simultaneously. Rank is not row count, and satisfying the rank cap does not
+  guarantee recovery. Arithmetic guards, profiles and defaults are unchanged.
+
+- Decline the optional compiled residual route when its loaded module lacks
+  an `evaluate` entry or exposes `None`, retaining the existing guarded
+  fallback. Preserve errors from present evaluators and all arithmetic,
+  acceptance and worker-cleanup behavior.
+
+- Normalize maintained text to LF using repository attributes, preserving
+  frozen byte-hashed test oracles, the exact 1.3.16 archive and Windows
+  batch-file endings. Source bytes and their identities change, while
+  executable semantics are unchanged. Exact-source checkpoints require
+  their original source snapshot or a fresh run; historical identities
+  are not rewritten.
+
+- Restore omitted tagged-version history for 1.3.16 and 1.3.6, including
+  an explicitly historical 1.3.16 notes archive. Preserve prior release
+  claims and distinguish 1.3.17's test-fixture correction from inherited changes.
+
+- Repair archived release-note paths and direct historical version references
+  to the corresponding notes. Keep current runtime guidance separate from
+  historical validation, without changing release claims or package behavior.
+
+- Clarify current Windows general scoring, Linux private reporting scores and
+  the separate joint-affine reporting entry, alongside scalar-eligible residual
+  dispatch on other platforms. Distinguish guarded runtime eligibility from
+  measured validation scope; executable code and numerical policies are unchanged.
+
+- Distinguish checkout development tests from installed-wheel qualification.
+  Document the existing detached test bundle, exact installed-artifact checks
+  and isolated pytest commands without changing package code or CI behavior.
+
+- Describe the combined DWD and CPython-derived arithmetic in distribution
+  metadata with the SPDX expression `MIT AND Python-2.0.1`. Retain both complete
+  license texts and the original source attribution in source distributions,
+  native wheels and portable wheels. Require setuptools 77.0.3 or later for
+  this metadata; numerical code, build modes and runtime dependencies are
+  unchanged.
+
+- Allow an explicit fresh retry of the resumable kernel-CV example after an
+  interrupted first identity write leaves only its recognized unpublished
+  temporaries. Preserve those files without reading or adopting their contents;
+  retain strict resume, live-owner locking and later-stage evidence checks.
+  Estimator APIs and numerical behavior are unchanged. See
+  [initial setup recovery](docs/resumable_cv.md#interrupted-initial-checkpoint-setup).
+
+- Reuse the current public query validation inside eligible dense batched
+  `KernGDWD` prediction with guarded norm-sum RBF construction. Fresh training
+  norms and storage/source checks qualify reuse only within that call; retain
+  checked fallback for unsupported inputs, policies or replaced hooks. Kernel
+  arithmetic and public validation rules are unchanged. See
+  [prediction reuse](docs/kernel_dwd.md#kernels-batching-and-caches).
+
+- Retain the private fold-token registry through the ordinary final refit in
+  `fit_shared_fold_search` and clear it during helper exit cleanup. This removes
+  the earlier pre-refit release while preserving cache statistics and the final
+  estimator's owned feature copy. The helper remains opt-in; eligibility,
+  numerical results and defaults are unchanged. Neither registry lifetime
+  establishes a universal speed advantage. See
+  [shared-fold ownership](docs/shared_fold_search.md#state-and-ownership).
+
+- Share the unchanged zero-shift design-rank validator between the linear solver
+  and explicit factor. The solver binds the existing validation function at
+  import time, avoiding an unnecessary first-fit factor-module import. Numerical
+  acceptance and defaults are unchanged; startup and repeated-fit costs remain
+  workload dependent.
+
+- Enlarge qualified warm native gradient/beta batches to 16,384 entries while
+  preserving original first groups, arithmetic, bounds and fallback. Feature
+  input staging is bounded at 128 KiB per larger call; the expansion artifact
+  requires a rebuild for private API version 2. No public option is added.
+  Saved-state reporting measurements show workload-dependent gains; see the
+  [batching contract](docs/compiled_residual.md#exact-feature-expansion-tiles)
+  and [reporting evidence](docs/kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting).
+
+- Defer private native expansion-context creation until the ordered reducer
+  finishes initialization. Preserve original fallback during loading, completed
+  negative caching and later mutation checks. This prevents legitimate helper
+  initialization from invalidating a prematurely captured context, without
+  changing arithmetic, solver defaults or public options. See the
+  [initialization validation](VALIDATION.md#native-loader-initialization-order-correction-2026-11-10).
+
+- Update shared-fold search guidance with direct comparisons against current
+  ordinary search. Retain the existing explicit helper and recommend choosing
+  the route from representative whole-search measurements. Document the tested
+  training-score settings, workload-dependent benefits and costs, and timing
+  exclusions. No runtime behavior or search default changes; see the
+  [shared-fold guidance](docs/shared_fold_search.md#when-to-use-it).
+
+- Extend qualified dense named-linear L-BFGS reporting with native gradient
+  tiles and warm beta calculations, reusing existing compensated splits and
+  report-specific score products. Preserve arithmetic order, error bounds,
+  callbacks, acceptance, optimizer work and guarded fallback. No public option
+  is added. Eligible CPython 3.12 builds include a full-ABI expansion extension
+  and use interpreter-specific wheel tags; other builds retain the existing
+  helpers/fallback. Wider and repeated fits improve in the measured panels,
+  while cold startup and missing-extension costs remain workload dependent.
+  See [reporting costs](docs/kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting)
+  and [native build policy](docs/compiled_residual.md#building-and-installing).
+
+- Accelerate the final ordered sums in qualified dense named-linear L-BFGS
+  gradient reports with a separate private native reducer. Preserve expansion,
+  restoration, numerical checks, scalar/error recovery and the original checked
+  fallback. This reducer itself adds no estimator option or beta/coefficient
+  acceleration; the subsequent expansion extension is described above.
+  Native builds require the eligible extensions; `DWD_BUILD_ACCEL=0` omits all.
+  Wider tested fits benefited, while some ordinary and missing-binary fits
+  cost more; see [the reporting measurements and limits](docs/kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting).
+
+- Reuse private immutable-root views for exact contiguous row selections inside
+  the explicitly invoked `fit_shared_fold_search` helper. Keep the original
+  indexed-copy fallback, eligibility, public API, owned final refit and cleanup.
+  Fit and CV defaults are unchanged. Document logical payload accounting and
+  workload-dependent speed benefits and costs; see the
+  [shared-fold guidance](docs/shared_fold_search.md).
+
+- Reduce repeated work in final reports for eligible dense named-linear
+  L-BFGS fits. Reuse compensated operand expansions within coefficient and
+  gradient calculations, and share raw/joint-affine score products on the
+  compatible portable path. Preserve ordered sums, numerical checks, guarded
+  fallbacks, exceptional recovery and existing native scoring. Optimizer steps,
+  prediction, defaults and public options are unchanged. Benefits depend on
+  the workload, and small ordinary reports can cost slightly more; see
+  [the reporting scope and measured costs](docs/kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting).
+
+- Remove unsupported `sample_weight` arguments from six classifier `fit`
+  methods and four standalone solvers. Even explicit `None` must be omitted;
+  new keyword-only boundaries reject obsolete positional placeholders instead
+  of rebinding real controls. Preserve weighted accuracy scoring, genuine
+  initialization/preparation arguments, objectives and defaults. Weighted-fit
+  meta-estimators such as AdaBoost remain unsupported. Document fresh-estimator
+  migration for old metadata requests: cloning preserves those requests.
+
+- Preserve fitted conic DWD/SVM problems through supported pickle, joblib and
+  cloudpickle round trips. Keep primal/dual values, statistics, graph aliases
+  and known data-only warm starts; rebuild native solver handles after loading
+  without mutating the live cache when saving. Recognized native diagnostic
+  objects become attribute-readable Python records. Unknown custom objects
+  retain their serialization behavior, including errors. Copy builtin nested
+  solver-option containers before solving to protect caller-owned options while
+  preserving array, callback and custom-solver identities.
+
+- Express conic SVM margins by signing constant features before the matrix
+  product. This repairs false canonical hinge bounds reproduced with dense
+  input in CVXPY 1.9.3's HIGHS/SCIPY routes. Preserve the mean-hinge loss, L1
+  penalty, free intercept, solver choices, tolerances and finite-budget failure
+  handling. This is not an AOCL/MKL attribution. Document measured total-fit
+  costs and persistence limits in the
+  [fitting and conic guide](docs/fitting_and_conic_persistence.md).
+
+- Report the existing binary-classification and sparse-input contracts through
+  the public scikit-learn estimator tags. Linear classifiers advertise sparse
+  features; kernel DWD and its CV wrapper advertise them for the seven supported
+  named feature kernels and callable kernels, whose input support remains the
+  callback's responsibility. Preserve dense-only training for precomputed
+  kernels, chi-squared kernels and `KernMD`, and preserve dynamic pairwise tags
+  for precomputed inputs. Document the separate multiclass OvO wrapper and the
+  training/query distinction. Algorithms, validation rules and defaults are
+  unchanged; see [classification and input support](README.md#classification-and-input-support).
+
+- Replace the array-valued default `lambd_vals` and `q_vals` in `GenDWDCV`
+  and `KernGDWDCV` with immutable tuples of the same `np.logspace` values.
+  Preserve all 10 penalty values, five loss-exponent values, their order and
+  the default 50 parameter combinations. This repairs scikit-learn parameter
+  display and prevents in-place mutation of shared default arrays. Replace a
+  grid through the constructor or `set_params`; explicitly supplied NumPy
+  arrays remain supported. Numerical fitting and stopping settings are unchanged.
+
+- Document the scikit-learn 1.9.1 HTML decoding failure under affected
+  non-UTF-8 interpreters. Tests exercised a separate UTF-8 backport. DWD ships
+  the tuple-default fix for parameter representation and uses the installed
+  scikit-learn renderer for HTML. See
+  [estimator display and dependency limitation](docs/dependency_display.md).
+
+- Make generic scikit-learn fitted-state checks on `KernGDWD` require the same
+  coefficient, class and training-basis attributes as prediction. `cv_init()`
+  alone now remains unfitted, including after it invalidates a previous fit.
+  Preserve cache reuse, failed-fit cleanup, valid nonconverged predictors and
+  explicit attribute checks. Solver arithmetic and defaults are unchanged.
+
+- Use current joint/auto/auto defaults when requested affine, acceleration or
+  residual-order fields are missing from an estimator, including parameter
+  inspection, cloning and refitting. Preserve explicitly stored choices and
+  the interpretation of existing fitted prediction state. No new solver
+  arithmetic or deserialization rewrite is introduced. Cache identity and
+  unsupported explicit-value checks remain enforced.
+
+- Make `'joint'` the explicit affine-scoring default for `KernGDWD` and
+  `KernGDWDCV`. Remove the redundant affine `'auto'` alias; migrate explicit
+  requests and parameter grids to `'joint'`. Retain explicit `'standard'` and
+  existing fitted scoring policies. Default numerical scoring is unchanged;
+  private/low-level solver and `KernMD` defaults remain outside this change.
+
+- Make `'zero'` the explicit default initialization for generalized linear and
+  kernel DWD and their CV wrappers. Remove the redundant `'auto'` initialization
+  alias: replace `initialization='auto'` with `initialization='zero'` in caller
+  settings and parameter grids. Retain `'random'` and explicit initial
+  coefficients/intercepts. The previous default already selected zero, so this
+  changes the exposed spelling without changing that starting state. Other
+  controls' `'auto'` choices, the objective stopping default, tolerances and
+  numerical acceptance rules remain unchanged.
+
+- Document when to opt into `stopping='optimality'`, its potential full-fit/CV
+  cost, iteration-budget limits, and returned-model convergence checks. Clarify
+  that CV refit diagnostics do not certify every fold. This is documentation
+  only; the objective stopping default and numerical behavior are unchanged.
+
+- Validate `GenDWDCV` and `KernGDWDCV` parameter names before `set_params`
+  assigns any values. Invalid names now raise the intended parameter error
+  without invoking sklearn's problematic representation of array-valued CV
+  defaults. Supported requests still delegate to sklearn; numerical behavior
+  and defaults are unchanged.
+
+- Remove the public kernel `implementation` selector; the existing optimized
+  implementation remains the public solver and corrected coefficient-MM
+  reference computation remains private regression machinery. Remove the
+  ignored `reference` keyword from `get_K_eig`. Keep explicit backend,
+  initialization, acceleration, residual-order and stopping controls, and keep
+  their existing optimized defaults. Reject removed constructor/CV requests
+  instead of silently translating former reference settings. Require current
+  optimized preparation identity before reuse. DWD 2.0.0 pairs with
+  Ensemble DWD 0.4.0. The upgrade does not migrate old checkpoints
+  or guarantee arbitrary old serialized objects. See the kernel guide for
+  reference-user migration and the bounded quality/performance evidence.
+
+- Remove the redundant public `solver_mode` selector and kernel-only
+  `implicit_P` parameter. New computations always use corrected update algebra;
+  linear implicit/explicit routes and the supported optimized kernel
+  backends remain available. Reject removed keys in DWD CV grids before fold
+  preparation. Make trailing solver options keyword-only at the documented
+  boundaries so obsolete positional controls cannot shift into other options.
+  Invalidate preparations without the current geometry marker. This supersedes
+  the earlier retention of `solver_mode` for historical configuration inspection;
+  it adds no old-object migration or promise of arbitrary historical refitting.
+
+- Superseded earlier unreleased milestone: retired `solver_mode='legacy'`
+  before new numerical work and removed known-incorrect implicit-linear and
+  kernel update equations. That stage retained the selector with only `'schur'`
+  accepted for new fits and left stored prediction behavior unchanged. The
+  removal above replaces that transitional API; the mathematically valid
+  explicit linear solver remains available with `implicit_P=False`.
+
+- Require a nonempty compiled extension for default and explicitly accelerated
+  source builds; propagate compiler and linker failures. Keep explicit
+  `DWD_BUILD_ACCEL=0` portable builds, strict compiler flags, the stable ABI and
+  numerical runtime fallbacks. Document the build-only setting, cached-wheel
+  behavior and clean build trees when changing modes.
+
+- Build and verify the source distribution in each CI job before creating
+  the tested wheel and detached test bundle. Require all test and example
+  resources, root metadata and declared documentation fixtures to match
+  the checkout; preserve exact-wheel/native-route checks and full test suites.
+
+- Require each CI job to demonstrate its expected scalar and native residual
+  and scoring routes with execution witnesses and exact small-case results.
+  Keep the declared platform and portable fallbacks and the full test suites;
+  package numerical dispatch and acceptance criteria are unchanged.
+
+- Remove the startup-capability test's arbitrary CPython 3.14 ceiling while
+  retaining the genuine capability assertion for CPython 3.11 and later 3.x.
+  Keep Python 3.12 as the primary development target and the existing private
+  thread-layout adapters. Identity-policy regressions cover the guard without
+  claiming execution on future interpreters; production recovery is unchanged.
+
+- Accelerate compensated joint affine scores in final stationarity reports with
+  a guarded native evaluator. Preserve ordered expanded products plus the
+  intercept, numerical acceptance, exact recovery and automatic Python fallback;
+  general prediction defaults, optimizer steps and stopping remain unchanged.
+  Add native/Python parity, buffer, hook and rounding-mode regressions. Dense
+  reporting remains quadratic; see the [measured helper costs and limits](VALIDATION.md#guarded-native-affine-reporting-isolated-evidence-2026-11-02).
+
+- Add a private bounded readiness wait for proved owned worker startup after
+  wake-up, using a high-resolution clock. If startup remains unresolved, drain
+  independently qualified registered workers while keeping whole completion
+  explicitly unproved. Preserve original exceptions and numerical behavior;
+  the private 10 ms readiness budget does not bound full cleanup or terminate
+  hung workers. See the [worker lifecycle contract](docs/compiled_residual.md#threads-and-memory).
+
+- Protect wake-up and completion of owned default residual worker pools from
+  repeated `KeyboardInterrupt` during cleanup. Preserve the original failure
+  or first cleanup interruption, check supported CPython completion capabilities,
+  and report unproved cleanup explicitly. Custom executor lifecycles and
+  numerical computations and checks are unchanged. Cleanup adds overhead,
+  especially for tiny tasks; this is not a universal interruption guarantee.
+
+- Recover automatically from the two positive-shift implicit preparation
+  failures on eligible built-in dense Schur fits, using bounded exact
+  original-feature MM solves and verified nearest-even next coordinates.
+  Preserve the penalty, free intercept, zero-shift guard, successful ordinary
+  paths, supplied-pair validation, hooks and stopping behavior. Limit recovery
+  to 16 features and finite resources; do not clip eigenvalues or promise
+  convergence. Add exact-rounding, routing and public-fit regressions; see
+  [the scoped evidence and material recovery cost](VALIDATION.md#bounded-exact-linear-recovery-in-local-source).
+
+- Align implicit zero-shift linear DWD admission with the existing explicit
+  column-scaled augmented-design rank check, including supplied and cached
+  eigensystems and positive penalties whose computed shift underflows to zero.
+  Refuse numerically unresolved rank without adding a ridge or pseudoinverse.
+  Preserve positive-shift updates and subsequent numerical checks; add rank,
+  exact-system, scaling, cache, cleanup and CV regressions. The extra rank
+  check adds preparation cost only to formerly unchecked zero-shift fits.
+
+- Make kernel spectral PSD admission relative to the actual spectrum, removing
+  the unit-scale tolerance floor that could admit relatively indefinite tiny
+  kernels. Share the policy between initial admission and spectral recovery,
+  handle subnormal thresholds explicitly, and retain every positive mode.
+  Preserve known-family routing and other numerical checks. Add scale,
+  supplied-basis, recovery and public-fit/CV regressions.
+
+- Preserve completed kernel fits when the final dual certificate detects a
+  contradiction of its PSD assumption. Report an unavailable dual bound and
+  gap with an explicit reason, preserving existing numerical-error handling,
+  fitting checks and optimizer behavior. Add certificate-status, public-fit,
+  CV, serialization and earlier-guard regressions.
+
+- Build qualified standard named-RBF self kernels with the guarded norm-sum
+  evaluator from the outset, mirroring one computed triangle. Preserve selective
+  distance repairs and numerical acceptance checks; exact symmetry alone is not
+  a PSD certificate. Version self-construction caches and preserve historical
+  fitted query modes. Add construction, provenance, cache, exact-oracle and
+  caller-error-policy regressions. New-fit/query rounding can change, including
+  near-zero signs; construction and whole-fit costs remain workload dependent.
+
+- Report the complete final diagnostic family in linear feature geometry for
+  qualified dense named-linear fits with explicit L-BFGS. Preserve optimizer
+  steps, prediction arithmetic, reconstruction checks and numerical tolerances;
+  refuse unsupported feature arithmetic rather than claim stationarity. Add
+  independent arithmetic, dispatch and reference-solve regressions. This
+  correctness path has a material cost on very wide inputs; see
+  [the kernel guide](docs/kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting).
+
+- Construct the adaptive kernel score bound's minimum binary64 subnormal
+  exactly, preventing an intentional constant from raising underflow or
+  generating warnings and callbacks under caller-selected NumPy policies.
+  Preserve the gradual-underflow guard, real arithmetic failures and score
+  acceptance thresholds. Add focused error-policy regressions.
+
+- Promote dense integer and Boolean operands before constructing the explicit
+  linear DWD Gram matrix and column sums, preventing overflow and Boolean dot
+  semantics in legacy mode. Preserve legacy floating arithmetic and original
+  inputs passed to custom hooks. Add exact-system and compatibility regressions.
+
+- Make `KernMD` retain a private feature basis and fitted kernel settings,
+  preventing caller data or parameter edits from changing an already fitted
+  model. Keep precomputed training shape stable without copying unused values.
+  Add mutation, refit, serialization, failure-cleanup and numerical regressions.
+  Feature and nested-keyword copies add fit-time work.
+
+- Add explicit `dwd.model_selection.fit_shared_fold_search` for serial
+  `KernMD` grid searches with immutable shared feature folds. Keep ordinary
+  fit ownership, scoring, selection and final refit behavior; delegate
+  unsupported configurations to stock search. Add ownership, failure,
+  repeated-call and serialization regressions. Reuse can help wide-feature
+  searches with larger grids, at the cost of storing cached subsets; no fit
+  or CV default changes.
+
+- Protect caller-owned CSR storage during named Laplacian kernel evaluation.
+  Check actual coordinate ordering and copy noncanonical query or fitted-basis
+  storage privately before upstream sorting and duplicate aggregation. Preserve
+  read-only inputs, shared aliases and cached ordering flags without changing
+  kernel arithmetic. Add ownership, validation, batching and historical-basis
+  regressions. These checks and copies can add prediction cost.
+
+- Separate standard RBF cancellation repair from NumPy error-policy selection.
+  Accept bounded ordinary NumPy scalar and OrderedDict representations, honor
+  nonordinary caller policies in both preliminary and repaired arithmetic, and
+  preserve historical fitted models and the public direct-RBF path. Version new
+  CV preparation and rebuild incompatible older caches. Add numerical, callback,
+  type, batching and historical-state regressions. Newly corrected difficult
+  inputs can require substantially more construction time.
+
+- Include concrete parameter types in kernel cross-validation cache identity.
+  Rebuild cached kernels when scalar or container types change, preventing
+  coercive equality from reusing a matrix prepared with different parameters.
+  Preserve same-type reuse and add real-fit, CV and type-sensitive kernel tests.
+
+- Prepare sparse cross-validation input using each candidate's effective
+  solver precision before duplicate coordinates are combined. Preserve
+  legacy arithmetic, select matching training/scoring/refit views, and
+  reuse preparation within each precision and kernel-layout policy.
+  Add candidate-order, sparse-layout and direct-fit consistency tests.
+
+- Promote sparse queries for named feature kernels to the pairwise working
+  dtype before format conversion can sum duplicate coordinates. Preserve
+  float32 when both operands are float32, existing cosine preparation, and
+  callable/precomputed kernel contracts. Add cancellation, intermediate
+  overflow, sparse-layout, batching and dtype-compatibility regressions.
+
+- Reject nonfinite kernel decision values before returning scores or labels.
+  Check unbatched results and each stored prediction batch, including overflow
+  during extended-precision conversion. Preserve finite scoring arithmetic
+  and caller numerical-error callbacks. Add dense/sparse, batch, callback and
+  extended-precision regression coverage.
+
+- Factor the explicit linear GenDWD MM system once and validate each built-in
+  solve against the original system. Reject unresolved zero-shift designs,
+  inaccurate or unresolvable actions and material objective increases without
+  changing the penalty, intercept, stopping tolerances or implicit solver.
+  Preserve custom-step inverse arguments. Add singular, small-penalty and
+  extreme-scale checks, and separate exact gradient-reuse regression from
+  inverse-versus-factor rounding comparisons. Use triangular vector solves with the retained Cholesky factor
+  and vectorized residual checks to reduce recurring solve/check overhead
+  without relaxing the accuracy conditions. Per-step validation retains a
+  workload-dependent runtime cost.
+
+- Normalize duplicate sparse coordinates privately for cosine kernels, using
+  the pairwise working dtype before query conversion. Preserve caller buffers
+  and unrelated kernels. Require refitting historical cosine models with
+  duplicate training storage and invalidate affected cached Gram matrices.
+  Add regression coverage for sparse layouts, mixed dtypes, historical states
+  and fitted predictions.
+
+- Preserve separate stored contributions when adaptive sparse kernel and affine
+  scoring convert non-binary64 CSR data. Convert at most 128 query rows at a
+  time and use the same signed binary64 entries for the ordinary product,
+  error bound and accurate refinement, without modifying caller-owned buffers.
+  Add regression coverage for duplicate cancellation, row-block boundaries,
+  read-only inputs and extended-precision conversion behavior.
+
 ## 1.3.19 — 2026-10-26
 
 - Promote sparse feature entries before conversions that may sum duplicates,
@@ -91,6 +550,10 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
 ## 1.3.17 — 2026-10-19
 
+This entry retains the release's cumulative notes. Except for the worker-cleanup
+test correction below, these changes were already included in 1.3.16; see its
+[historical notes](docs/history/RELEASE_NOTES-1.3.16.md).
+
 - Make the worker-cleanup regression deterministic across numerical backends;
   production solver behavior is unchanged.
 
@@ -154,6 +617,17 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
   leg for portable coverage without increasing the number of CI jobs.
 - Add independent RBF primal/dual objective checks for generalized loss,
   duplicate rows, class imbalance and finite update budgets.
+
+## 1.3.16 — 2026-10-19 (superseded by 1.3.17)
+
+- Introduced the historical `affine_computation='auto'` and
+  `residual_check_order='auto'` defaults and guarded Windows x86-64 CPython
+  3.11–3.13 native arithmetic qualification described in the
+  [archived tagged notes](docs/history/RELEASE_NOTES-1.3.16.md).
+- The later 1.3.17 tag corrected a worker-cleanup test fixture; its production
+  package code differed only in the version literal.
+  The archive records historical behavior and validation, not current defaults
+  or a new validation run.
 
 ## 1.3.15 — 2026-10-17
 
@@ -358,6 +832,17 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
   arithmetic agreement and conservative error bounds. Solver equations,
   unregularized intercept, stopping defaults and SOCP support are unchanged.
 
+## 1.3.6 — 2026-09-11
+
+- Repair roundoff-induced asymmetry in trusted internally generated RBF
+  kernels while retaining strict checks for precomputed and custom kernels.
+- Permit one restricted spectral restart after exhausted constrained recovery
+  in eligible unaccelerated automatic MM fits without callbacks. Preserve the
+  original kernel, initialization, objective, free intercept and stopping
+  settings; explicit backends retain their behavior. See the
+  [historical 1.3.6 notes](docs/history/RELEASE_NOTES-1.3.6.md) for the original
+  validation scope and limitations.
+
 ## 1.3.5
 
 - Clear learned state before fitting and after any failed fit across the public
@@ -463,7 +948,7 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
   objective-change/cap defaults; acceleration need not improve accuracy.
 - Reuse corrected linear/kernel CV preparation for identical float32 input.
 - Preserve earlier repairs, source credits and optional linear CVXPY support;
-  see [release notes](RELEASE_NOTES.md) and [validation](VALIDATION.md).
+  see the [validation history](VALIDATION.md) for the scope of recorded checks.
 
 ## 1.2.1
 

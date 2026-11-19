@@ -270,7 +270,7 @@ class AdaptiveResidualApiTests(unittest.TestCase):
             for options in invalid:
                 with self.subTest(factory=factory.__name__, options=options), \
                         patch.object(KernGDWD, '_compute_training_kernel', side_effect=AssertionError('Validation must precede work')):
-                    with self.assertRaises(ValueError):
+                    with self.assertRaises(TypeError if ('solver_mode' in options or 'implementation' in options) else ValueError):
                         factory(**options).fit(self.X, self.y)
 
     def test_solver_rejects_unsupported_routes_including_auto_with_eigenbasis(self):

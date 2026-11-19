@@ -4,6 +4,8 @@ This guide describes the kernel estimator, its objective, parameter conventions,
 stopping rules, and numerical diagnostics. For release-specific validation, see
 [VALIDATION.md](../VALIDATION.md). Details of the optional arithmetic accelerator
 are in [compiled residual arithmetic](compiled_residual.md).
+For practical reasons to select each nondefault policy and how to assess its
+tradeoffs, see [Choosing DWD options](choosing_options.md).
 
 `dwd.gen_kern_dwd.KernGDWD` fits one binary classifier. It does not search for
 parameters or create hidden validation splits. `KernGDWDCV` provides
@@ -25,42 +27,84 @@ retain the original labels.
 
 `lambd` is the package regularization coefficient, `q` is the generalized-loss
 exponent, and `kernel_kws` contains kernel parameters such as RBF gamma. These
-names have not changed. q=1 gives DWD. When comparing the same objective with the
-dissertation's convention using `(lambda_dissertation / 2) * norm_squared`,
-`lambd = lambda_dissertation / 2`. This mathematical conversion does not identify
-the convention actually used by an old script or authorize silently reinterpreting
-its stored numerical parameters.
+names have not changed. The choice `q=1` gives DWD. Chang Cheng's dissertation
+writes the penalty as `(lambda_dissertation / 2) * norm_squared`. For the same
+objective, set `lambd = lambda_dissertation / 2`. When reproducing a historical
+fit, check the convention in its own script before converting a stored value.
+[Dissertation, version 1](https://doi.org/10.25394/PGS.34548831.v1).
 
 The optional SOCP classifier uses a different constrained linear formulation and
 parameter `C`. Passing a Gram matrix as ordinary linear features changes the
 regularization geometry; it is not an equivalent kernel SOCP conversion.
 
-## Implementations, backends, and initialization
+### The free intercept need not be unique
 
-Both implementations introduced in 1.2.0 remain available.
-`implementation='optimized'` is the default and normally uses checked Cholesky
-solves.
-`implementation='reference'` repairs the Slicersalt implementation while retaining
-its eigen-decomposition, coefficient-MM route, normalized Gaussian initialization,
-and default absolute-objective stopping rule. Correcting its loss, MM algebra,
-numerical preparation, and API does not promise the outputs of buggy upstream
-updates. The reference never substitutes a Cholesky solve.
+For both generalized linear `GenDWD` and kernel `KernGDWD`, the loss is
+`V_q(u) = 1-u` when `u <= q/(q+1)`. With equally many positive and negative
+training labels, a range of intercepts can leave every margin in this linear
+part of the loss. Over that range, the mean loss is constant in the intercept;
+the norm penalty does not involve it. When the coefficients also minimize the
+joint objective, this gives several globally optimal intercepts. Balanced
+labels alone do not guarantee such a range, and a flat intercept interval at
+arbitrary fixed coefficients does not establish joint optimality.
+
+For an exact linear example, take `X = [[-1/2], [1/2]]`, `y = [-1, 1]`,
+`q = 1` and `lambd = 1`. The unique slope is `beta = 1/4`, while every
+`b` in `[-3/8, 3/8]` attains the global minimum `15/16`. Indeed,
+`V_1(u) >= 1-u` gives the lower bound
+`objective >= 15/16 + (beta - 1/4)**2`, with equality throughout that interval.
+At a query `x = 0`, the optimal intercepts `b = -1/4` and `b = 1/4` therefore
+predict different classes. The stated nonpositive-score rule still applies at
+`b = 0`. This effect occurs in exact arithmetic, without a singular design,
+an ill-conditioned kernel or a change of numerical library.
+
+For positive `lambd`, the regularized slope or RKHS function is unique at a
+global optimum; the unpenalized intercept need not be. With a singular kernel,
+different coefficient representations of the same RKHS function are a separate
+issue. These statements concern the generalized mean-loss objective above,
+not an asserted equivalence with the optional constrained SOCP formulation.
+
+Consequently, equal objective values alone do not establish identical decision
+scores, labels or cross-validation scores across solver routes or starting
+states. Diagnose observed differences using the objective, stationarity and
+achieved stopping target as well as predictions; do not assume every discrepancy
+is a flat optimum. Keep input, initialization and solver settings fixed for
+reproducibility, and retain the existing score, label and numerical checks.
+The package does not choose a canonical intercept from an optimal interval or
+add an intercept penalty. The bounded MM equation-residual correction described
+in [intercept refinement](intercept_midpoint_refinement.md) is a different
+operation, not a tie-breaker among global optima.
+
+## Backends and initialization
+
+The public estimator uses the corrected optimized solver. Initialization now
+defaults explicitly to `'zero'`, preserving the previous default's starting
+state; the other default policies are retained. The repaired coefficient-MM
+reference route remains private validation machinery; `implementation` is no
+longer a public parameter.
+The supported backends solve the same full-kernel DWD objective with a free
+intercept, while their finite-iteration behavior and numerical costs can differ.
 
 | Parameter | Behavior |
 |---|---|
-| `solver_mode='schur'` | Default corrected update algebra, with a free intercept. |
-| `implementation='reference'` | Corrected coefficient MM using a checked full eigenbasis. Accepts `backend='auto'` or `'spectral'`. |
-| `implementation='optimized'` | Default implementation, with the backend choices below. |
-| `backend='auto'` | Optimized: Cholesky unless eigenpairs are supplied/cached; eligible internal RBF fits may restart once through the spectral backend after constrained/MM recovery is exhausted. Reference: eigen-decomposition and coefficient MM. |
-| `backend='cholesky'` | Optimized only: solve the original constrained shifted-kernel equations with residual checks, bounded refinement, and centered factor recovery. Unknown/precomputed kernels still require PSD validation. |
-| `backend='spectral'` | Use the full checked eigensystem; it can be reused across lambda/q values. The reference retains coefficient updates; optimized mode uses spectral coordinates. |
-| `backend='lbfgs'` | Optimized only: optimize the same generalized objective in full spectral RKHS coordinates with a free intercept. It requires spectral preparation. |
-| `acceleration='auto'` | Default: restarted optimized Schur MM, including checked spectral solves; ordinary updates for reference, legacy and L-BFGS routes. Resolution does not depend on stopping policy or data. |
-| `acceleration=None` | Explicit ordinary MM, including the behavior of older serialized objects missing this parameter. |
-| `acceleration='restart'` | Optimized corrected MM only: extrapolate decision values and restart momentum using the original objective. Available with Cholesky or a checked full spectral solve; incompatible with reference, legacy and L-BFGS. |
-| `initialization='auto'` | Zero for optimized corrected fits; normalized Gaussian coefficients for the repaired reference and explicit legacy mode. |
-| `initialization='zero'` | Deterministic zero coefficients and default zero intercept. |
+| `backend='auto'` | Cholesky unless eigenpairs are supplied/cached; eligible internal RBF fits may restart once through the spectral backend after constrained/MM recovery is exhausted. |
+| `backend='cholesky'` | Solve the original constrained shifted-kernel equations with residual checks, bounded refinement, and centered factor recovery. Unknown/precomputed kernels still require PSD validation. |
+| `backend='spectral'` | Use the full checked eigensystem and spectral coordinates; the eigensystem can be reused across lambda/q values. |
+| `backend='lbfgs'` | Optimize the same generalized objective in full spectral RKHS coordinates with a free intercept. It requires spectral preparation. |
+| `acceleration='auto'` | Default: restarted MM, including checked spectral solves; ordinary updates for L-BFGS. Resolution does not depend on stopping policy or data. |
+| `acceleration=None` | Explicit ordinary MM. A missing requested setting uses the current `'auto'` default. |
+| `acceleration='restart'` | Extrapolate decision values and restart momentum using the original objective. Available with Cholesky or a checked full spectral solve; incompatible with L-BFGS. |
+| `initialization='zero'` | Default: deterministic zero coefficients and default zero intercept. |
 | `initialization='random'` | Random unit coefficients controlled by `random_state`. |
+
+The former `initialization='auto'` alias has been removed. Replace that value
+with `'zero'` in explicit constructor settings, `set_params` requests and CV
+grids; omitting the parameter now selects `'zero'` directly. This spelling change
+applies to both linear and kernel generalized DWD estimators and their CV
+wrappers. The initialization control remains available with `'zero'` and
+`'random'`; other controls such as `backend`, `acceleration` and
+`residual_check_order` keep their supported `'auto'` values. The objective,
+free intercept and stopping defaults are unchanged.
 
 The corrected kernel backends implement generalized q, not a different loss
 for each backend. See the release's [validation record](../VALIDATION.md) for the
@@ -68,36 +112,140 @@ tested q values and numerical cases. No backend is universally fastest: caching,
 kernel size, conditioning, and number of parameter candidates matter.
 
 `fit(..., alpha_init=..., offset_init=...)` overrides the corresponding initial
-values. An explicit alpha vector must match the current training rows. Fits do
+values. Linear `GenDWD.fit` similarly accepts `beta_init` and `offset_init`.
+An explicit alpha vector must match the current training rows. Fits do
 not warm start from previously fitted coefficients. `initialization='zero'`
 ignores `random_state`; external subsampling or CV still needs its own seed.
 
-For a reproducible repaired reference fit, use, for example,
-`KernGDWD(implementation='reference', random_state=7)`. Comparing finite-update
-trajectories across implementations requires the same explicit initialization,
-kernel, regularization, and stopping settings. Their auto initializations differ.
+Use an integer `random_state` when reproducible random initialization is needed.
+Comparing finite-update policies also requires the same kernel, regularization,
+initial values and stopping settings. Reusing a mutable random generator can
+consume its state; a fixed integer seed makes the requested initialization clear.
 
-Explicit `solver_mode='legacy'` keeps the historical spectral update, including known algebra
-errors. It supports objective/fixed stopping with `backend='auto'` or
-`'spectral'`; other backends, validation/optimality stopping, and callbacks are
-rejected. For a historical finite-update comparison, specify mode and seed:
+<a id="migration-from-legacy-fitting"></a>
+
+### Removed public solver controls
+
+All new linear and kernel fitting, CV preparation, low-level solves and kernel
+steps use corrected update algebra with a free intercept. `solver_mode` and
+kernel `implementation` are no longer public parameters. Remove them from
+constructor/solver calls, `set_params` requests and parameter grids, even when
+their values were `'schur'` or `'optimized'`.
+Kernel-only `implicit_P` has also been removed; it did not select a supported
+alternative. Removed controls are not silently ignored. Built-in DWD CV
+rejects a grid containing a removed control before preparing folds or fitting
+another candidate.
+
+The corrected reference route is retained privately for tests, not as a public
+solver or a compatibility route for old configurations. Linear
+`GenDWD(implicit_P=False)` and `GenDWDCV(implicit_P=False)` remain supported,
+as do their default implicit routes. Kernel inverse action remains an explicit
+`linear_action` option, unrelated to the removed kernel `implicit_P` control.
+
+Constructor arguments after `random_state` are keyword-only for `GenDWD`,
+`GenDWDCV` and `KernGDWDCV`. Constructor arguments after `kernel_kws` are
+keyword-only for `KernGDWD`. `solve_gen_dwd` accepts positional arguments only
+through `q`; `solve_gen_kern_dwd` retains its first six positional arguments
+through `offset_init`. Their subsequent arguments are keyword-only. Unsupported
+`sample_weight` arguments have been removed, including the former `None`
+placeholder; see [fitting argument migration](fitting_and_conic_persistence.md#fitting-arguments-and-metadata).
+`get_step_implicit_P` no longer accepts a final mode argument. These boundaries
+make obsolete positional calls fail rather than silently bind to another
+option. Use named arguments when updating those calls. The ignored
+`reference` argument to `get_K_eig` has also been removed; the helper computes
+the same checked eigensystem without an implementation selector.
+
+#### Migrating former reference requests
+
+Do not interpret removal of `implementation='reference'` as a behavior-preserving
+switch to the existing defaults. Reference auto selected random normalized
+Gaussian coefficients, spectral solves, ordinary MM and refinement-first residual
+checks. The current public defaults retain the former optimized choices: zero
+initialization, normally Cholesky, restart acceleration and adaptive residual checks on eligible
+Cholesky fits. Supplied/cached eigenpairs or bounded recovery can select spectral.
+These choices can change the RNG consumption, path, callbacks, stopping point,
+scores and labels at a finite iteration budget.
+
+To request the former reference auto policies through the supported solver, use
+explicit settings such as:
 
 ```python
-historical = KernGDWD(
-    solver_mode='legacy', initialization='auto', random_state=7,
-    kernel='rbf', kernel_kws={'gamma': .3}, lambd=.1,
-    stopping='fixed', max_iter=100,
+model = KernGDWD(
+    backend='spectral', initialization='random', random_state=7,
+    acceleration=None, residual_check_order='refinement_first',
 )
 ```
 
-Legacy mode is a compatibility path, distinct from `implementation='reference'`;
-combining the two is rejected. This preserves the explicit legacy path of the audit fork. The audit fork already
-fixed the loss/gradient; legacy therefore does not promise identical behavior to
-every unmodified upstream 1.0.5 input.
+This retains the policy choices, not the former internal coefficient-MM
+implementation or a promise of bitwise equality. Keep the same data, kernel,
+regularization, stopping settings and integer seed when making comparisons.
+The independent equation tests and private reference machinery remain available
+to maintainers; private paths are not a supported public workaround.
+
+The follow-up investigation used 48 quality fits and 117 cost-panel fits per
+host on Windows and Linux. At the quality target of `1e-8`, reference and
+optimized matched policies converged on the same eight of twelve geometry/q
+cases; both reached the iteration cap on the other four. Reference auto also
+met eight targets, while optimized auto met all twelve. The matched converged
+results agreed to floating-point rounding. This separates an automatic-policy
+advantage in those hard cases from a claim that one update formula is always
+more accurate. Independent equation/original-kernel checks remain necessary:
+the private reference shares preparation machinery and is not an independent
+oracle by itself.
+
+Every fit in the separate repeated cost panel met its independent `1e-6`
+target. Optimized spectral with matched reference policies had lower fit cost
+in every recorded paired block on the three fixed workloads. Optimized auto
+had lower median cost than reference auto, but one Windows block was slower;
+optimized spectral also had lower median cost than optimized auto. The fits
+were short and all timing spikes were retained. These finite observations
+support retaining useful policy controls, not a universal speed guarantee or
+a new automatic backend rule.
+
+The earlier default-objective-stopping panel is still relevant to migration:
+its eighteen models per host remained nonconverged, one optimized-auto
+objective was about `1.3236e-5` higher, and a separate RBF query panel changed
+two of 256 predicted labels under optimized auto on both hosts. The new
+optimality-stopping study does not retroactively qualify those results or
+promise unchanged finite-budget predictions. No accuracy claim follows from
+query-label changes without true labels, and neither study attributes these
+implementation differences to an AOCL or MKL version upgrade.
+
+#### Paired releases, caches and saved objects
+
+Use DWD 2.0.0 and Ensemble DWD 0.4.0 together. DWD 2.0.0 rejects the
+`implementation` keyword forwarded by earlier Ensemble versions. Upgrade both
+packages before refitting an ensemble or starting a new parameter search.
+
+Preparation needs the current geometry marker; stale or absent markers cause
+rebuilding. Persistent Ensemble cache identity includes package source content,
+so changed sources create a cache miss/new entry while preserving old entry
+bytes. Checkpoint resume rejects changed source/runtime identity before
+new fitting or owner-state rewriting. The example checks installed wheel metadata
+as part of that identity, so a same-version rebuild with different metadata can
+also require a fresh directory. Start a new run directory for the upgrade;
+do not rebase or overwrite the old provenance to force a resume.
+
+Old serialized estimators are outside an arbitrary cross-version compatibility
+guarantee. Twelve genuine legacy fixtures retained identical baseline/candidate
+predictions within each checked host and produced unfitted current clones,
+without source-dependent special cases. That observation does not certify old
+fitting algebra or every old object. Tiny cross-host score differences remained,
+shared by both source versions; all observed labels agreed. Clone omits the
+removed requests; a later requested fit is new corrected computation, not
+retroactive repair of the saved model. Keep original artifacts and environments
+when exact historical reproduction is required.
+
+To replace a model fitted by an incorrect historical algorithm, construct a
+current estimator and refit from the original training data, labels and
+settings. Loading an old object does not repair its coefficients, and this
+API cleanup does not promise cloning or refitting arbitrary old serialized
+states. Historical reproduction belongs to the matching archived release and
+environment; it does not select a current public solver.
 
 ## Automatic numerical restart
 
-An optimized fit with `solver_mode='schur'`, `backend='auto'`, and
+An optimized fit with `backend='auto'` and
 `callback=None` can make one fresh spectral attempt when a constrained MM update
 and its existing bounded recovery both fail. The trigger is specific: the
 original/centered/anchor constrained solve must be exhausted, followed by failure
@@ -108,7 +256,7 @@ This applies only to named RBF kernels built internally by the package's unchang
 construction methods, with valid known-PSD parameters. A reused CV kernel also
 requires the recorded construction provenance and unchanged preparation methods.
 Caller-supplied `K` or eigenpairs, precomputed and callable kernels, overridden
-construction methods, reference/legacy implementations, and explicit backend choices
+construction methods and explicit backend choices
 do not gain this restart. Explicit `acceleration='restart'` is supported: its
 ordinary-step retry remains first, and only exhausted constrained/MM recovery
 can trigger the fresh spectral attempt. A successful ordinary fit
@@ -227,6 +375,70 @@ cannot continue, even with `stopping='fixed'`. Its actual accepted updates and
 native termination reason are reported; the package does not invent extra
 iterations to fill the budget. Exactly fixed update counts apply to MM.
 
+### Choosing optimality stopping
+
+The default remains `stopping='objective'`. Choose the explicit
+`stopping='optimality'` option when:
+
+- Your application requires a returned model to meet a specified numerical
+  stationarity tolerance, rather than only a small successive-objective change.
+- You are comparing solver backends or acceleration settings at a common
+  achieved stationarity target. Keep the data, objective and initialization
+  comparable, and check that each returned model actually met that target.
+- An objective-stopped model's reported residual is too large for the precision
+  required by your downstream analysis, so you are willing to spend more work
+  pursuing a better optimized solution.
+
+For ordinary predictive tuning, retain the objective default when its model
+quality and diagnostics are adequate. Optimality is not an accuracy upgrade:
+smaller training residuals can leave predictions unchanged or change them in
+either direction. Assess predictive choices using training-fold validation,
+without tuning the stopping policy on the heldout test set.
+
+Optimality can substantially increase complete fit and CV time by requiring
+more updates; kernel residual checks also add work. Linear built-in
+updates already reuse eligible gradient calculations, so the cost is not simply
+a duplicated gradient every iteration. Measure representative complete workflows
+when this cost matters. Do not infer a negligible cost from a single cheap check.
+
+Choose `tol` as a numerical requirement in the problem's scale, and give
+`max_iter` enough room to pursue it. The default budget of 100 can still be
+exhausted with optimality selected. A larger budget is not a convergence
+guarantee; callbacks, backend termination and numerical failures can also prevent
+the requested target. Kernel `max_iter` is per attempt, so an eligible automatic
+spectral restart can add work beyond that one-attempt budget. Inspect the actual
+returned residual and convergence flag rather than assuming the request succeeded.
+
+For example, when stationarity is a requirement:
+
+```python
+from dwd.gen_kern_dwd import KernGDWD
+
+model = KernGDWD(
+    stopping='optimality', tol=1e-6, max_iter=1000,
+).fit(X_train, y_train)
+
+print(model.termination_reason_, model.n_iter_, model.stationarity_residual_)
+if not model.converged_:
+    raise RuntimeError('The fitted model did not meet the stationarity target.')
+```
+
+Here `1000` is an illustrative explicit budget, not a recommended universal
+default. `GenDWD` accepts the same stopping, tolerance and budget controls and
+exposes the same diagnostics used in this example. Its residual is the maximum
+of the feature-gradient L2 norm and absolute unpenalized-intercept gradient;
+the kernel criterion uses the RKHS/intercept residual. These are numerical
+checks, not a general certificate of distance to the optimum or predictive error.
+
+`GenDWDCV` and `KernGDWDCV` apply their stopping controls to the candidate fits
+and final refit. Inspect `search.best_estimator_.converged_` and
+`search.best_estimator_.stationarity_residual_` after `search.fit(...)`.
+Those fields describe the selected final refit, not all candidate/fold fits;
+the CV score table does not certify their convergence. If every fold must meet
+the target, retain and check those fits explicitly in your validation procedure.
+
+### Reading convergence diagnostics
+
 All corrected fits check the returned model's stationarity, whatever their
 stopping rule. A fixed cap is not by itself a convergence claim. Likewise, an
 objective stop may or may not satisfy the separate numerical check.
@@ -253,6 +465,17 @@ objective stop may or may not satisfy the separate numerical check.
   records the method and any explicit zero-slope fallback when a nonzero bound
   is unavailable or weaker. An asymmetric stored kernel also uses that fallback;
   the symmetric-kernel dual formula is not claimed for that score map.
+  If the final certificate calculation establishes a negative dual quadratic
+  or a negative constant kernel, its PSD assumption is contradicted. The fit
+  retains its completed numerical result, while `dual_gap_` and
+  `diagnostics_['dual_certificate']['dual_objective_lower_bound']` are `None`.
+  The certificate records `dual_objective_is_lower_bound=False` and the exact
+  `fallback_reason`: `certified_negative_dual_quadratic` or
+  `negative_constant_kernel`. This is unavailable-bound reporting, distinct
+  from the valid zero-slope fallback above. It supplies no certificate of PSD
+  or global optimality. Existing handling of other input, reconstruction,
+  norm, gradient and arithmetic failures is unchanged; numerical acceptance
+  and stopping checks are unchanged.
   These diagnostic choices do not change the fitted state or certify convergence.
   Tiny negative raw gaps from rounding remain visible. They are not the stopping
   tolerance. `backend_` is the effective backend. `diagnostics_` records
@@ -279,8 +502,8 @@ objective stop may or may not satisfy the separate numerical check.
   add matrix products only when a checkpoint is observed. Unobserved iterations
   retain their fast coordinate path and the separate checks on the returned model.
 - `prediction_precision_`: `'adaptive'` or `'compensated'` for corrected
-  kernel models; legacy and older serialized models without the field retain
-  ordinary evaluation. This is learned state, not a constructor option. It is
+  kernel models; already-fitted legacy models and older serialized models
+  without the field retain ordinary evaluation. This is learned state, not a constructor option. It is
   restored with the best validation checkpoint and preserved by serialization;
   cloning does not transfer it. `diagnostics_` can also record
   `compensated_score_reconstructions`,
@@ -313,8 +536,154 @@ objective stop may or may not satisfy the separate numerical check.
   finite C for a separate SOCP fit. `C_conversion_finite_` identifies whether the
   conversion is finite; a finite zero conversion still is not a valid SOCP C.
 
-Legacy kernel fits retain their objective and coefficient-gradient diagnostics
-but set checked RKHS/dual quantities to unavailable and do not claim convergence.
+### Dense named-linear L-BFGS final reporting
+
+For an ordinary `KernGDWD` with `kernel='linear'` and an explicit
+`backend='lbfgs'`, final reporting uses the represented training features when
+the estimator itself constructs the kernel from its owned dense float64 array.
+The route requires unchanged standard construction methods and kernel builders,
+and no kernel keywords, supplied kernel/eigenbasis or reused CV kernel cache.
+Subclasses, custom construction, sparse inputs and other kernels or backends
+retain their existing reporting routes. The default `backend='auto'` is
+unchanged. Callbacks and validation restoration remain supported on the
+qualified route; diagnostics describe the state actually returned.
+
+`diagnostics_['rkhs_geometry'] == 'linear_features'` identifies this route;
+`rkhs_geometry_info` records its provenance and score/objective compatibility
+checks. The norm, objective, stationarity, dual endpoint and `C_` all refer to
+the exact real Gram matrix of the represented features. Primal and gradient
+values remain numerical estimates. The dual endpoint uses outward arithmetic
+bounds; subtracting it from an estimated primal does not certify that primal.
+Original kernel reconstruction and optimizer score/objective checks retain
+their existing tolerances. Unsupported arithmetic within the selected feature
+helper, including erased derivatives or unrepresentable expansion terms, raises
+an error rather than silently reporting convergence.
+
+Optimizer updates, returned coefficients and prediction policies are unchanged.
+Prediction still evaluates the rounded kernel, so this reporting geometry does
+not promise identical signs under independently evaluated near-boundary query
+formulas. No sparse or general nonlinear feature backend is introduced.
+
+The extra final checks can be costly. In a fixed Python 3.12 study using 16
+native threads, four paired blocks of short fits at shapes 64 by 4096 and 32 by
+16384 added about 143 and 352 ms on Windows, and 446 and 830 ms
+on Linux. These are workload-specific observations, not a vendor comparison
+or an idle-host guarantee; Windows loaded both MKL and AOCL.
+This tradeoff addresses numerical reporting correctness, rather than memory
+savings or a universal speed improvement.
+
+The preceding timings record the original reporting-correctness change, before
+the later reduction of repeated report work. The current helper reuses
+compensated operand expansions within each coefficient or gradient calculation
+and shares raw/joint-affine score products on the compatible portable path.
+Separate ordered sums, existing native scoring, numerical checks and exception
+recovery are retained. Reuse is guarded and falls back when its required
+dependencies are replaced or unsupported. This is an internal optimization of
+the same eligible reporting route; it adds no public option or backend and does
+not change optimizer updates or prediction policies.
+
+A subsequent Python 3.12 comparison used matched fixed-work fits, with native
+thread limits of 16 on Windows and 20 on Linux. In the primary fresh-process,
+repeated-fit comparison, the 64-by-4096 workload saved about 5.38 ms on Windows and
+42.69 ms on Linux. The ordinary 128-by-16 Windows report added about 57
+microseconds; its whole-fit change was estimated at +49 microseconds, with
+uncertainty spanning no change. The same ordinary workload on Linux saved
+about 1.75 ms per fit. These are mean paired time changes against the development
+implementation immediately before this optimization, not comparisons with a
+released package or older numerical-library versions. They do not establish a
+uniform speedup, negligible reporting cost, first-fit acceleration or total-CV
+savings. The earlier correctness-versus-cost tradeoff therefore still applies.
+
+The preceding implementation additionally introduced a separate native ordered
+reducer for the final six-plane gradient sums, after the original products and
+restoration checks. That reducer leaves coefficient/beta calculations unchanged. The existing qualified
+route selects it automatically; absent, unsupported or replaced native entries
+retain the original checked-sum path. The
+[native contract](compiled_residual.md#ordered-linear-feature-gradient-reduction)
+describes its scope and fallback behavior.
+
+A November 2026 fixed-work comparison against the preceding development code
+used the same inputs and model work, with 16 native threads on Windows and 20 on
+Linux. For 128-by-512 fits, geometric mean time changes were about -3.8% first
+fit/-10.0% repeated on Windows and -6.3%/-11.8% on Linux. For 256-by-2048 fits they
+were -7.5%/-11.2% on Windows and -10.5%/-8.5% on Linux. Windows ordinary and
+128-by-512 estimates had only two complete qualified blocks; larger Windows and
+Linux estimates used five or six. These are workload observations, not a
+convergence-rate, numerical-library upgrade or vendor comparison.
+
+Costs remain relevant: the same panel's ordinary 512-by-32 Linux fits were
+about 5.2% slower on first use and 2.8% slower on repetition (+12.72/+2.52 ms).
+Without the new binary, ordinary Linux costs were about +5.6%/+3.6%
+(+14.16/+3.68 ms). Earlier ordinary panels differed, so neither a universal
+ordinary speedup nor a fixed penalty is established. First use includes lazy
+loading, but source files were read beforehand; it is not cold operating-system
+cache timing. No overall workload-weighted speedup is claimed, and smaller
+reports or portable builds need not benefit. The earlier beta-extension
+candidate was excluded after its component savings failed to provide a useful
+incremental full-fit result across both hosts. This historical result is
+separate from the subsequent warm-context candidate described below.
+
+The November 9 follow-up selected three changes to final reporting. It reuses
+report-specific scores, computes native gradient tiles from existing operand
+splits, and uses the same expansion machinery for eligible coefficient
+calculations once the context exists. The first call starts without a warm-up,
+and unsupported calls follow the checked fallback. The model, optimizer work,
+error bounds, callbacks and numerical thresholds are unchanged. The
+[expansion contract](compiled_residual.md#exact-feature-expansion-tiles) gives
+the full-ABI build and runtime limits.
+
+The 600 fixed-work comparison fits used Python 3.12. Windows loaded AOCL-BLAS
+5.3.0 and MKL 2026.2 with 16 native threads. Linux used MKL 2026.2 with 20.
+For the full-native 128-by-512 workload, median paired time changes were +4.2% first/-13.5% repeat on Windows and -10.9%/-20.7% on
+Linux. The 256-by-2048 changes were -10.7%/-14.6% and -27.2%/-37.0%, with all
+six larger-case blocks faster on each host. Wide Windows/Linux results used
+four/five eligible blocks. These compare with the preceding development code,
+not the released package or old numerical-library versions. Fixed work does
+not establish a convergence-rate or total-CV gain.
+
+Cold and fallback costs remain: Windows ordinary 512-by-32 first fits were
++4.472 ms (all six slower); Linux wide first fits with the older residual
+extension absent had median +14.517 ms and mixed repeat results. With the
+new expansion binary absent, the first ordinary report cost +3.348 ms on Windows
+and +9.639 ms on Linux relative to the simpler score-reuse candidate.
+Correct fallback does not imply cost-free startup.
+
+A separate 144-fit control used source-identical isolated copies with verified
+checked-hash bytecode available, without importing numerical modules or
+prewarming the fits. Ordinary first-fit medians were near neutral against
+the simpler score-reuse candidate: +0.515 ms on Windows (four of five slower) and
+-0.779 ms on Linux (three of six faster). Repeats saved median 1.538/5.712 ms,
+with four of five/five of six faster. Windows used full native artifacts; Linux
+omitted the old residual extension while retaining the expansion helper.
+This is not an actual installation benchmark, a proof that every import used
+bytecode, or a causal subtraction of compilation time from earlier cohorts.
+All original exclusions and adverse blocks remain; no uniform speedup or
+complete removal of the feature-geometry reporting cost is claimed.
+
+The November 10 follow-up enlarges qualified warm gradient/beta batches from
+2,048 to 16,384 entries, retaining the original first groups and checked
+fallback described in the [expansion contract](compiled_residual.md#exact-feature-expansion-tiles).
+A reporting-only comparison used saved fitted states with a common reconstructed
+score input, without running new fits. Six balanced blocks per shape compared
+this change with the preceding 2,048-entry development implementation. Each
+process made one first report and 12 warm reports; warm comparisons use each
+process's mean, not 12 independent observations. All valid blocks, including
+adverse results, were retained regardless of background CPU load.
+
+Median paired report-time changes were:
+
+| Samples by features | Windows first | Windows warm | Linux first | Linux warm |
+| --- | ---: | ---: | ---: | ---: |
+| 512 by 32 | -3.1% | -11.0% | -12.3% | -16.2% |
+| 128 by 512 | -6.8% | -14.1% | -8.2% | -15.9% |
+| 256 by 2,048 | -9.2% | -16.8% | -13.2% | -24.1% |
+
+These are descriptive reporting results on the two tested hosts, not a uniform
+speedup: some first-report blocks and one ordinary Linux warm block were
+slower. Imports and saved-state preparation were outside the clocks, and the
+reconstructed score inputs do not replay missing historical compatibility
+arguments. The results do not establish cold-import, whole-fit, convergence or
+cross-validation gains, or erase the earlier startup and fallback costs.
 
 ## Explicit validation and callbacks
 
@@ -390,16 +759,21 @@ public sklearn input convention: square training Gram matrix in `fit`, then
 query-by-training values in `predict` or `decision_function`. Standard sklearn
 pairwise tags and built-in CV slicing preserve this orientation.
 
-`KernGDWD` retains its own feature copy and fitted `kernel_` and `kernel_kws_`.
-Changing the caller's features or kernel-keyword dictionary after fitting does
-not change predictions. Constructor kernel changes apply on the next fit.
-Nested keyword values are copied, but a callable kernel remains the same
-callable: its external state and behavior must remain stable. Precomputed mode
-retains the training shape without copying the square matrix, because prediction
-uses the supplied query kernel rather than the training matrix values.
-`cv_init` does own its precomputed matrix, because later fits reuse those values.
-Older serialized models without these fitted attributes retain their historical
-parameter lookup until refitted.
+`KernGDWD` and `KernMD` retain their own feature copies and fitted `kernel_`
+and `kernel_kws_`. Changing the caller's features or kernel-keyword dictionary
+after fitting does not change predictions. Constructor kernel changes apply
+on the next fit. Nested keyword values are copied, but a callable kernel remains
+the same callable: its external state and behavior must remain stable.
+Precomputed mode retains a shape-stable view without copying the square matrix,
+because prediction uses the supplied query kernel rather than training values.
+`KernGDWD.cv_init` does own its precomputed matrix, because later fits reuse
+those values. Older serialized models without these fitted attributes retain
+their historical parameter lookup until refitted.
+
+For `KernMD`, copying the feature basis and nested keywords adds work during fit,
+with no new prediction-stage copy. Keyword values must support deep copying;
+if capture fails, the original exception is raised and learned state is cleared,
+including after an attempted refit.
 
 Set `prediction_batch_size` to a positive integer to bound the number of query
 rows used by each prediction kernel calculation. This supports named, callable,
@@ -428,15 +802,89 @@ unsupported representations and unsuitable arithmetic retain the checked
 fallback. This does not make an unsafe historical fitted basis valid or support
 concurrent mutation of fitted data.
 
+For an exact `KernGDWD` using `kernel_computation_='guarded_norm_sum_rel_v2'`,
+eligible dense batches also reuse the public call's query validation. The
+query must retain the checked native float64 ndarray storage and C-contiguous
+layout, and each batch must be a contained view of that query. Fresh finite
+training norms establish training-basis finiteness for the current call.
+Unchanged validation and numerical helper bindings, their supported defaults,
+and the caller's NumPy error policy are checked before this route is used.
+Unsupported inputs, policies or replaced hooks retain the original checked
+fallback. Later public calls validate afresh; no validity state is stored on
+the estimator. The guarded kernel arithmetic and repair checks are unchanged.
+This internal reduction in repeated validation adds no public option and does
+not imply that batching is faster for every workload.
+
+### Integer sparse coordinate inputs
+
+At supported sparse input boundaries, duplicate signed and unsigned integer
+entries at the same coordinate are summed exactly, then each sum is converted
+once to float64. For example, `[2**53 + 1, -2**53]` represents the coordinate `1`.
+Summation does not wrap in the source integer dtype. A large final coordinate
+can still round on conversion to float64; this is an input-representation rule,
+not exact arithmetic throughout the solver. Already overflowed or rounded
+input cannot be repaired.
+
+The rule applies wherever sparse input promotion already occurs, including
+linear and kernel fitting, CV preparation, validation and prediction, and to
+integer sparse queries for linear classifiers. Linear prediction skips this
+extra conversion when CSR, CSC or BSR storage is verified canonical, COO
+coordinates are verified sorted and unique, or the input is valid DOK or DIA.
+Those queries retain ordinary validation and dot-product dtype conversion,
+including the existing behavior with custom float32 or extended-precision
+coefficients. Unsorted compressed/COO storage and LIL integer queries use the
+normalization path.
+
+Integer sparse precomputed queries use the same rule; precomputed training
+still requires a dense Gram
+matrix. Callable kernels receive normalized integer feature inputs where
+supported. Their returned kernel matrices retain the existing callback/output
+contract. Direct kernel/affine score helpers still interpret each stored
+contribution through binary64.
+Floating input dtype and summation policies are unchanged. Boolean entries
+retain cast-first counting behavior, and complex input validation is unchanged.
+
+Normalization preserves caller-owned storage and cached ordering flags.
+Ordinary inputs use guarded conversion paths; exceptional integer duplicates
+can require sorting and arbitrary-precision sums. This does not extend support
+to storage or layouts otherwise refused by the dependency or public validator,
+or establish a speed guarantee.
+
+This strengthens the earlier entry-wise conversion policy. Affected coordinates,
+kernels, fitted coefficients, scores and labels can change. Existing fitted
+parameters and historical results are not rewritten. To use the new training
+semantics, refit from the original integer storage; new queries use the current
+input policy even for an older fitted estimator. Existing historical-basis and
+source/cache guards still apply and are not bypassed.
+
+### Sparse Laplacian input ownership
+
+Named `kernel='laplacian'` calculations preserve caller-owned CSR feature
+buffers and ordering flags, including read-only storage. The actual CSR
+structure is checked without trusting cached ordering flags. Noncanonical
+query or fitted-basis storage is copied privately before sklearn sorts or
+combines coordinates; canonical CSR and dense inputs retain their existing
+representation. After the integer input normalization described above, the
+Laplacian kernel arithmetic and floating duplicate aggregation are unchanged.
+Sparse training support remains estimator-specific.
+
+The same protection applies to validation and prediction, including batched
+prediction and historical fitted bases. Structure checks and private copies
+can add runtime cost. A noncanonical fitted basis may require this work again
+for each prediction batch; this is an ownership guarantee, not a universal
+speed improvement.
+
 ### RBF construction and query consistency
 
 Sparse feature coordinates are combined before named RBF row norms are
 calculated. Repeated CSR entries therefore have the same meaning during fitting,
 CV preparation, validation and prediction. Normalization uses private storage;
 caller buffers and ordering flags are preserved, and nonfinite duplicate sums
-raise an error. Corrected Schur fits promote sparse values to float64 before a
-format conversion can sum duplicates in a narrower dtype. Callable kernels and
-precomputed Gram matrices retain their own input contracts.
+raise an error. Corrected Schur fits promote floating sparse values to float64
+before a format conversion can sum duplicates in a narrower dtype. Integer
+inputs follow the exact-coordinate rule above. Callable returned kernels and
+precomputed training matrices retain their separate contracts; supported
+integer sparse precomputed queries follow the same input normalization.
 
 An old standard-RBF CV cache containing noncanonical CSR features is rebuilt.
 Its stored Gram matrix may have squared individual storage entries instead of
@@ -451,10 +899,32 @@ floating-point cancellation between large feature vectors.
 For new corrected named RBF fits, the default `rbf_computation='standard'`
 selectively recomputes cancellation-sensitive squared distances using coordinate
 differences. Eligibility requires the original construction hooks, supported
-scalar gamma without extra kernel keywords, verified numerical helper provenance,
-and ordinary NumPy error handling. Other standard-policy routes retain their
-existing construction. The Gaussian definition `exp(-gamma * ||x-y||**2)`,
+scalar gamma without extra kernel keywords, and verified numerical helper
+provenance. NumPy error-policy selection does not change this eligibility.
+Parameters may use an ordinary `dict` or `collections.OrderedDict`; custom
+mapping or scalar subclasses retain their original routes. Supported scalar
+representations include ordinary Python scalars, NumPy binary16/binary32/binary64
+floats and ordinary integer scalar types. Newly admitted integer types must be
+exactly representable in binary64; historical Python integer and `np.int64`
+conversion behavior is preserved. True extended-precision scalars retain the
+original route. Gamma must remain finite and nonnegative, or `None` for the
+default. Other standard-policy routes retain their existing construction.
+The Gaussian definition `exp(-gamma * ||x-y||**2)`,
 regularization, loss and free intercept are unchanged.
+
+The existing internally masked arithmetic is retained when underflow is ignored
+and all NumPy error modes are `warn` or `ignore`. For other caller policies,
+actual norm/distance, scaling and exponential operations honor those policies,
+including the exponential evaluation of repaired pairs. Genuine events can
+therefore warn, raise or invoke the caller's handler; handler exceptions propagate.
+Internal error-bound bookkeeping retains its scoped masks. Exact-distance
+arithmetic does not manufacture incidental floating-point overflow events.
+An exponent beyond binary64 range is saturated to its largest finite value
+before the policy-aware exponential: both values round to a zero kernel entry,
+and the actual exponential can report underflow. Historical event counts/order
+and bitwise equality between scalar exponential implementations are not promised.
+This construction policy does not establish strict-error-policy compatibility
+for every separate solver or scoring operation.
 
 The trigger compares the computed distance with a conservative forward-error
 envelope divided by `sqrt(eps)`. It catches positive but poorly conditioned
@@ -465,7 +935,7 @@ prediction sign, or a positive-semidefinite floating-point Gram matrix. Existing
 PSD, residual and objective checks remain in force; no jitter or eigenvalue
 clipping is introduced.
 
-Ordinary unflagged pairs retain the original multiplication and exponential.
+Ordinary unflagged pairs use the selected evaluator's multiplication and exponential.
 A global bound can skip the flag scan when every pair is safely outside the
 trigger. When the norm and distance bounds establish the required finite
 envelope, the tiled scan omits redundant finite-value masks. In the self-norm
@@ -482,33 +952,58 @@ duplicates and cross queries retain the checks. A large fraction of flagged
 pairs can require substantial direct-distance work; bounded scratch space does
 not imply a small running time.
 
-If the internally constructed self-kernel exceeds the existing symmetry tolerance
-`100 * eps * max(1, max(abs(K)))`, construction is repeated by adding the two
-squared norms before subtracting the dot-product term. The same selective repair
-applies. One computed triangle is mirrored and the self-diagonal is one.
-External or custom kernel matrices retain the strict validator and are not
-averaged.
+For an exact `KernGDWD` instance using standard named RBF, Schur mode, a
+privately captured float64 dense or CSR basis, and unchanged supported fit,
+construction and cache hooks, self-kernel construction now selects the guarded
+norm-sum evaluator upfront. It adds the two squared norms before subtracting
+the dot-product term, applies the same selective repairs, mirrors one computed
+triangle and sets the self-diagonal to one. This avoids first constructing a
+matrix that would then need replacement. It also changes arithmetic for healthy
+already-symmetric matrices and subsequent cross queries; it is not merely a
+postprocessing change to diagnostics. The Gaussian kernel definition is unchanged.
 
-Eligible new fits record `kernel_computation_='guarded_sklearn_rel_v1'` or
-`'guarded_norm_sum_rel_v1'`; other standard routes record `'sklearn'` or
-`'norm_sum'`. `kernel_symmetry_correction_` records any triggering asymmetry.
+Other internally constructed standard RBF routes retain the existing rebuild
+when asymmetry exceeds `100 * eps * max(1, max(abs(K)))`. Custom or supplied
+matrices, precomputed kernels, direct-RBF mode and unqualified construction
+hooks do not acquire the new self-construction policy. Exact
+symmetry enables applicable certificate/recovery checks but does not prove that
+the represented matrix is PSD. Spectrum, exact-factor and negative-quadratic
+checks remain unchanged; no eigenvalue clipping, jitter or relaxed threshold is
+introduced.
+
+New qualified fits record `kernel_self_construction_='norm_first_v1'` and
+`kernel_computation_='guarded_norm_sum_rel_v2'`. The self marker identifies
+construction, not certification. Other guarded routes can record
+`'guarded_sklearn_rel_v2'`; other standard routes record `'sklearn'` or
+`'norm_sum'`. `kernel_symmetry_correction_` records observed asymmetry that was
+corrected, not a comparison with an unevaluated alternative construction.
 Prediction and explicit validation retain the fitted construction, including
 when NumPy error handling is later changed; invalid feature inputs are still
 rejected. Deliberately replaced numerical hooks remain observable. Copied or
 partitioned queries are not promised bitwise identity because BLAS/batch rounding
 and self-kernel mirroring can differ.
 
-Older serialized models retain their recorded construction; refit to use the
-new correction. The duplicate-training-coordinate exception described above
+Older serialized models, including guarded v1 models, retain their recorded
+construction and arithmetic behavior; refit to use the current correction.
+The duplicate-training-coordinate exception described above
 requires refitting. New CV preparation records its construction generation;
-unversioned old caches are rebuilt when a new fit would select the corrected
-policy. Loading models with new construction modes in older packages is
+older incompatible generations are rebuilt before a new fit, and unversioned
+old caches are rebuilt when a new fit would select the corrected policy. The
+self-construction generation is checked separately from the fitted cross-query
+mode; changing a label never makes a stale matrix reusable.
+Loading models with new construction modes in older packages is
 unsupported. Example checkpoint identities include the runtime modules.
 
-Corrected reference and optimized fits share this construction policy.
+Bounded two-environment measurements found construction savings and mixed
+whole-fit/CV costs; they do not establish a universal speedup. Small score changes
+can change labels near zero. No universal sign parity across old and new fits,
+row orders or independently evaluated query batches is promised. The existing
+score and objective checks retain their original tolerances.
+
+Supported public kernel fits share this construction policy.
 The numerical-library matrix products use configured native thread limits;
 the reconstruction does not forward `kernel_kws['n_jobs']` into pairwise-kernel
-workers. Automatic solver restart has the narrower optimized-only eligibility
+workers. Automatic solver restart has the narrower eligibility
 described above.
 
 ### Optional direct RBF computation
@@ -525,13 +1020,13 @@ model = KernGDWD(
 )
 ```
 
-Direct computation requires `solver_mode='schur'`, the named `'rbf'` kernel,
+Direct computation requires the named `'rbf'` kernel,
 the package's original construction hooks, and `kernel_kws` containing only
 `gamma` or no entries. Gamma must be finite and nonnegative; `None` keeps
-`1 / n_features`. It supports corrected reference and optimized fits with
-validated float64 dense or CSR features. Legacy mode, other kernel families,
+`1 / n_features`. It supports public kernel fits with
+validated float64 dense or CSR features. Other kernel families,
 callable/precomputed kernels, extra kernel keywords and caller-supplied
-training `K` raise when direct computation is requested. They retain their
+training `K` raise when direct computation is requested; they retain their
 existing behavior under the standard policy.
 
 The calculation uses coordinate differences in bounded dense tiles or a
@@ -621,9 +1116,15 @@ estimates under the stated floating-point model, not universal interval proofs.
 
 ### Joint affine scoring
 
-New `KernGDWD` and `KernGDWDCV` models default to `affine_computation='auto'`.
-It selects joint scoring with `solver_mode='schur'` and standard scoring in
-legacy mode. Explicit `'joint'` and `'standard'` remain available. It supports the same
+New `KernGDWD` and `KernGDWDCV` models default to `affine_computation='joint'`.
+The former `'auto'` alias already selected joint scoring and is now rejected
+during fitting or CV preparation. Replace it with `'joint'` in constructor
+settings, `set_params` requests and parameter grids. This is an API spelling
+change, not a new scoring algorithm or additional numerical work. Other
+controls' supported `'auto'` settings remain unchanged.
+Already-fitted legacy models retain their recorded standard scoring; they are
+not refitted or upgraded during prediction. Explicit `'joint'` and `'standard'`
+remain available for new fits. It supports the same
 named, callable and precomputed kernels as corrected kernel DWD. It is
 independent of `rbf_computation`: joint scoring evaluates the supplied kernel
 entries more accurately but cannot repair inaccurate entries themselves.
@@ -661,8 +1162,8 @@ or the stopping iteration. CV candidate scoring likewise uses the selected
 policy; neither the fold split nor its scoring rule changes. Constructor
 cloning copies the requested option; serialization preserves the fitted
 `affine_computation_`. Changing a parameter after fitting does not change the
-stored scoring policy. Old models and their clones retain standard behavior unless their policy is
-explicitly changed before refitting.
+stored scoring policy. Missing requested fields use current defaults for
+cloning and refitting; explicit stored policies are preserved.
 
 The repair was reproduced with a genuine two-observation fitted linear-kernel
 model: the standard score was zero while the exact represented affine value
@@ -670,15 +1171,56 @@ was positive, and joint scoring recovered its sign. Locked MNIST controls
 retained all tested labels, ensemble rankings and selected samples. This is a
 conditional precision benefit, not evidence of a general accuracy increase.
 
-In ten matched prediction pairs per workload, full-kernel pipeline timing was
-approximately unchanged; the difficult ensemble pipeline cost about 9% more.
-Other numerical test workers had exited before timing. Three of twenty pairs
-had background-CPU flags; excluding them gave the same conclusion. Constructed
-exact-tie rows were substantially slower because every row required exact
-arithmetic. These costs support keeping `'standard'` as the default. See
-[validation scope](../VALIDATION.md) for the evidence and limits.
+The original opt-in study recorded ten matched prediction pairs per workload:
+full-kernel pipeline timing was approximately unchanged, while the difficult
+ensemble pipeline cost about 9% more. Other numerical test workers had exited
+before timing. Three of twenty pairs had background-CPU flags; excluding them
+gave the same conclusion. Constructed exact-tie rows were substantially slower
+in that implementation because every row required exact arithmetic. These are
+historical observations; its initial recommendation to keep standard scoring
+as the default was superseded. The subsequent guarded exact-zero shortcut also
+means those original tie timings do not predict every current exact-tie cost.
+
+Current joint scoring is the default because the combined-expression check
+protects against intercept cancellation that can change a decision sign.
+This correctness benefit does not imply a universal accuracy increase or a
+uniform speed improvement. Standard remains an explicit, separately rounded
+alternative when representative score checks, margins and complete prediction
+timing support its accuracy/cost tradeoff; it is not a shortcut for sensitive
+near-zero decisions. See [when to choose arithmetic policies](choosing_options.md#arithmetic-and-recovery)
+and [validation scope](../VALIDATION.md) for the evidence and limits.
 
 ### Fitted state, cross-validation and caches
+
+### Default CV grids and display
+
+`GenDWDCV` and `KernGDWDCV` use immutable tuple defaults for `lambd_vals`
+and `q_vals`: respectively `tuple(np.logspace(-2, 2, 10))` and
+`tuple(np.logspace(-2, 2, 5))`. The values and ordering are unchanged; the two
+default grids still form 50 combinations before any kernel-keyword expansion.
+The container change fixes parameter representation and shared-default
+mutability; it does not change fitting, scoring or the winner rule.
+
+Replace a grid instead of mutating the default tuple in place. Explicit lists,
+tuples and NumPy arrays remain supported, including callers that need their
+own mutable array:
+
+```python
+import numpy as np
+from dwd.gen_dwd import GenDWDCV
+
+model = GenDWDCV(lambd_vals=np.array([0.01, 0.1, 1.0]), q_vals=[1.0, 2.0])
+model.set_params(lambd_vals=np.array([0.05, 0.2]))
+```
+
+Code that relied on the omitted default's ndarray methods such as `.shape`,
+`.dtype` or `.copy()` must explicitly create its required array, rather than
+assuming every grid is an ndarray. This does not require changing an already
+explicit array-valued grid.
+
+Plain-text estimator representation and notebook HTML also involve
+scikit-learn. The separate affected-version HTML encoding issue is described
+in [estimator display and dependency maintenance](dependency_display.md).
 
 Starting a new fit clears learned state, including the kernel prediction-precision
 flag and fitted affine policy. If fitting or refitting fails, learned state is cleared before the exception
@@ -689,8 +1231,8 @@ precomputation caches are preserved. See [fitted-state behavior](failed_refit_st
 
 `cv_init(X)` explicitly caches the exact training kernel and, where needed, its
 eigensystem. `run_cv` sets candidate kernel parameters before preparing that
-candidate's fold cache. Default optimized CV caches only K and keeps Cholesky;
-reference CV caches K and its checked eigensystem. Explicit optimized spectral
+candidate's fold cache. Default CV caches only K and keeps Cholesky;
+explicit spectral
 or L-BFGS CV also prepares eigenpairs for reuse. Unknown kernels may still need
 an eigenvalues-only PSD check at fit time. Cloning clears learned state and does
 not transfer hidden caches.
@@ -703,11 +1245,11 @@ are outside this contract. Valid-score aggregation and first-tie ordering are un
 
 Cache equality accounts for kernel parameters (including nested arrays), data
 values/order after the solver's dtype conversion, sparse versus dense representation,
-implementation, mode, backend, and requested `rbf_computation` and
+corrected solver geometry, backend, and requested `rbf_computation` and
 `affine_computation`, plus the requested `exact_recovery` capacity. Corrected fits
 compare the promoted float64 features they actually use, allowing identical
-float32 inputs to reuse preparation;
-legacy mode retains its original dtype distinction. The RBF construction
+float32 inputs to reuse preparation. Preparation without the current geometry
+marker is rebuilt rather than reused. The RBF construction
 policy is cached with K; automatic restart also checks construction provenance. A
 lambda/q change can reuse the same eigensystem. Different subsets or feature
 sets cannot generally share one. Stateful callable kernels must be treated as
@@ -729,8 +1271,9 @@ preparation inputs, not alternative prediction-kernel definitions.
 
 Corrected feature paths promote to float64 before constructing their Gram
 matrices. Casting an already rounded float32 external kernel cannot repair its
-lost precision. Matrices must be finite and symmetric, and materially indefinite
-kernels are rejected. The initial quadratic-form guard covers both native and
+lost precision. Matrices must be finite and symmetric. Spectral admission rejects
+eigenvalues that are materially negative relative to the spectrum's own scale,
+as detailed below. The initial quadratic-form guard covers both native and
 explicit coefficients. If the ordinary length-n bound is overconservative,
 1.2.1 uses bounded-memory compensated accumulation to check the same represented
 quadratic. Acceptance includes the actual observed quadratic's discrepancy from
@@ -748,6 +1291,30 @@ negative spectral values consistent with rounding may become
 zero, but positive eigenvalues are never truncated and no extra ridge or
 intercept penalty is silently added.
 
+For a validated finite spectrum with `n` eigenvalues, let
+`s = max(abs(eigenvalues))` and let `eps` be binary64 machine epsilon. When
+`s > 0`, the numerical PSD check accepts only if
+`min(eigenvalues) / s >= -100 * eps * n`. An all-zero spectrum passes this
+PSD check, subject to the existing arithmetic guards. There is no unit-scale
+floor: shrinking an otherwise materially indefinite spectrum does not make
+its negative directions count as roundoff. This is a floating-point roundoff
+policy, not an exact PSD certificate, and it never discards positive modes.
+
+The normalized comparison determines admission. The diagnostic `psd_tolerance`
+reports the rounded value of `(100 * eps * n) * s` in the original eigenvalue
+units; this displayed value can round to zero near underflow. The tiny-scale
+path requires supported gradual underflow and does not change the CPU mode.
+Initial spectral admission and fresh original-kernel spectral recovery use the
+same policy. Known-family optimized auto/Cholesky routes that already omit a
+spectral check keep that routing; this change does not add universal spectral
+validation. Symmetry, shifted-system positivity, residual, reconstruction and
+optimizer checks retain their separate rules.
+
+Passing numerical PSD admission does not guarantee that a dual bound can be
+reported. A later contradiction found by the final dual calculation still
+produces an unavailable bound and gap under the reporting policy above; it does
+not establish exact PSD or global optimality.
+
 ### Eigensystem validation
 
 Computed full eigensystems must pass numerical validation before use. The native
@@ -755,10 +1322,10 @@ sequence is EVD, EVR, then EVX. Each candidate is checked against the same uncha
 matrix; a failed basis is released before another attempt. EVD uses divide and
 conquer, the algorithm family used by upstream NumPy eigendecomposition. This
 driver choice changes numerical preparation, not the kernel objective, full-rank
-representation, free intercept, or reference coefficient-MM architecture.
+representation or free intercept.
 Different valid bases can differ in signs, repeated-eigenvalue coordinates and
-roundoff; historical buggy update algebra is not promised bitwise parity across
-drivers or numerical libraries.
+roundoff; matching a historical buggy trajectory is not an acceptance criterion
+for the supported corrected solver.
 
 The earlier MKL-specific analytic self-probe and compatibility-mode child process
 have been removed. Per-result checks remain generic and also validate supplied
@@ -791,9 +1358,9 @@ Optimized Cholesky uses a reciprocal-condition estimate as diagnostic informatio
 then checks each candidate solve against the original constrained MM equations.
 If necessary, bounded residual refinement or a centered factorization solves
 those same equations. The centered constant direction is an internal solve
-device, not extra regularization or a penalty on the fitted intercept. The
-reference instead performs inverse actions and bounded refinement through its
-validated eigenbasis; it never switches to Cholesky. Both ordinary implementations retain these checks. If an MM proposal still
+device, not extra regularization or a penalty on the fitted intercept. Checked
+spectral inverse actions retain their validated eigenbasis and bounded refinement.
+If an MM proposal still
 fails, the bounded exact-function recovery below can be attempted before the fit
 raises. A failure in a callback or validation routine is not intercepted as an
 MM numerical failure.
@@ -815,9 +1382,9 @@ after fresh ordinary checks of the corrected state and scores. If the trial
 fails or produces a numerical error, it is discarded and the original state is
 reassessed using compensated float64 products and summation, with allowances for
 rounding and gradual underflow. This preflight is bounded to one trial per
-factor representation or reference candidate check. The original and centered
+factor representation or checked spectral candidate. The original and centered
 Cholesky forms provide at most two native-trial representations; anchor LU
-recovery uses compensated residual measurement instead. The reference has at
+recovery uses compensated residual measurement instead. The spectral system has at
 most five inverse representations:
 its initial checked basis, a power-of-two equilibrated shifted system, and fresh
 validated EVD/EVR/EVX inverse preconditioners for the same original kernel.
@@ -828,7 +1395,7 @@ accepted candidate must pass the original-equation checks. It does not consume
 an MM update. Native-trial counts, accepted
 corrections, discarded trials and their costs are recorded separately. If a representable scalar intercept correction
 can resolve a constant residual, it is committed only after a fresh full check.
-The reference spectral inverse-action route normally permits three correction
+The checked spectral inverse-action route normally permits three correction
 steps; a contracting
 original-equation residual can extend that private refinement budget to eight.
 These are corrections within an MM update, not extra MM iterations or a change
@@ -851,7 +1418,7 @@ and linear-system defaults remain `refinement_first`. Fitted diagnostics
 record requested, initial and effective ordering; spectral recovery uses
 `refinement_first`. Healthy ordinary checks gain no skipped correction work.
 
-If reference spectral inverse-action refinement exhausts its allowance or
+If checked spectral inverse-action refinement exhausts its allowance or
 stagnates at the same stored
 float64 coefficients, a final bounded correction can examine adjacent floats.
 It proposes one `nextafter` step for one coefficient and adjusts the free
@@ -910,13 +1477,21 @@ arithmetic checks the exported coefficients' RKHS-function error, full decision
 error, and free-intercept residual against the same intended MM function. The
 stronger redundant coefficient-sum gauge is deliberately not imposed in this
 representation. The original objective, loss exponent, regularization and free
-intercept are unchanged, and no L-BFGS or Cholesky substitution is made for the
-reference. Initial preparation errors and arbitrary observer errors do not
+intercept are unchanged. This recovery does not substitute another public
+optimizer. Initial preparation errors and arbitrary observer errors do not
 become recovery triggers.
 
 With the default `exact_recovery='standard'`, the caps are 65,536 matrix entries,
 rank 16, 4,096-bit intermediate arithmetic and one million counted exact
 operations per preparation/step.
+
+These caps apply simultaneously, not as a promise of successful recovery at or
+below the rank cap. A matrix within both the entry and rank limits can still
+exhaust the bit or operation budget during kernel certification, MM preparation
+or a later recovery step. Rank is not row count: a low-rank matrix may have
+more rows than the rank cap, subject to the entry and arithmetic limits.
+Practical capacity depends on the stored entries and intermediate arithmetic.
+
 The entry cap is checked before finite scans or rational allocations. Operations
 and rational intermediate sizes are bounded conservatively; these counters are
 not a formal wall-clock or total-process-memory bound. Incomplete certification,
@@ -930,7 +1505,7 @@ serve subsequent MM actions; validation restoration still returns the earlier
 model and its representation metadata when appropriate. Successful completion
 adds one observed state per accepted MM update, with no hidden increase to the
 iteration budget. Optional momentum/restarts retain their ordinary transaction
-rules. The exact MM recovery is not used by L-BFGS or explicit legacy updates.
+rules. The exact MM recovery is not used by L-BFGS.
 
 Thirty public fits on previously saved extreme synthetic kernels returned 21
 checked models in the preceding range-recovery candidate: all 18 exact rank-five
@@ -962,8 +1537,8 @@ the option cannot extend this recovery to a full MNIST kernel matrix.
 
 Exact arithmetic remains lazy: a healthy MM fit takes its ordinary path.
 The setting does not enable recovery in L-BFGS, which does not use this MM
-fallback; explicit legacy updates reject the extended setting. It preserves
-the loss, regularization, free intercept, complete represented kernel and all
+fallback.
+The capacity option preserves the loss, regularization, free intercept, complete represented kernel and all
 acceptance thresholds. It never authorizes rank truncation, added diagonal
 ridge, an approximate certificate or a repaired indefinite kernel. Failed
 certification still returns no model through this recovery route.
@@ -1016,10 +1591,9 @@ There is no persistent inverse cache and no fitted inverse to pickle.
 
 Use optimized Schur `backend='auto'` without a supplied eigensystem or explicit
 `backend='cholesky'`. Explicit Cholesky still validates any supplied eigenpairs.
-Reference, legacy, explicit spectral, L-BFGS and auto-with-eigenbasis routes
-refuse an inverse request. `implicit_P` retains its historical meaning and
-must remain True; it does not select this action. Old objects missing the new
-parameter use factor. Changing the parameter affects the next fit, not saved
+Explicit spectral, L-BFGS and auto-with-eigenbasis routes
+refuse an inverse request. Kernel `implicit_P` has been removed; use
+`linear_action` to select the supported action. Changing the parameter affects the next fit, not saved
 predictions. CV forwards the request and may reuse K, never the inverse.
 
 ## Numerical scope
@@ -1031,12 +1605,68 @@ eigenpair check alone does not certify inverse accuracy in tiny-eigenvalue
 directions; the original-system residual checks and refinement are still needed. Final objective,
 score-consistency, and stationarity checks remain separate safeguards. A full
 eigenbasis is still expensive in time and dense memory. Choosing a backend does
-not start parameter search. Record the package version, implementation, effective
+not start parameter search. Record the package version, source identity, effective
 backend, and numerical diagnostics when reproducing a search.
 
-Sample weights and kernel `implicit_P=False` remain explicitly unsupported.
+Sample weights remain explicitly unsupported. Kernel `implementation`, `implicit_P` and
+`solver_mode` are no longer accepted parameters.
 The existing low-level `solve_gen_kern_dwd` keeps its four-item MM return tuple
-`(alpha, offset, objective_history, C)`; it now defaults to corrected algebra and
-zero initialization. Request explicit legacy mode for the historical random
-initialization/update path. The estimator exposes the new backend and stopping
-options.
+`(alpha, offset, objective_history, C)` with corrected algebra and zero
+initialization. The estimator exposes the backend, initialization and stopping options
+described above. Historical reproduction uses the matching archived release.
+
+### Missing numerical settings on loaded estimators
+
+For objects missing requested `affine_computation`, `acceleration` or
+`residual_check_order` fields, parameter inspection, cloning and new fits use
+the current defaults: `'joint'`, `'auto'` and `'auto'`. This also covers objects
+already in memory; no reload or deserialization rewrite is required. Backend
+and supplied-eigenbasis restrictions still govern automatic policy resolution.
+
+Explicit stored choices are preserved, including `'standard'`, `None` and
+`'refinement_first'`. Values already materialized by an earlier clone cannot be
+distinguished from intentional choices and are not guessed or rewritten.
+An explicit removed affine `'auto'` value still requires caller migration to
+`'joint'` before a new fit; it is not a missing field.
+
+Existing prediction uses fitted scoring metadata and the stored fitted model.
+Missing fitted affine metadata still denotes standard scoring. This preserves
+the interpretation of existing coefficients; it does not endorse their original
+fitting algebra. A new fit uses current solver mathematics and requested
+policies. It may produce different trajectories, scores, selection and costs.
+
+Prepared state and caches must match the newly effective requests and their
+existing source/geometry identity. Incompatible state is rebuilt or refused;
+historical cache or checkpoint provenance is never rewritten to force reuse.
+These rules cover the documented missing settings, not arbitrary damaged or
+cross-version serialized objects. Incompatible states may still require a new
+estimator fitted from the original training data.
+
+
+### KernelScaler copy modes
+
+`dwd.kernel_utils.KernelScaler` is a separate dense, square-kernel transformer.
+It retains its fitted diagonal normalization and does not automatically run
+inside DWD fitting or prediction. It is not a rectangular query-kernel scaler.
+
+- Keep `transform(K, copy=True)` (the default) when the original array must be
+  preserved. Computation uses a copy, so an overflow refusal leaves the supplied
+  array unchanged. This is also the appropriate mode for read-only inputs or
+  views whose logical elements overlap within their own memory storage.
+- Use `copy=False` when in-place modification of compatible writable storage
+  is acceptable. Validation may still allocate, for example when converting
+  an integer array to a supported floating dtype. Ordinary views can share
+  their modifications with a parent array or other aliases.
+
+In-place transformation has no rollback guarantee. The scaler applies its
+column and row factors before checking that the transformed values are finite.
+If that check raises `FloatingPointError`, the input and its aliases may already
+be modified or contain infinities. Do not retry using that modified array as an
+original kernel: retain an independent original or use the default copying mode.
+Input and factor-validation failures that occur before scaling do not authorize
+assuming that every later failure also leaves the input unchanged.
+
+A refused transform does not itself invalidate the scaler's fitted diagonal.
+The same fitted scaler can be used with valid original data afterward. This
+copy-mode clarification changes no scaling formula, numerical refusal, default,
+or executable transformation path.

@@ -120,7 +120,21 @@ class ScorePreparationDifferentialTests(unittest.TestCase):
                        {'over': 'raise', 'invalid': 'raise', 'under': 'ignore', 'divide': 'raise'}):
             for label, query, alpha in cases:
                 with self.subTest(case=label, policy=policy):
-                    self.assert_same(query, alpha, policy)
+                    snapshots = input_snapshot(query), input_snapshot(alpha)
+                    for name in FUNCTIONS:
+                        reference_policy = policy
+                        if name == 'adaptive_kernel_matvec':
+                            # These fixtures cannot underflow in a wider-to-
+                            # binary64 cast. Ignore only the historical oracle's
+                            # nextafter event; the current helper keeps policy.
+                            self.assertLessEqual(query.dtype.itemsize, 8)
+                            self.assertLessEqual(alpha.dtype.itemsize, 8)
+                            reference_policy = dict(policy, under='ignore')
+                        with self.subTest(helper=name):
+                            expected = capture(getattr(self.before, name), query, alpha, reference_policy)
+                            actual = capture(getattr(scores, name), query, alpha, policy)
+                            self.assertEqual(actual, expected)
+                            self.assertEqual((input_snapshot(query), input_snapshot(alpha)), snapshots)
 
     def test_validation_and_exception_types_messages_are_unchanged(self):
         cases = [([1., 2.], [1., 2.]), ([[1., 2.]], [[1., 2.]]),

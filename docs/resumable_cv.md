@@ -71,9 +71,11 @@ for classifiers. To use shuffled folds, supply a `StratifiedKFold` with an
 explicit integer `random_state`. The realized train/validation indices are
 included in the checkpoint identity.
 
-New estimators default to `affine_computation='auto'`, which selects joint
-affine scoring in corrected Schur mode. Set `affine_computation='standard'`
-for the previous scoring route, or `'joint'` explicitly. The policy
+New estimators default to `affine_computation='joint'`. The former `'auto'`
+alias is no longer accepted; replace it with `'joint'` in estimator settings
+and parameter grids. Explicit `'standard'` selects separate dot-product and
+intercept arithmetic; see [choosing numerical options](choosing_options.md)
+before overriding the precision-oriented joint default. The policy
 is recorded with estimator and candidate parameters; changing it requires a
 new run directory. Completed evaluations retain the chosen arithmetic when
 resumed, and the selected estimator uses it in the final refit. The source
@@ -112,6 +114,18 @@ changing it requires a new run directory, including when all folds are saved.
 A corrupt or incompatible receipt stops the run
 before new CV fitting; it is not silently dropped. Source and runtime files
 must remain unchanged while the process is running.
+
+Resume diagnostics distinguish a checksum failure from an identity mismatch.
+A checksum failure means the saved payload does not match its checksum; keep
+the evidence and investigate the file's integrity instead of editing its hash.
+For an authenticated run manifest with changed settings, the error requests
+a new run directory and names a bounded set of changed top-level identity
+fields when available. Field values are not printed. An identity mismatch in
+another receipt means its stored run identity does not match the expected one;
+it does not by itself prove
+that the invocation changed. Malformed or internally inconsistent saved
+metadata remains an error, and none of these diagnostics repairs or permits
+reuse of incompatible work.
 
 The runtime identity records the compiled accelerator's availability at startup,
 native-screen support and, when loaded, the extension's path and file hash.
@@ -189,6 +203,61 @@ interruption, completed evaluations remain available and unfinished evaluations
 run again. Saved matrix preparation is not serialized: a resumed fold rebuilds
 it when an unfinished candidate first needs it. Compatible later candidates in
 that worker reuse it through the estimator's existing `cv_init` mechanism.
+
+### Abrupt termination and leftover files
+
+A forced process termination, such as `SIGKILL` on Linux or forced termination
+on Windows, bypasses Python exception handling and cleanup. It can leave an
+unpublished `<destination>.<uuid>.tmp` file. Such a file is scratch storage,
+not a completed evaluation: do not rename it to a receipt or use its contents
+to claim completion. Ordinary exception handling attempts to remove the
+temporary file but cannot promise cleanup when the process or storage fails.
+
+When the run identity was committed, use the normal `--resume` path with its
+matching settings, source and runtime. It validates completed evaluation
+receipts and checks ownership before accepting more work. A surviving fold
+worker still holding its lock blocks a new coordinator. A process exit does
+not prove that all its workers have exited, and the presence or age of a lock
+file does not establish a live or dead owner. Keep the stable lock files;
+deleting one can let different processes lock different underlying files.
+
+No manual cleanup is required merely because unpublished scratch remains.
+If disk reclamation is necessary, first establish that every process using
+that run has stopped, then inspect only the recognized unpublished scratch
+files. Preserve committed receipts, identity and generation records, and
+lock files. Do not use an age-based sweep or delete uncertain files to bypass
+a busy, corrupt or incompatible-run refusal. If the initial identity was not
+committed, follow the separate startup procedure below. These process-stop
+semantics do not guarantee storage durability through a power failure.
+
+### Interrupted initial checkpoint setup
+
+If the process stops before it publishes `identity.json`, no committed run
+identity or completed evaluation is available to resume. Retry the same command
+without `--resume` (or call `run_resumable_cv(..., resume=False)`). A fresh retry
+is allowed when the directory contains only `coordinator.lock` and regular,
+single-link, non-reparse files named `identity.json.<32 lowercase hexadecimal
+characters>.tmp`. The coordinator lock must be acquired first; another live
+coordinator still causes a busy error.
+
+These temporary files are unpublished scratch, not trusted checkpoints. Their
+contents are not read or adopted, and their bytes and names are preserved for
+diagnosis. The retry creates the identity from the current invocation and
+publishes a new generation normally. A complete-looking temporary file does not
+authorize resume or reuse of work.
+
+Once `identity.json` is published, a fresh attempt still refuses the directory;
+use `--resume` with its matching invocation, even if generation publication was
+interrupted next. A generation file, fold lock, receipt directory, unknown file,
+symbolic link, hardlinked temporary or other unsupported entry without an
+identity is not treated as initial scratch. Diagnose that directory or choose a
+new one. Do not remove or replace `coordinator.lock` to force takeover.
+
+This narrow recovery covers process interruption during first identity
+publication. It does not claim recovery from arbitrary checkpoint deletion,
+filesystem corruption or power-loss durability. Existing source/runtime identity
+checks remain strict; updating the example does not make checkpoints created by
+different source versions interchangeable.
 
 Timing from saved evaluations describes their original execution. The work
 summary separates that history from the current invocation's work. It cannot
@@ -320,6 +389,14 @@ receipts remain reusable when compatible. Increasing the count can change
 floating-point reductions and fitted values. It can also consume more CPU time
 without reducing elapsed time, so no universal speedup or cross-thread bitwise
 agreement is promised.
+
+Request more final native threads when the full-data scaling/fit is a material
+part of the intended workflow and representative measurements show useful
+scaling at an admissible memory cost. Keep the candidate, data and numerical
+settings fixed for that comparison; measure the complete scaling-plus-fit
+phase and inspect its returned diagnostics. Extra threads are not a substitute
+for a larger iteration budget or a tighter numerical target. Leave the default
+at one when the extra allocation has no demonstrated benefit.
 
 ## Supported scope
 

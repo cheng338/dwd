@@ -166,7 +166,7 @@ class SpectralCandidateRefinementTests(unittest.TestCase):
                 action.assert_not_called()
                 prepare.assert_not_called()
                 factor.assert_not_called()
-                self.assertFalse(system._recovery_attempted)
+                self.assertEqual(system._recovery_next, 0)
                 self.assertNotIn('spectral_recovery_attempt', system.info)
 
     def test_singular_kernel_candidate_is_refined_without_losing_positive_directions(self):

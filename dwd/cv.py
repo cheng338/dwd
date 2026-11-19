@@ -74,11 +74,29 @@ def _validate_score(value, candidate, context, fold_index=None):
     return value
 
 
+def _validate_dwd_candidate_parameters(clf, settings):
+    """Reject unknown public DWD parameters before preparation or splitting.
+
+    Nested parameter tails retain sklearn's set_params handling, including
+    grids that first replace a nested estimator and then configure it.
+    """
+    from dwd.gen_dwd import GenDWD, GenDWDCV
+    from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
+    if isinstance(clf, (GenDWD, GenDWDCV, KernGDWD, KernGDWDCV)):
+        valid = clf.get_params(deep=False)
+        for setting in settings:
+            for name in setting:
+                if name.split('__', 1)[0] not in valid:
+                    raise ValueError(f'Invalid parameter {name!r} for {type(clf).__name__}.')
+
+
 def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     """
     Run serial cross-validation with fold-specific preparation.
     Compatible candidates reuse matrix preparation through clf.cv_init(X).
     Runtime depends on the grid and problem size.
+    Sparse GenDWD/KernGDWD features are promoted to float64 before duplicate
+    reduction. Splitting, training, scoring and refitting share that precision.
 
     The clf object should be a sklearn compatible classifier
     with an additional clf.cv_init(X) function which does some precomputation
@@ -114,16 +132,24 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     if getattr(clf, 'stopping', None) == 'validation':
         raise ValueError('run_cv does not create validation-stopping splits. Use explicit '
                          'training/monitoring splits within each CV training fold.')
-    # Promote before this outer CV boundary can combine duplicates.
-    # Keep each estimator's existing corrected/legacy arithmetic policy.
+    all_param_settings = DoL2LoD(params)
+    n_settings = len(all_param_settings)
+    if not n_settings:
+        raise ValueError('The parameter grid must contain at least one candidate.')
+    _validate_dwd_candidate_parameters(clf, all_param_settings)
+
+    # Derive the corrected sparse representation from the original input.
+    # Promote before duplicate reduction to avoid irreversible float32 sums.
+    from scipy.sparse import issparse
     from dwd.gen_dwd import GenDWD
     from dwd.gen_kern_dwd import KernGDWD
-    if isinstance(clf, (GenDWD, KernGDWD)):
+    if isinstance(clf, (GenDWD, KernGDWD)) and issparse(X):
         from dwd._sparse_features import promote_sparse_features
-        X = promote_sparse_features(X, force_float64=clf.solver_mode == 'schur')
-    X, y = check_real_X_y(X, y,
-                     accept_sparse='csr',
-                     dtype='numeric')
+        source = promote_sparse_features(X, force_float64=True)
+        source, y = check_real_X_y(source, y, accept_sparse='csr', dtype='numeric')
+        X = source
+    else:
+        X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
 
     scorer = check_scoring(estimator=clf, scoring=scoring)
     accuracy_scoring = isinstance(scoring, str) and scoring == 'accuracy'
@@ -132,11 +158,6 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     cv = check_cv(cv, y=y, classifier=is_classifier(clf))
     folds = list(cv.split(X, y))
     n_folds = len(folds)
-
-    all_param_settings = DoL2LoD(params)
-    n_settings = len(all_param_settings)
-    if not n_settings:
-        raise ValueError('The parameter grid must contain at least one candidate.')
 
     # get tuning path for each fold
     all_cv_results = []
@@ -206,6 +227,9 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
 def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
                     *, fold_index=None, _fold_source=None, _accuracy_scoring=False):
 
+    all_param_settings = DoL2LoD(params)
+    _validate_dwd_candidate_parameters(clf, all_param_settings)
+
     # initalize classifier before cross validation
     cv_results = {'params': [],
                   'train_score': [],
@@ -222,7 +246,7 @@ def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
     fold_views = {}
     # fit and score classifier for each parameter setting
     # TODO: parallelize here
-    for param_setting in DoL2LoD(params):
+    for param_setting in all_param_settings:
         clf.set_params(**param_setting)
 
         if _fold_source is not None:

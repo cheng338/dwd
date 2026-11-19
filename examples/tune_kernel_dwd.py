@@ -1,6 +1,8 @@
 """Tune RBF kernel DWD on local training data with resumable fixed-fold CV."""
 import argparse
 from pathlib import Path
+from zipfile import BadZipFile
+import zlib
 
 import numpy as np
 from sklearn.model_selection import StratifiedKFold
@@ -67,9 +69,13 @@ def main(argv=None):
     if args.data.suffix.lower() != '.npz':
         parser.error('--data must be a .npz file')
     try:
-        with np.load(args.data, allow_pickle=False) as source:
-            X, y = source['X'], source['y']
-    except (KeyError, OSError, ValueError) as error:
+        with args.data.open('rb') as stream:
+            source = np.load(stream, allow_pickle=False)
+            if not isinstance(source, np.lib.npyio.NpzFile):
+                raise ValueError('--data must contain an NPZ archive, not an NPY array')
+            with source:
+                X, y = source['X'], source['y']
+    except (KeyError, OSError, ValueError, EOFError, BadZipFile, zlib.error) as error:
         parser.error('Could not read training arrays X and y: ' + str(error))
     model = KernGDWD(kernel='rbf', random_state=args.seed, max_iter=args.max_iter)
     result = run_resumable_cv(

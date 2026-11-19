@@ -11,17 +11,18 @@ from math import fsum
 import numpy as np
 from dwd._validation import contains_complex, require_real
 from ._objective_mean import objective_mean as _objective_mean
-from scipy.linalg import cho_factor, cho_solve, eigh, LinAlgError
-from scipy.linalg.lapack import dpocon
 from scipy.optimize import minimize
 
 from .gen_dwd import V, V_grad
-from ._dual_certificate import kernel_dual_lower_bound
+from ._dual_certificate import (
+    _PSD_CONTRADICTION_REASONS, kernel_dual_lower_bound,
+)
 from ._eigen import validated_eigh
 from ._kernel_linear_system import KernelLinearSystem
 from ._reference_mm import reference_update
 from ._spectral_linear_system import SpectralLinearSystem
-from ._quadratic_bounds import _upward_nonnegative, _compensated_dot, _compensated_quadratic
+from ._psd_policy import spectral_psd_status
+from ._quadratic_bounds import _upward_nonnegative, _compensated_quadratic
 from ._accelerated_mm import RestartedMM
 from ._kernel_scores import compensated_kernel_matvec, adaptive_kernel_matvec
 from ._kernel_scores import _reporting_kernel_matvec
@@ -73,23 +74,23 @@ def _matrix(K):
     return K, symmetry, norm_bound
 
 
-def _check_spectrum(values, n, shift):
+def _check_spectrum(values, n):
     """Apply the same PSD/rank safeguards to full or eigenvalues-only results."""
     if np.shape(values) != (n,) or not np.isfinite(values).all():
         raise FloatingPointError('Invalid kernel eigenvalues from spectral preparation.')
-    limit = 100 * np.finfo(float).eps * n * max(1., float(np.max(np.abs(values))))
-    if values.min() < -limit:
+    accepted, limit = spectral_psd_status(values, n)
+    if not accepted:
         raise ValueError('K must be positive semidefinite. Recompute a rounded '
                          'float32 Gram matrix from float64 features if necessary.')
     return float(limit)
 
 
-def _eigensystem(K, supplied, shift, *, reference=False):
+def _eigensystem(K, supplied):
     n = len(K)
     (values, vectors), eigen_info = validated_eigh(
         K, supplied=supplied, return_info=True,
         drivers=('evd', 'evr', 'evx'))
-    limit = _check_spectrum(values, n, shift)
+    limit = _check_spectrum(values, n)
     # Only negative floating-point roundoff is made inactive. Every strictly
     # positive eigendirection, however small, remains part of the objective.
     return np.ascontiguousarray(vectors), np.maximum(values, 0.), {
@@ -181,7 +182,7 @@ def _final_stationarity(K, y, alpha, offset, lambd, q):
     regularizer products. These are floating-point estimates, not interval
     certificates, and do not change any stopping or acceptance tolerance.
     """
-    margins = y * affine_scores(K, alpha, offset, policy='compensated')
+    margins = y * affine_scores(K, alpha, offset, policy='compensated', _reporting=True)
     z = y * V_grad(margins, q=q) / len(y)
     high, low = _products(np.full(len(y), 2 * lambd, dtype=float), alpha)
     w = np.array([_fsum([float(a), float(b), float(c)])
@@ -206,8 +207,10 @@ def optimality_diagnostics(K, y, alpha, offset, lambd, q, *, scores=None):
     The dual loss conjugate is -rho**(q/(q+1)) on 0 <= rho <= 1, with
     y.T @ rho = 0 from the unregularized intercept. Dual slopes are projected
     onto that equality and balanced exactly before computing the dual endpoint.
-    The primal objective and gap remain numerical estimates. K must already
-    be validated.
+    The primal objective and available gap remain numerical estimates. K must
+    already satisfy the existing numerical validation policy. If the final dual
+    calculation specifically contradicts its PSD assumption, the dual endpoint
+    and gap are None; this does not change the iterate or numerical criterion.
     """
     n = len(y)
     scores = K @ alpha if scores is None else scores
@@ -224,12 +227,22 @@ def optimality_diagnostics(K, y, alpha, offset, lambd, q, *, scores=None):
     gradient = float(max(abs(z.sum()), np.sqrt(residual2)))
     dual, dual_info = kernel_dual_lower_bound(
         K, y, -V_grad(margins, q=q), lambd, q)
-    gap = primal - dual
-    if not np.isfinite(primal) or not np.isfinite(dual) or not np.isfinite(gradient):
+    unavailable = dual is None
+    if unavailable and (
+            dual_info.get('dual_objective_is_lower_bound') is not False
+            or dual_info.get('fallback_reason') not in _PSD_CONTRADICTION_REASONS
+            or dual_info.get('kernel_assumption') != (
+                'symmetric positive-semidefinite represented kernel (contradicted)')):
+        raise ValueError('Unavailable dual diagnostic lacks a specific PSD contradiction.')
+    if not unavailable and dual_info.get('dual_objective_is_lower_bound') is False:
+        raise ValueError('A numeric dual endpoint cannot have a false lower-bound flag.')
+    gap = None if unavailable else primal - dual
+    if (not np.isfinite(primal) or not np.isfinite(gradient)
+            or (not unavailable and not np.isfinite(dual))):
         raise FloatingPointError('Nonfinite objective or optimality diagnostic.')
     # Tiny negative gaps may arise from floating-point summation. Keep the raw
     # value visible; never hide a materially negative gap by clipping it.
-    if gap < -1e-8 * max(1., abs(primal), abs(dual)):
+    if gap is not None and gap < -1e-8 * max(1., abs(primal), abs(dual)):
         raise FloatingPointError('Inconsistent primal-dual bound; check the kernel '
                                  'and any explicitly supplied eigensystem.')
     if norm2 == 0:
@@ -242,7 +255,7 @@ def optimality_diagnostics(K, y, alpha, offset, lambd, q, *, scores=None):
     result = {'final_objective': primal, 'rkhs_norm_squared': norm2,
             'gradient_inf_norm': float(max(abs(z.sum()), np.max(np.abs(gradient_alpha)))),
             'rkhs_gradient_norm': gradient, 'intercept_gradient': float(z.sum()),
-            'dual_objective': dual, 'dual_gap': float(gap),
+            'dual_objective': dual, 'dual_gap': None if gap is None else float(gap),
             'dual_equality_residual': 0., 'dual_certificate': dual_info, 'C': C}
     # Keep every original objective, dual and gradient validation above. Only
     # these three final estimates change; the optimizer's residual is separate.
@@ -262,7 +275,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                  patience=3, min_delta=0., check_interval=1,
                  implementation='optimized', acceleration='auto',
                  residual_check_order='refinement_first', affine_computation='standard',
-                 exact_recovery='standard', linear_action='factor'):
+                 exact_recovery='standard', linear_action='factor', _linear_features=None):
     """Solve one specified kernel DWD problem; no internal parameter search.
 
     y contains both -1/+1. ``validation`` is an explicitly supplied pair
@@ -272,6 +285,10 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     against ``tol``. The default remains the upstream absolute objective rule.
     This functional API retains refinement_first as its residual-order default.
     Explicit auto resolves only after the actual supplied eigenbasis is known.
+    _linear_features is private estimator-proven geometry for the corrected
+    dense named-linear L-BFGS final report; other callers leave it absent.
+    ``implementation='reference'`` is an internal equation-checking route,
+    not an estimator option. It retains its own backend/acceleration guards.
     """
     started = perf_counter()
     from ._linear_action import validate_linear_action
@@ -299,6 +316,8 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     min_delta = _scalar(min_delta, 'min_delta')
     if backend not in ('auto', 'spectral', 'cholesky', 'lbfgs'):
         raise ValueError('backend must be auto, spectral, cholesky or lbfgs.')
+    if _linear_features is not None and (backend != 'lbfgs' or implementation != 'optimized'):
+        raise ValueError('Dense linear feature diagnostics require optimized L-BFGS.')
     if stopping not in ('objective', 'fixed', 'optimality', 'validation'):
         raise ValueError('stopping must be objective, fixed, optimality or validation.')
     if callback is not None and not callable(callback):
@@ -359,14 +378,14 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     U = values = system = None
     if backend in ('spectral', 'lbfgs') or K_eig is not None:
         spectral_started = perf_counter()
-        U, values, details = _eigensystem(K, K_eig, shift, reference=implementation == 'reference')
+        U, values, details = _eigensystem(K, K_eig)
         diagnostics['spectral_setup_seconds'] = perf_counter() - spectral_started
         diagnostics.update(details)
         diagnostics['psd_validation'] = 'validated eigensystem'
     elif not psd_known:
         check_started = perf_counter()
         check_values, eigen_info = validated_eigh(K, eigvals_only=True, return_info=True)
-        _check_spectrum(check_values, n, shift)
+        _check_spectrum(check_values, n)
         diagnostics['eigenvalue_check_seconds'] = perf_counter() - check_started
         diagnostics['psd_validation'] = 'checked eigenvalues of supplied kernel'
         diagnostics['eigenvalue_validation'] = eigen_info
@@ -577,10 +596,13 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     last_proximal_uses_certified_columns = False
     constrained_recovery_origin = None
 
-    def exhausted_constrained_recovery(error):
+    def raise_if_constrained_recovery_exhausted(error):
+        """Translate eligible failures; leave other errors to the caller."""
+        if constrained_recovery_origin is None:
+            return
         # No arrays, factors, histories or exception objects cross the retry
         # boundary. The caller may release this attempt before spectral setup.
-        return MMRecoveryExhausted(str(error), {
+        raise MMRecoveryExhausted(str(error), {
             'failed_backend': backend,
             'failed_iteration': int(iteration),
             'completed_iterations': int(max(0, iteration - 1)),
@@ -594,7 +616,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
             'mm_function_recovery_accepted_actions': int(mm_recovery.info['accepted_actions']),
             'mm_function_certificate_status': str(mm_recovery.info.get('certificate_status')),
             'acceleration_counts': dict(accelerator.info) if accelerator is not None else {},
-        })
+        }) from error
 
     def accelerated_proximal_step(rhs):
         nonlocal last_proximal_uses_certified_columns, constrained_recovery_origin
@@ -603,8 +625,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
             try:
                 result = mm_recovery.step(rhs, 0.)
             except FloatingPointError as recovery_error:
-                if constrained_recovery_origin is not None:
-                    raise exhausted_constrained_recovery(recovery_error) from recovery_error
+                raise_if_constrained_recovery_exhausted(recovery_error)
                 raise
             last_proximal_uses_certified_columns = True
             return result
@@ -619,8 +640,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
             try:
                 result = mm_recovery.step(rhs, 0., str(exc))
             except FloatingPointError as recovery_error:
-                if constrained_recovery_origin is not None:
-                    raise exhausted_constrained_recovery(recovery_error) from recovery_error
+                raise_if_constrained_recovery_exhausted(recovery_error)
                 raise
             last_proximal_uses_certified_columns = True
             return result
@@ -687,8 +707,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                             try:
                                 alpha, offset, scores = mm_recovery.step(candidate_rhs, previous_offset)
                             except FloatingPointError as recovery_error:
-                                if constrained_recovery_origin is not None:
-                                    raise exhausted_constrained_recovery(recovery_error) from recovery_error
+                                raise_if_constrained_recovery_exhausted(recovery_error)
                                 raise
                             c = None
                             state_uses_certified_columns = True
@@ -725,8 +744,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
                             alpha, offset, scores = mm_recovery.step(
                                 candidate_rhs, previous_offset, str(exc))
                         except FloatingPointError as recovery_error:
-                            if constrained_recovery_origin is not None:
-                                raise exhausted_constrained_recovery(recovery_error) from recovery_error
+                            raise_if_constrained_recovery_exhausted(recovery_error)
                             raise
                         c = None
                         state_uses_certified_columns = True
@@ -742,7 +760,7 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
     if validation is not None and best_state is not None:
         (alpha, offset, scores, _, returned_iteration, prediction_precision,
          state_uses_certified_columns) = best_state
-    exact_scores, score_drift, _, _ = reconstructed_state(
+    exact_scores, score_drift, reconstructed_objective, _ = reconstructed_state(
         alpha, scores, offset, history[returned_iteration],
         'Kernel coefficient conversion lost score accuracy; '
         'check regularization, kernel precision or supplied eigenpairs.',
@@ -762,7 +780,16 @@ def solve_kernel(K, y, lambd, q=1, *, K_eig=None, alpha_init=None,
             diagnostics['fallback_reason'] = 'certified_original_kernel_mm_function'
         if state_uses_certified_columns:
             diagnostics['coefficient_representation'] = 'certified_sparse_kernel_columns'
-    final = optimality_diagnostics(K, y, alpha, offset, lambd, q, scores=exact_scores)
+    if _linear_features is None:
+        final = optimality_diagnostics(K, y, alpha, offset, lambd, q, scores=exact_scores)
+    else:
+        from ._linear_feature_diagnostics import linear_feature_diagnostics
+        final, geometry_info = linear_feature_diagnostics(
+            _linear_features, y, alpha, offset, lambd, q,
+            checked_scores=exact_scores, checked_objective=reconstructed_objective,
+            optimizer_scores=scores, optimizer_objective=history[returned_iteration])
+        diagnostics['rkhs_geometry'] = 'linear_features'
+        diagnostics['rkhs_geometry_info'] = geometry_info
     diagnostics['dual_certificate'] = dict(final['dual_certificate'],
         dual_objective_lower_bound=final['dual_objective'])
     objective_drift = float(final['final_objective'] - history[returned_iteration])

@@ -1,4 +1,4 @@
-"""Public-API contracts for the reference and optimized MM implementations.
+"""Public optimized contracts and private reference numerical comparisons.
 
 All observations are manufactured here. CV tests verify API propagation and
 pairwise slicing; they do not tune MNIST or access any external dataset.
@@ -17,12 +17,13 @@ from sklearn.preprocessing import StandardScaler
 
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
 from dwd._reference_mm import reference_update
+from _kernel_reference import kernel_route
 
 
 IMPLEMENTATIONS = ('reference', 'optimized')
 
 
-class TwoImplementationPublicTests(unittest.TestCase):
+class PublicAndPrivateReferenceTests(unittest.TestCase):
     def setUp(self):
         rng = np.random.RandomState(612042)
         self.X = rng.normal(size=(24, 4))
@@ -36,7 +37,7 @@ class TwoImplementationPublicTests(unittest.TestCase):
                        kernel_kws={'gamma': .3}, lambd=.07, q=1.,
                        max_iter=6, stopping='fixed', initialization='zero')
         options.update(kwargs)
-        return KernGDWD(**options)
+        return kernel_route(**options)
 
     def assert_model_function_equal(self, left, right, atol=2e-10):
         assert_allclose(left.decision_function(self.query), right.decision_function(self.query),
@@ -44,27 +45,26 @@ class TwoImplementationPublicTests(unittest.TestCase):
         assert_allclose(left.intercept_, right.intercept_, rtol=2e-9, atol=atol)
         assert_allclose(left.objective_history_, right.objective_history_, rtol=2e-9, atol=atol)
 
-    def test_public_selection_clone_and_backend_diagnostics(self):
-        self.assertEqual(KernGDWD().implementation, 'optimized')
+    def test_public_and_private_scaffold_clone_and_backend_diagnostics(self):
+        self.assertNotIn('implementation', KernGDWD().get_params())
         for implementation in IMPLEMENTATIONS:
             with self.subTest(implementation=implementation):
                 model = self.model(implementation).fit(self.X, self.y)
                 copied = clone(model)
                 self.assertTrue(is_classifier(copied))
-                self.assertEqual(copied.implementation, implementation)
+                self.assertIs(type(copied), type(model))
+                self.assertNotIn('implementation', copied.get_params())
                 self.assertEqual(copied.get_params(), model.get_params())
                 self.assertFalse(hasattr(copied, 'dual_coef_'))
                 self.assertEqual(model.diagnostics_['implementation'], implementation)
                 self.assertEqual(model.backend_, 'spectral' if implementation == 'reference' else 'cholesky')
-        with self.assertRaisesRegex(ValueError, 'implementation'):
+        with self.assertRaisesRegex(ValueError, 'private test route'):
             self.model('unknown').fit(self.X, self.y)
 
     def test_reference_uses_validated_eigenbasis_and_coefficient_steps_without_cholesky(self):
         message = 'The coefficient/eigenbasis reference must not call Cholesky.'
         with patch('dwd._kernel_linear_system.cho_factor', side_effect=AssertionError(message)), \
                 patch('dwd._kernel_linear_system.cho_solve', side_effect=AssertionError(message)), \
-                patch('dwd._kernel_solver.cho_factor', side_effect=AssertionError(message)), \
-                patch('dwd._kernel_solver.cho_solve', side_effect=AssertionError(message)), \
                 patch('dwd._kernel_solver.reference_update', wraps=reference_update) as update, \
                 patch('dwd._eigen.eigh', wraps=eigh) as eigen:
             model = self.model('reference', max_iter=3).fit(self.X, self.y,
@@ -78,18 +78,19 @@ class TwoImplementationPublicTests(unittest.TestCase):
             with self.subTest(backend=backend), self.assertRaises(ValueError):
                 self.model('reference', backend=backend).fit(self.X, self.y)
 
-    def test_native_initialization_defaults_preserve_reference_random_and_optimized_zero(self):
+    def test_private_scaffold_requests_random_and_public_default_is_zero(self):
         seed = 97
         expected = np.random.RandomState(seed).normal(size=len(self.y))
         expected /= np.linalg.norm(expected)
         for implementation in IMPLEMENTATIONS:
             with self.subTest(implementation=implementation):
-                default = KernGDWD(implementation=implementation)
-                self.assertEqual(default.initialization, 'auto')
+                default = kernel_route(implementation=implementation)
+                intended = 'random' if implementation == 'reference' else 'zero'
+                self.assertEqual(default.initialization, intended)
                 self.assertEqual(default.stopping, 'objective')
                 self.assertEqual(default.obj_tol, 1e-5)
                 self.assertEqual(default.max_iter, 100)
-                actual = self.model(implementation, initialization='auto',
+                actual = self.model(implementation, initialization=intended,
                                     random_state=seed, max_iter=0).fit(self.X, self.y)
                 assert_allclose(actual.dual_coef_[0], expected if implementation == 'reference'
                                 else np.zeros(len(self.y)), rtol=2e-13, atol=2e-13)
@@ -105,12 +106,12 @@ class TwoImplementationPublicTests(unittest.TestCase):
             expected /= np.linalg.norm(expected)
             expected_next = expected_rng.normal(size=4)
             np.random.seed(seed)
-            fitted = self.model('reference', initialization='auto', random_state=None,
+            fitted = self.model('reference', initialization='random', random_state=None,
                                 max_iter=0).fit(self.X, self.y)
             assert_allclose(fitted.dual_coef_[0], expected, atol=2e-13, rtol=2e-13)
             assert_array_equal(np.random.normal(size=4), expected_next)
             for implementation in IMPLEMENTATIONS:
-                for initialization in ('auto', 'zero', 'random'):
+                for initialization in ('zero', 'random'):
                     with self.subTest(implementation=implementation, initialization=initialization):
                         np.random.seed(seed)
                         fitted = self.model(implementation, initialization=initialization,
@@ -133,26 +134,27 @@ class TwoImplementationPublicTests(unittest.TestCase):
             assert_allclose(zero.dual_coef_[0], np.zeros(len(self.y)), atol=1e-14)
             assert_allclose(random.dual_coef_[0], expected, rtol=2e-13, atol=2e-13)
 
-    def test_external_gridsearch_selects_both_implementations_and_refits_public_classifier(self):
+    def test_external_gridsearch_selects_supported_backends_and_refits_public_classifier(self):
         base = Pipeline([('scale', StandardScaler()), ('model', self.model('optimized', max_iter=3))])
-        search = GridSearchCV(base, {'model__implementation': list(IMPLEMENTATIONS),
+        search = GridSearchCV(base, {'model__backend': ['auto', 'spectral'],
                                     'model__lambd': [.04, .15]},
                               cv=StratifiedKFold(3), scoring='accuracy', error_score='raise').fit(self.X, self.y)
         self.assertEqual(len(search.cv_results_['params']), 4)
         self.assertTrue(np.isfinite(search.cv_results_['mean_test_score']).all())
-        self.assertEqual({p['model__implementation'] for p in search.cv_results_['params']}, set(IMPLEMENTATIONS))
+        self.assertEqual({p['model__backend'] for p in search.cv_results_['params']}, {'auto', 'spectral'})
         best = search.best_estimator_.named_steps['model']
-        self.assertEqual(best.implementation, search.best_params_['model__implementation'])
-        self.assertEqual(best.diagnostics_['implementation'], best.implementation)
+        self.assertIs(type(best), KernGDWD)
+        self.assertEqual(best.backend, search.best_params_['model__backend'])
+        self.assertEqual(best.diagnostics_['implementation'], 'optimized')
         self.assertTrue(set(search.predict(self.query)).issubset(set(self.y)))
 
-    def test_external_pairwise_gridsearch_matches_explicit_fold_slicing_for_each_implementation(self):
+    def test_external_pairwise_gridsearch_matches_explicit_fold_slicing_for_each_backend(self):
         K = rbf_kernel(self.X, gamma=.3)
         query_K = rbf_kernel(self.query, self.X, gamma=.3)
         folds = list(StratifiedKFold(3).split(K, self.y))
-        for implementation in IMPLEMENTATIONS:
-            with self.subTest(implementation=implementation):
-                base = self.model(implementation, kernel='precomputed', kernel_kws=None, max_iter=3)
+        for backend in ('auto', 'spectral'):
+            with self.subTest(backend=backend):
+                base = self.model('optimized', backend=backend, kernel='precomputed', kernel_kws=None, max_iter=3)
                 search = GridSearchCV(base, {'lambd': [.04, .15]}, cv=folds,
                                       scoring='accuracy', error_score='raise').fit(K, self.y)
                 for candidate, lambd in enumerate((.04, .15)):
@@ -162,25 +164,27 @@ class TwoImplementationPublicTests(unittest.TestCase):
                         manual.append(np.mean(model.predict(K[np.ix_(validation, train)]) == self.y[validation]))
                     observed = [search.cv_results_[f'split{i}_test_score'][candidate] for i in range(3)]
                     assert_array_equal(observed, manual)
-                self.assertEqual(search.best_estimator_.implementation, implementation)
+                self.assertIs(type(search.best_estimator_), KernGDWD)
+                self.assertEqual(search.best_estimator_.diagnostics_['implementation'], 'optimized')
                 self.assertEqual(search.predict(query_K).shape, (len(self.query),))
 
-    def test_internal_cv_propagates_implementation_controls_and_refit(self):
-        for implementation in IMPLEMENTATIONS:
-            with self.subTest(implementation=implementation):
-                fitted = KernGDWDCV(implementation=implementation, lambd_vals=[.04, .15],
+    def test_internal_cv_propagates_backend_controls_and_refit(self):
+        for backend in ('auto', 'spectral'):
+            with self.subTest(backend=backend):
+                fitted = KernGDWDCV(backend=backend, lambd_vals=[.04, .15],
                     q_vals=[1.], kernel='rbf', kernel_kws_vals=[{'gamma': .3}], cv=3,
                     initialization='zero', stopping='fixed', max_iter=2, random_state=77).fit(self.X, self.y)
                 best = fitted.best_estimator_
-                self.assertEqual(best.implementation, implementation)
-                self.assertEqual(best.diagnostics_['implementation'], implementation)
+                self.assertIs(type(best), KernGDWD)
+                self.assertEqual(best.backend, backend)
+                self.assertEqual(best.diagnostics_['implementation'], 'optimized')
                 self.assertEqual(best.initialization, 'zero')
                 self.assertEqual(best.n_iter_, 2)
                 self.assertEqual(best.lambd, fitted.best_params_['lambd'])
-                self.assertEqual(best.backend_, 'spectral' if implementation == 'reference' else 'cholesky')
+                self.assertEqual(best.backend_, 'spectral' if backend == 'spectral' else 'cholesky')
                 assert_array_equal(fitted.predict(self.query), best.predict(self.query))
                 with self.assertRaisesRegex(ValueError, 'monitoring splits'):
-                    KernGDWDCV(implementation=implementation, stopping='validation').fit(self.X, self.y)
+                    KernGDWDCV(backend=backend, stopping='validation').fit(self.X, self.y)
 
     def test_fixed_and_objective_stopping_match_with_same_explicit_initial_state(self):
         for stopping, options in (('fixed', {'max_iter': 10}),

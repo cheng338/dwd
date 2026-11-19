@@ -7,7 +7,8 @@ def tuning_curve(X_train, y_train, X_test, y_test,
     """
     Plot errors for signed (-1, +1) labels and a low-level conic solver.
 
-    The solver must accept solver_kws and return coefficients and intercept
+    tuning_params contains the conic tuning-parameter values C. The solver
+    must accept solver_kws and return coefficients and intercept
     as its first two outputs. This plotting helper does not fit an estimator
     or infer arbitrary class labels.
     """
@@ -33,7 +34,7 @@ def tuning_curve(X_train, y_train, X_test, y_test,
     plt.plot(tuning_params, test_error, label="Test error")
     plt.xscale('log')
     plt.legend(loc='upper left')
-    plt.xlabel(r"$\lambda$", fontsize=16)
+    plt.xlabel(r"$C$", fontsize=16)
     plt.ylim(0, 1)
 
     return train_error, test_error
@@ -41,20 +42,26 @@ def tuning_curve(X_train, y_train, X_test, y_test,
 
 def lin_clf_predict(x, beta, offset):
     """
-    Returns the linear classifier predictions for a point x.
+    Return signed linear predictions for one point or a batch.
 
-    sign(x^T beta + offset)
+    Computes sign(x @ beta + offset) without changing the zero-margin rule.
 
     Parameters
     ----------
-    x: array-like, (n_features, )
-        The data point.
+    x: ndarray, shape (n_features,) or (n_samples, n_features)
+        One data point or a batch of data points.
 
     beta: array-like, (n_features, )
         The classifier normal vector.
 
     offset: float
         The classifier offset.
+
+    Returns
+    -------
+    predictions: ndarray, shape (1,) or (n_samples,)
+        Signed predictions, always one-dimensional. An exact zero margin
+        produces 0; positive and negative margins produce +1 and -1.
     """
     return np.sign(x.dot(beta) + offset).reshape(-1)
 
@@ -67,7 +74,7 @@ def sample_meatballs(n_samples=1000, n_features=20, n_test=1000,
 
     Parameters
     ----------
-    n_sample: int
+    n_samples: int
         Sample size of training data.
 
     n_features: int
@@ -76,7 +83,7 @@ def sample_meatballs(n_samples=1000, n_features=20, n_test=1000,
     n_test: int
         Number of test points.
 
-    sep: flot
+    sep: float
         Norm of mean difference vector.
 
     p_pos: float
@@ -113,11 +120,37 @@ def sample_meatballs(n_samples=1000, n_features=20, n_test=1000,
 
 def cv_tuning(gscv, param_name, kind='test', log=True, std=True, color='red'):
     """
-    Plots the tuning curve using GridSearchCV.
+    Plot mean CV scores and optional standard-deviation curves.
 
     Parameters
     ----------
-    gscg: from sklearn.model_selection import GridSearchCV
+    gscv: fitted sklearn.model_selection.GridSearchCV
+        Supplies cv_results_ with params and mean_test_score or
+        mean_train_score. With std=True, the matching std_test_score or
+        std_train_score is also required. Training scores must have been
+        retained, for example with return_train_score=True.
+
+    param_name: str
+        Parameter present in each cv_results_['params'] entry.
+
+    kind: {'test', 'train'}, default='test'
+        Select test or training scores.
+
+    log: bool, default=True
+        Use a logarithmic horizontal axis; parameter values must be positive.
+
+    std: bool, default=True
+        Draw mean plus and minus one standard deviation as dashed curves.
+
+    color: matplotlib color, default='red'
+        Color for the mean and both standard-deviation curves.
+
+    Notes
+    -----
+    The vertical display limits remain [0, 1]. Scores or standard-deviation
+    curves outside this interval are clipped by the display; use a separate
+    plot when another score range is required. Scores are not converted to
+    classification errors.
     """
     param_vals = [p[param_name] for p in gscv.cv_results_['params']]
 
@@ -130,10 +163,10 @@ def cv_tuning(gscv, param_name, kind='test', log=True, std=True, color='red'):
     if std:
         plt.plot(param_vals,
                  gscv.cv_results_['mean' + st] + gscv.cv_results_['std' + st],
-                 'b--', color=color)
+                 '--', color=color)
         plt.plot(param_vals,
                  gscv.cv_results_['mean' + st] - gscv.cv_results_['std' + st],
-                 'b--', color=color)
+                 '--', color=color)
     if log:
         plt.xscale('log')
     plt.ylim(0, 1)

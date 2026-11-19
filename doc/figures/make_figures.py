@@ -1,3 +1,11 @@
+"""Generate both historical linear-SOCP and kernel figures.
+
+This combined script requires the optional CVXPY dependency (dwd[socp])
+and a suitable conic solver for its linear figure. For kernel-only usage
+without CVXPY, use the kernel cells in ../example_notebooks/2D visualization.ipynb.
+Run from the directory where the two PNG files should be written.
+"""
+
 from sklearn.datasets import make_blobs, make_circles
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap

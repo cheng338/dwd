@@ -4,7 +4,7 @@ This record describes the revised publication snapshot. The earlier local 1.3.2
 snapshot passed 324 tests under MKL, but initial GitHub checks subsequently
 exposed test portability problems and a real spectral rounding failure
 under OpenBLAS. Those earlier passes are not evidence that the original snapshot
-passed other runtimes. The original local archives and receipts are preserved.
+passed other runtimes. The original measurement archives and receipts were stored separately from this release.
 
 ## Current source and actual-wheel checks
 

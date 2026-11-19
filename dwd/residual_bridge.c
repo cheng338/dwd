@@ -131,7 +131,7 @@ static PyObject *evaluate(PyObject *module, PyObject *args)
     if (n < 1 || n > ((Py_ssize_t)1 << 20) - 3
         || buffers[0].shape[0] != n || buffers[0].shape[1] != n
         || buffers[2].shape[0] != n || start < 0 || stop < start || stop > n) {
-        PyErr_SetString(PyExc_ValueError, "Expected square K, matching x/rhs, and0 <= start <= stop <= n.");
+        PyErr_SetString(PyExc_ValueError, "Expected square K, matching x/rhs, and 0 <= start <= stop <= n.");
         goto done;
     }
     for (int i = 3; i < 6; ++i) {
@@ -175,6 +175,10 @@ done:
 extern int dwd_expanded_score_rows(
     const double *, size_t, size_t, const double *, const double *,
     const int32_t *, const double *, const double *, double *);
+
+extern int dwd_expanded_affine_score_rows(
+    const double *, size_t, size_t, const double *, const double *,
+    const int32_t *, const double *, const double *, double *, double);
 
 static int score_view(PyObject *object, Py_buffer *view, int dimensions,
                       int exponent, int writable, Span *span)
@@ -281,15 +285,69 @@ done:
     return PyLong_FromLong(status);
 }
 
+static PyObject *score_affine_rows(PyObject *module, PyObject *args)
+{
+    (void)module;
+    PyObject *objects[7];
+    Py_buffer buffers[7] = {{0}};
+    Span spans[7];
+    int status = -1;
+    double b;
+    if (!PyArg_ParseTuple(args, "OOOOOOOd:score_affine_rows", &objects[0], &objects[1],
+                          &objects[2], &objects[3], &objects[4], &objects[5], &objects[6], &b))
+        return NULL;
+    for (int i = 0; i < 7; ++i) {
+        if (!score_view(objects[i], &buffers[i], i == 0 ? 2 : 1,
+                        i == 3, i == 6, &spans[i]))
+            goto done;
+    }
+    Py_ssize_t count = buffers[0].shape[0], width = buffers[0].shape[1];
+    if (count < 1 || count > 8 || width < 1 || width > ((Py_ssize_t)1 << 20)
+        || buffers[6].shape[0] != count) {
+        PyErr_SetString(PyExc_ValueError, "Expected one to eight score rows and matching output.");
+        goto done;
+    }
+    for (int i = 1; i < 6; ++i) {
+        if (buffers[i].shape[0] != width) {
+            PyErr_SetString(PyExc_ValueError, "Score coefficients and splits must match the row width.");
+            goto done;
+        }
+    }
+    for (int i = 0; i < 6; ++i) {
+        if (overlaps(spans[6], spans[i])) {
+            PyErr_SetString(PyExc_ValueError, "Score output storage must not overlap inputs.");
+            goto done;
+        }
+    }
+    Py_BEGIN_ALLOW_THREADS
+    status = dwd_expanded_affine_score_rows(
+        (const double *)buffers[0].buf, (size_t)count, (size_t)width,
+        (const double *)buffers[1].buf, (const double *)buffers[2].buf,
+        (const int32_t *)buffers[3].buf, (const double *)buffers[4].buf,
+        (const double *)buffers[5].buf, (double *)buffers[6].buf, b);
+    Py_END_ALLOW_THREADS
+done:
+    for (int i = 0; i < 7; ++i)
+        if (buffers[i].obj != NULL)
+            PyBuffer_Release(&buffers[i]);
+    if (status < 0)
+        return NULL;
+    return PyLong_FromLong(status);
+}
+
 static PyMethodDef methods[] = {
     {"evaluate", evaluate, METH_VARARGS,
      "evaluate(K,x,rhs,shift,s,start,stop,scores,residuals,maxima) -> status\n"
      "Buffers must remain unchanged during the call. Discard outputs on nonzero status.\n"
-     "Status:0 success,1 bad arguments,2 operand decline,3 nonfinite,4 unsupported arithmetic."},
+     "Status: 0 success, 1 bad arguments, 2 operand decline, 3 nonfinite, 4 unsupported arithmetic."},
     {"score_rows", score_rows, METH_VARARGS,
      "score_rows(rows,alpha,mantissa,exponents,high,low,output) -> status\n"
      "Ordered dense high/low scores. Buffers must remain unchanged during the call.\n"
      "Discard output on any nonzero status and use the original Python scorer."},
+    {"score_affine_rows", score_affine_rows, METH_VARARGS,
+     "score_affine_rows(rows,alpha,mantissa,exponents,high,low,output,b) -> status\n"
+     "Ordered dense high/low terms followed by b. Buffers must remain unchanged.\n"
+     "Discard output on any nonzero status and use the original Python affine scorer."},
     {NULL, NULL, 0, NULL}
 };
 

@@ -24,7 +24,8 @@ from dwd import kernel_utils
 from dwd.gen_kern_dwd import KernGDWD
 
 
-MODES=('sklearn','norm_sum','guarded_sklearn_rel_v1','guarded_norm_sum_rel_v1')
+MODES=('sklearn','norm_sum','guarded_sklearn_rel_v1','guarded_norm_sum_rel_v1',
+       'guarded_sklearn_rel_v2','guarded_norm_sum_rel_v2')
 
 
 def snapshot(X):
@@ -216,7 +217,7 @@ class SparsePredictionNormReuseTests(unittest.TestCase):
                     self.compare(model,self.Q)
 
     def test_mutating_pairwise_dot_helper_keeps_fresh_per_batch_norms(self):
-        for mode in ('sklearn','guarded_sklearn_rel_v1'):
+        for mode in ('sklearn','guarded_sklearn_rel_v1','guarded_sklearn_rel_v2'):
             outputs=[]; bases=[]; counts=[]
             for reuse in (False,True):
                 model=self.model(mode); original=pairwise.safe_sparse_dot; seen=[0]

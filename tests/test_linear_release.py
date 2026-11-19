@@ -17,7 +17,8 @@ class LinearReleaseTests(unittest.TestCase):
 
     def test_corrected_defaults_are_deterministic_and_keep_stop_defaults(self):
         model = GenDWD()
-        self.assertEqual((model.solver_mode, model.initialization), ('schur', 'auto'))
+        self.assertNotIn('solver_mode', model.get_params())
+        self.assertEqual(model.initialization, 'zero')
         self.assertEqual((model.stopping, model.obj_tol, model.max_iter),
                          ('objective', 1e-5, 100))
         first = clone(model).fit(self.X, self.y)
@@ -46,15 +47,15 @@ class LinearReleaseTests(unittest.TestCase):
         self.assertTrue(initial.converged_)
         self.assertEqual(initial.C_, 0.)
 
-    def test_explicit_initialization_and_legacy_random_choice(self):
+    def test_explicit_and_requested_random_initialization(self):
         beta = np.array([.2, -.4, .8])
         explicit = GenDWD(max_iter=0).fit(self.X, self.y, beta_init=beta, offset_init=.3)
         assert_array_equal(explicit.coef_[0], beta)
         self.assertEqual(explicit.intercept_[0], .3)
         self.assertEqual(explicit.initialization_, 'explicit')
-        old = GenDWD(solver_mode='legacy', random_state=9, max_iter=0).fit(self.X, self.y)
-        assert_array_equal(old.coef_[0], np.random.RandomState(9).normal(size=3))
-        self.assertEqual(old.initialization_, 'random')
+        random_fit = GenDWD(initialization='random', random_state=9, max_iter=0).fit(self.X, self.y)
+        assert_array_equal(random_fit.coef_[0], np.random.RandomState(9).normal(size=3))
+        self.assertEqual(random_fit.initialization_, 'random')
         low = solve_gen_dwd(self.X, self.y, lambd=1., max_iter=0)
         assert_array_equal(low[0], np.zeros(3))
 
@@ -93,7 +94,7 @@ class LinearReleaseTests(unittest.TestCase):
                           initialization='zero', stopping='fixed', max_iter=4,
                           tol=2e-6, implicit_P=False).fit(self.X, self.y)
         best = fitted.best_estimator_
-        self.assertEqual(best.solver_mode, 'schur')
+        self.assertNotIn('solver_mode', best.get_params())
         self.assertEqual((best.initialization, best.stopping, best.tol),
                          ('zero', 'fixed', 2e-6))
         self.assertEqual(best.n_iter_, 4)
@@ -126,7 +127,7 @@ class LinearReleaseTests(unittest.TestCase):
                         {'tol': -1.}, {'tol': np.nan}, {'max_iter': True}):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 GenDWD(**options).fit(self.X, self.y)
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaisesRegex(TypeError, 'sample_weight'):
             GenDWD().fit(self.X, self.y, sample_weight=np.ones(len(self.y)))
 
     def test_large_q_c_conversion_does_not_discard_a_finite_fit(self):

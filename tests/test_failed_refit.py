@@ -129,7 +129,7 @@ class FailedRefitMMTests(_FailureContract, unittest.TestCase):
         for model, invalid, target in self.cases()[:-1]:
             with self.subTest(model=type(model).__name__):
                 model.fit(self.X, self.y)
-                with self.assertRaises(NotImplementedError):
+                with self.assertRaisesRegex(TypeError, 'sample_weight'):
                     model.fit(self.X, self.y, sample_weight=np.ones(len(self.y)))
                 self.assert_unfitted(model)
 
@@ -177,10 +177,10 @@ class FailedRefitMMTests(_FailureContract, unittest.TestCase):
             assert_allclose(model.decision_function(self.X), expected, rtol=0, atol=1e-12)
 
     def test_kernel_precomputation_survives_failure_and_is_reused(self):
-        for implementation in ('optimized', 'reference'):
-            with self.subTest(implementation=implementation):
+        for backend in ('cholesky', 'spectral'):
+            with self.subTest(backend=backend):
                 model = KernGDWD(lambd=.1, max_iter=3, kernel='rbf', random_state=42,
-                                 implementation=implementation).cv_init(self.X)
+                                 backend=backend).cv_init(self.X)
                 cache = {key: value for key, value in vars(model).items()
                          if key.startswith('_cv_') or key == '_K_eig'}
                 expected = clone(model).fit(self.X, self.y).decision_function(self.X)
@@ -276,7 +276,7 @@ class FailedRefitSOCPTests(_FailureContract, unittest.TestCase):
         for model, invalid, target in self.cases():
             with self.subTest(model=type(model).__name__):
                 model.fit(self.X, self.y)
-                with self.assertRaises(NotImplementedError):
+                with self.assertRaisesRegex(TypeError, 'sample_weight'):
                     model.fit(self.X, self.y, sample_weight=np.ones(len(self.y)))
                 self.assert_unfitted(model)
 

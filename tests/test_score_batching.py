@@ -128,7 +128,20 @@ class ScoreBatchDifferentialTests(unittest.TestCase):
                        {'over': 'raise', 'invalid': 'raise', 'under': 'ignore', 'divide': 'raise'}):
             for label, K, alpha in cases:
                 with self.subTest(case=label, policy=policy):
-                    self.assert_same(K, alpha, policy)
+                    before_inputs = snapshot(K), snapshot(alpha)
+                    for name in FUNCTIONS:
+                        reference_policy = policy
+                        if name == 'adaptive_kernel_matvec':
+                            # No fixture here has a wider-to-binary64 cast.
+                            # The frozen helper's nextafter event is historical;
+                            # the current helper still runs with caller policy.
+                            self.assertLessEqual(K.dtype.itemsize, 8)
+                            self.assertLessEqual(alpha.dtype.itemsize, 8)
+                            reference_policy = dict(policy, under='ignore')
+                        with self.subTest(function=name):
+                            self.assertEqual(capture(getattr(scores, name), K, alpha, policy),
+                                             capture(getattr(BEFORE, name), K, alpha, reference_policy))
+                            self.assertEqual((snapshot(K), snapshot(alpha)), before_inputs)
 
     def test_sparse_duplicate_storage_is_unchanged(self):
         data = np.array([1e16, 1., -1e16, 2., -2., 3.])

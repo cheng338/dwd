@@ -128,7 +128,7 @@ class DocumentationExampleTests(unittest.TestCase):
                 for search in searches:
                     workers = next(keyword.value for keyword in search.keywords if keyword.arg == 'n_jobs')
                     self.assertEqual(ast.literal_eval(workers), 1)
-            self.assertEqual(checked, 6 if name == 'Basic functionality.ipynb' else 2)
+            self.assertEqual(checked, 6 if name == 'Basic functionality.ipynb' else 4)
 
 
 if __name__ == '__main__':

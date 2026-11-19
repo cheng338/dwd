@@ -48,7 +48,7 @@ conditional skips. Focused forward-runtime checks passed on actual Python 3.11
 and 3.12 with native and portable arithmetic. Simulated future version identities
 tested dispatch, not future interpreter arithmetic. Release-artifact verification
 and hosted CI are separate from those application checks. See
-[VALIDATION.md](VALIDATION.md) for scope and measured costs; no universal speedup
+[VALIDATION.md](../../VALIDATION.md) for scope and measured costs; no universal speedup
 is claimed.
 
 Install the native `dwd-1.3.18-cp311-abi3-win_amd64.whl` on compatible Windows
@@ -58,5 +58,5 @@ Numerical path eligibility is separate from wheel loading and NumPy/SciPy BLAS.
 This remains a fork of slicersalt/dwd, originally implemented by Iain Carmichael,
 with upstream maintenance by David Allemang and Kitware. Subsequent fork
 development is guided by Chang Cheng. Original credits and the MIT license are
-retained. See the [changelog](CHANGES.md), [installation](README.md#installation)
-and [1.3.17 release notes](docs/history/RELEASE_NOTES-1.3.17.md).
+retained. See the [changelog](../../CHANGES.md), [installation](../../README.md#installation)
+and [1.3.17 release notes](RELEASE_NOTES-1.3.17.md).

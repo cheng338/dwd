@@ -21,6 +21,7 @@ from dwd._spectral_linear_system import SpectralLinearSystem
 from dwd._accelerated_mm import RestartedMM
 from dwd.gen_dwd import V, V_grad
 from dwd.gen_kern_dwd import KernGDWD
+from _kernel_reference import kernel_route
 
 
 def fixture(rank=5):
@@ -284,10 +285,10 @@ class CertifiedMMIntegrationTests(unittest.TestCase):
                          'eb13eba26fcbf855af04261aa2be6eb24481e063b6c35a1272c9972821676c14')
         y = np.where(np.arange(n) % 2, 1., -1.)
         original_bytes = K.tobytes()
-        for implementation, initialization in [('reference', 'zero'), ('reference', 'auto'), ('optimized', 'zero')]:
+        for implementation, initialization in [('reference', 'zero'), ('reference', 'random'), ('optimized', 'zero')]:
             with self.subTest(implementation=implementation, initialization=initialization):
                 states = []
-                model = KernGDWD(kernel='precomputed', lambd=2e-14/n, q=1,
+                model = kernel_route(kernel='precomputed', lambd=2e-14/n, q=1,
                     implementation=implementation, initialization=initialization,
                     random_state=314159, stopping='fixed', max_iter=5,
                     callback=lambda s: states.append(dict(s))).fit(K, y)

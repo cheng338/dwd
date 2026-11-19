@@ -16,6 +16,7 @@ from threadpoolctl import threadpool_limits
 import dwd._spectral_linear_system as spectral
 from dwd._eigen import validated_eigh
 from dwd.gen_kern_dwd import KernGDWD
+from _kernel_reference import kernel_route
 from test_aposteriori_rkhs_bound import structured_solution, actual_error
 from test_toy_residual_regression import DecimalOracle, q1_path
 
@@ -116,7 +117,7 @@ class EquilibratedSpectralRecoveryTests(unittest.TestCase):
         ordinary = system._solve_constrained
 
         def fail_only_original(r, c):
-            if not system._recovery_attempted:
+            if system.info['factor_representation'] == 'validated_eigenbasis':
                 raise FloatingPointError('Injected ordinary-only refinement failure')
             return ordinary(r, c)
 
@@ -149,7 +150,6 @@ class EquilibratedSpectralRecoveryTests(unittest.TestCase):
     def check_no_recovery(self, system):
         self.assertEqual(system.info['linear_recoveries'], 0)
         self.assertEqual(system.info['factor_representation'], 'validated_eigenbasis')
-        self.assertFalse(system._recovery_attempted)
         self.assertEqual(system._recovery_next, 0)
         self.assertIsNone(system._equilibration)
         self.assertIsNone(system._active_recovery_attempt)
@@ -374,7 +374,7 @@ class EquilibratedSpectralRecoveryTests(unittest.TestCase):
             for rhs, target in ((np.ones(3), 0.), (np.array([1., np.nan, 0., 0.]), 0.), (np.ones(4), np.inf)):
                 with self.assertRaises(FloatingPointError):
                     system.solve_constrained(rhs, target)
-        self.assertFalse(system._recovery_attempted)
+        self.check_no_recovery(system)
 
     def test_public_bad_supplied_basis_remains_an_input_error(self):
         K, y = np.eye(6), np.array([-1., 1., -1., 1., -1., 1.])
@@ -395,7 +395,7 @@ class EquilibratedSpectralRecoveryTests(unittest.TestCase):
         oracle = DecimalOracle(K, len(X) * 1e-7 / 2)
         expected = q1_path(oracle, y, 1e-7, np.zeros(len(X)), 0., 5)
         observed = []
-        model = KernGDWD(implementation='reference', lambd=1e-7, kernel='rbf',
+        model = kernel_route(implementation='reference', lambd=1e-7, kernel='rbf',
                         kernel_kws={'gamma': .001}, initialization='zero',
                         stopping='fixed', max_iter=5,
                         callback=lambda state: observed.append((state['decision_values'].copy(), state['objective'])))

@@ -15,6 +15,8 @@ from numbers import Integral
 import os
 from pathlib import Path
 import platform
+import re
+import stat
 import sys
 import threading
 import types
@@ -78,6 +80,25 @@ def write_json_atomic(path, payload, *, replace=True):
             pass
 
 
+def _is_unpublished_identity_temporary(path):
+    """Recognize scratch names for fresh startup, never checkpoint authority.
+
+    Only the initial identity writer uses this exact namespace. Preserve the
+    bytes without reading, adopting or deleting them. No-follow metadata keeps
+    links, reparse points and nonregular objects outside this narrow exception.
+    A normal exclusive temporary has one link; linked aliases remain nonfresh.
+    """
+    if re.fullmatch(r'identity\.json\.[0-9a-f]{32}\.tmp', path.name) is None:
+        return False
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    return (stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+            and not (getattr(info, 'st_file_attributes', 0)
+                     & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0)))
+
+
 class CheckpointRun:
     """Own a run; refuse live orphan workers before issuing a new generation."""
     def __init__(self, run_dir, identity, *, resume=False):
@@ -92,11 +113,14 @@ class CheckpointRun:
         try:
             manifest = self.directory / 'identity.json'
             if self.resume:
-                payload = read_receipt(manifest, self.identity_hash)
+                payload = read_receipt(manifest, self.identity_hash,
+                                       expected_identity=self.identity)
                 if payload != {'schema': 1, 'identity_sha256': self.identity_hash,
                                'identity': self.identity}:
-                    raise CheckpointError('Run identity does not match this invocation')
-            elif any(p.name != 'coordinator.lock' for p in self.directory.iterdir()):
+                    raise CheckpointError(_run_identity_mismatch_message(manifest, payload, self.identity))
+            elif any(p.name != 'coordinator.lock'
+                     and not _is_unpublished_identity_temporary(p)
+                     for p in self.directory.iterdir()):
                 raise CheckpointError('Run directory is not fresh; use resume or a new directory')
             # Pending old workers must pass the token check after taking their
             # own lock. Active old workers prevent a replacement coordinator.
@@ -187,14 +211,80 @@ def write_receipt(path, payload):
     write_json_atomic(path, {'payload': payload, 'sha256': digest(payload)}, replace=True)
 
 
-def read_receipt(path, identity_sha256):
+_IDENTITY_DIAGNOSTIC_UNSET = object()
+
+
+def _identity_mismatch_details(saved, expected):
+    """Bounded top-level names only; never normalize or decide acceptance."""
+    if type(saved) is not dict or type(expected) is not dict:
+        return ' (identity value or structure differs)'
+    shown, seen = [], set()
+    omitted = False
+    try:
+        for value in (saved, expected):
+            for key in value:
+                if type(key) is not str:
+                    return ' (identity structure or representation differs)'
+                if key in seen:
+                    continue
+                if len(seen) == 64:
+                    omitted = True
+                    break
+                seen.add(key)
+                different = key not in saved or key not in expected
+                if not different:
+                    # Retain canonical distinctions, including 1/1.0 and -0.0.
+                    different = json.dumps(saved[key], sort_keys=True, separators=(',', ':'),
+                                           allow_nan=False) != json.dumps(
+                        expected[key], sort_keys=True, separators=(',', ':'), allow_nan=False)
+                if different:
+                    if len(shown) == 5:
+                        omitted = True
+                        break
+                    name = json.dumps(key[:32], ensure_ascii=True)
+                    shown.append(name + ('...' if len(key) > 32 else ''))
+            if omitted:
+                break
+        detail = ('differing identity fields: ' + ', '.join(shown) if shown
+                  else 'identity structure or representation differs')
+        if omitted:
+            detail += '; additional identity detail omitted'
+        if len(detail) > 506:
+            detail = detail[:472] + '; additional details truncated'
+        return ' (' + detail + ')'
+    except Exception:
+        # Formatting is supplementary and must not mask the refusal.
+        return ' (identity details unavailable)'
+
+
+def _run_identity_mismatch_message(path, payload, expected_identity):
+    """Explain only a freshly checksummed run manifest, never a generic receipt."""
+    try:
+        valid = (set(payload) == {'schema', 'identity_sha256', 'identity'}
+                 and payload['schema'] == 1)
+        valid = valid and payload['identity_sha256'] == digest(payload['identity'])
+    except Exception:
+        valid = False
+    if not valid:
+        return 'Checkpoint identity metadata inconsistent: ' + str(path)
+    return ('Run identity changed; use a new run directory'
+            + _identity_mismatch_details(payload['identity'], expected_identity)
+            + ': ' + str(path))
+
+
+def read_receipt(path, identity_sha256, *, expected_identity=_IDENTITY_DIAGNOSTIC_UNSET):
     record = _read_json(path)
     if not isinstance(record, dict) or set(record) != {'payload', 'sha256'}:
         raise CheckpointError('Malformed checkpoint envelope: ' + str(path))
     payload = record['payload']
-    if (not isinstance(payload, dict) or record['sha256'] != digest(payload)
-            or payload.get('identity_sha256') != identity_sha256):
-        raise CheckpointError('Checkpoint checksum or identity mismatch: ' + str(path))
+    if not isinstance(payload, dict):
+        raise CheckpointError('Malformed checkpoint payload: ' + str(path))
+    if record['sha256'] != digest(payload):
+        raise CheckpointError('Checkpoint checksum mismatch: ' + str(path))
+    if payload.get('identity_sha256') != identity_sha256:
+        if expected_identity is not _IDENTITY_DIAGNOSTIC_UNSET:
+            raise CheckpointError(_run_identity_mismatch_message(path, payload, expected_identity))
+        raise CheckpointError('Checkpoint identity mismatch: ' + str(path))
     return payload
 
 

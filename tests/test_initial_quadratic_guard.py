@@ -7,10 +7,12 @@ import numpy as np
 from numpy.testing import assert_array_equal
 
 from dwd._kernel_solver import (
-    _check_initial_quadratic, _compensated_dot, _compensated_quadratic, solve_kernel,
+    _check_initial_quadratic, _compensated_quadratic, solve_kernel,
 )
+from dwd._quadratic_bounds import _compensated_dot
 from dwd.gen_dwd import V
 from dwd.gen_kern_dwd import KernGDWD
+from _kernel_reference import kernel_route
 
 
 def exact_dot(a, b):
@@ -126,7 +128,7 @@ class InitialQuadraticGuardTests(unittest.TestCase):
             state = _check_initial_quadratic(matrix, alpha)
             checked.append((state[0].copy(), state[1]))
             return state
-        model = KernGDWD(kernel='precomputed', implementation='reference',
+        model = kernel_route(kernel='precomputed', implementation='reference',
                         random_state=seed, max_iter=0, q=1.7, lambd=.03,
                         callback=lambda state: seen.append(state))
         with patch('dwd._kernel_solver._check_initial_quadratic', side_effect=observe_initial_check):

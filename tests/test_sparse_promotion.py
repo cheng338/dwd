@@ -194,13 +194,15 @@ def test_callable_kernel_sees_promoted_features():
         assert_array_equal(right, dense)
 
 
-def test_fast_paths_and_legacy_float32_policy():
+def test_fast_paths_and_corrected_float32_preparation():
     dense = np.arange(24., dtype=np.float64).reshape(8, 3)
     for value in (dense, sparse.csr_matrix(dense), sparse.coo_array(dense)):
         assert promote_sparse_features(value, force_float64=True) is value
     raw, _ = raw_features(np.float32, "coo_matrix")
     assert promote_sparse_features(raw) is raw
-    assert GenDWD(solver_mode="legacy").cv_init(raw)._P0_X.dtype == np.float32
+    prepared = GenDWD().cv_init(raw)
+    assert prepared._P0_X.dtype == np.float64
+    assert_array_equal(prepared._P0_X.toarray(), raw.astype(np.float64).toarray())
 
 
 @pytest.mark.parametrize("estimator", (GenDWD, KernGDWD))

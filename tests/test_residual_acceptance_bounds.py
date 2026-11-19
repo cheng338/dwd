@@ -13,6 +13,7 @@ from dwd._kernel_linear_system import KernelLinearSystem
 from dwd._spectral_linear_system import SpectralLinearSystem
 from dwd._ordinary_residual_bounds import OrdinaryResidualBounds
 from dwd.gen_kern_dwd import KernGDWD
+from _kernel_reference import kernel_route
 
 
 def dec(value):
@@ -240,7 +241,7 @@ class ResidualAcceptanceBoundsTests(unittest.TestCase):
                     KernelLinearSystem, 'solve_constrained', wrap(original_cholesky)), patch.object(
                     SpectralLinearSystem, 'solve_constrained', wrap(original_spectral)), patch.object(
                     SpectralLinearSystem, 'refine_candidate', checked_refine):
-                model = KernGDWD(kernel='precomputed', lambd=2.**-18/48.,
+                model = kernel_route(kernel='precomputed', lambd=2.**-18/48.,
                                  initialization='zero', random_state=314159,
                                  implementation=implementation, backend=backend,
                                  stopping=stopping, max_iter=100).fit(K, y)

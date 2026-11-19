@@ -14,6 +14,7 @@ from threadpoolctl import threadpool_limits
 
 from dwd.cv import run_cv
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
+from _kernel_reference import kernel_route
 
 
 def linear_callable(X, Y):
@@ -46,7 +47,7 @@ class AffineComputationTests(unittest.TestCase):
                        stopping='fixed', initialization='zero', random_state=7,
                        affine_computation='standard')
         options.update(overrides)
-        return KernGDWD(**options)
+        return kernel_route(**options)
 
     def test_real_fitted_cancellation_dense_sparse_batch_and_pickle(self):
         # This boundary is produced by five ordinary MM updates.
@@ -101,10 +102,13 @@ class AffineComputationTests(unittest.TestCase):
         for name in ('affine_computation', 'affine_computation_', '_cv_affine_computation'):
             del model.__dict__[name]
         old = pickle.loads(pickle.dumps(model))
-        self.assertEqual(old.get_params()['affine_computation'], 'standard')
-        self.assertEqual(clone(old).affine_computation, 'standard')
-        self.assertTrue(old._cv_cache_matches(self.X))
+        self.assertEqual(old.get_params()['affine_computation'], 'joint')
+        self.assertEqual(clone(old).affine_computation, 'joint')
+        self.assertFalse(old._cv_cache_matches(self.X))
         np.testing.assert_array_equal(old.decision_function(self.query), expected)
+        # Explicit standard remains a valid request for that old preparation.
+        old.set_params(affine_computation='standard')
+        self.assertTrue(old._cv_cache_matches(self.X))
         old.set_params(affine_computation='joint')
         # A constructor setting on a historical fitted object cannot reinterpret it.
         np.testing.assert_array_equal(old.decision_function(self.query), expected)
@@ -114,7 +118,7 @@ class AffineComputationTests(unittest.TestCase):
             self.assertEqual(clone(estimator).affine_computation, 'joint')
             del estimator.__dict__['affine_computation']
             restored = pickle.loads(pickle.dumps(estimator))
-            self.assertEqual(clone(restored).affine_computation, 'standard')
+            self.assertEqual(clone(restored).affine_computation, 'joint')
 
     def test_cache_identity_and_failed_fit_cleanup(self):
         model = self.model().cv_init(self.X)
@@ -236,14 +240,14 @@ class AffineComputationTests(unittest.TestCase):
         np.testing.assert_array_equal(model.predict(X), model.classes_[(expected > 0).astype(int)])
 
     def test_invalid_options_and_legacy_fail_before_fitting(self):
-        for value in (None, True, 0, [], np.array(['standard']), 'invalid'):
+        for value in (None, True, 0, [], np.array(['standard']), 'invalid', 'auto'):
             for method in ('fit', 'cv_init'):
                 with self.subTest(value=value, method=method), self.assertRaises(ValueError):
                     model = self.model(affine_computation=value)
                     model.fit(self.X, self.y) if method == 'fit' else model.cv_init(self.X)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             self.model(solver_mode='legacy', affine_computation='joint').fit(self.X, self.y)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             KernGDWDCV(solver_mode='legacy', affine_computation='joint').fit(self.X, self.y)
 
 

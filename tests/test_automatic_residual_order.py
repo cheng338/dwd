@@ -12,6 +12,7 @@ from sklearn.exceptions import NotFittedError
 from sklearn.model_selection import GridSearchCV
 from threadpoolctl import threadpool_limits
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
+from _kernel_reference import kernel_route
 from dwd.cv import run_cv
 import inspect
 from numpy.testing import assert_allclose, assert_array_equal
@@ -69,9 +70,13 @@ class DispatchTests(unittest.TestCase):
     def test_02_automatic_dispatch_and_concrete_parity(self):
         for name, route in ROUTES.items():
             with self.subTest(route=name):
+                if name == 'legacy':
+                    with self.assertRaisesRegex(TypeError, 'solver_mode'):
+                        KernGDWD(**COMMON, **route).fit(X, y)
+                    continue
                 policy = 'adaptive' if name in ('optimized_auto', 'cholesky', 'restart') else 'refinement_first'
-                a = KernGDWD(**COMMON, **route).fit(X, y)
-                b = KernGDWD(**COMMON, **route, residual_check_order=policy).fit(X, y)
+                a = kernel_route(**COMMON, **route).fit(X, y)
+                b = kernel_route(**COMMON, **route, residual_check_order=policy).fit(X, y)
                 same(scientific(a), scientific(b))
                 self.assertEqual(a.get_params()['residual_check_order'], 'auto')
                 self.assertEqual(a.requested_residual_check_order_, 'auto')
@@ -247,7 +252,7 @@ class DispatchTests(unittest.TestCase):
     def test_12_explicit_validation_and_invalid_eigenbasis_remain_strict(self):
         for route in ({'implementation': 'reference'}, {'solver_mode': 'legacy'}, {'backend': 'spectral'}, {'backend': 'lbfgs'}):
             for factory in (KernGDWD, KernGDWDCV):
-                with self.assertRaises(ValueError):
+                with self.assertRaises(TypeError if ('solver_mode' in route or 'implementation' in route) else ValueError):
                     factory(residual_check_order='adaptive', **route).fit(X, y)
         for bad in (None, False, 1, 'wrong'):
             for factory in (KernGDWD, KernGDWDCV):

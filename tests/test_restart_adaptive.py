@@ -44,7 +44,7 @@ class RestartAdaptiveTests(unittest.TestCase):
                         {'implementation':'reference'}, {'solver_mode':'legacy'}):
             with self.subTest(options=options), patch.object(KernGDWD,
                     '_compute_training_kernel', side_effect=AssertionError('premature work')):
-                with self.assertRaises(ValueError):
+                with self.assertRaises(TypeError if ('solver_mode' in options or 'implementation' in options) else ValueError):
                     KernGDWD(acceleration='restart', residual_check_order='adaptive',
                              **options).fit(self.X, self.y)
         values, vectors = np.linalg.eigh(self.K)

@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import numpy as np
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_array
@@ -25,9 +27,14 @@ class KernMD(KernelClfMixin, BaseEstimator):
         X, y = check_real_X_y(X, y, dtype='numeric')
         self.classes_ = np.unique(y)
         self.n_features_in_ = X.shape[1]
-        self._Xfit = X  # Store K so we can compute predictions
+        self.kernel_ = self.kernel
+        self.kernel_kws_ = deepcopy(self.kernel_kws)
+        # Precomputed prediction needs only a stable training row count.
+        # Other kernels need an owned feature basis for later predictions.
+        self._Xfit = (X.view() if self.kernel_ == 'precomputed'
+                      else X.copy(order='K'))
 
-        K = self._compute_kernel(X)
+        K = self._compute_kernel(self._Xfit)
 
         self.dual_coef_, self.intercept_ = \
             kern_md(K, y, naive_bayes=self.naive_bayes)

@@ -32,10 +32,11 @@ class DenseHelperEligibilityTests(unittest.TestCase):
                            max_iter=8, stopping='fixed', acceleration=None,
                            prediction_batch_size=3).fit(csr_matrix(cls.X), cls.y)
         cls.cases = []
-        modes = ('sklearn', 'norm_sum', 'guarded_sklearn_rel_v1', 'guarded_norm_sum_rel_v1')
+        modes = ('sklearn', 'norm_sum', 'guarded_sklearn_rel_v1', 'guarded_norm_sum_rel_v1',
+                 'guarded_sklearn_rel_v2', 'guarded_norm_sum_rel_v2')
         for mode in modes:
             cls.cases.append(dict(id=mode + '-ordinary', mode=mode, target=None, mutation=False))
-            target = (('pairwise', 'safe_sparse_dot') if mode in ('sklearn', 'guarded_sklearn_rel_v1')
+            target = (('pairwise', 'safe_sparse_dot') if mode in ('sklearn', 'guarded_sklearn_rel_v1', 'guarded_sklearn_rel_v2')
                       else ('rbf' if mode == 'norm_sum' else 'guarded', 'safe_sparse_dot'))
             for mutation in (False, True):
                 cls.cases.append(dict(id=mode + '-dot-' + str(mutation), mode=mode,
@@ -63,7 +64,7 @@ class DenseHelperEligibilityTests(unittest.TestCase):
     def test_helper_replacement_and_mutation_match_original_route(self):
         modules = dict(pairwise=pairwise, guarded=guarded, rbf=_rbf, extmath=extmath)
         coordinate = tuple(np.argwhere(self.X != 0)[0])
-        self.assertEqual(len(self.cases), 25)
+        self.assertEqual(len(self.cases), 41)
         for case in self.cases:
             with self.subTest(case=case['id']):
                 outcomes = []
@@ -120,7 +121,8 @@ class DenseHelperEligibilityTests(unittest.TestCase):
                     stack.enter_context(patch.object(module, 'safe_sparse_dot', wrapped))
                 importlib.reload(norms)
                 self.assertFalse(norms._DOT_SOURCE_OK)
-                for mode in ('sklearn', 'norm_sum', 'guarded_sklearn_rel_v1', 'guarded_norm_sum_rel_v1'):
+                for mode in ('sklearn', 'norm_sum', 'guarded_sklearn_rel_v1', 'guarded_norm_sum_rel_v1',
+                             'guarded_sklearn_rel_v2', 'guarded_norm_sum_rel_v2'):
                     with self.subTest(mode=mode):
                         self.assertIsNone(norms.prepare_norm_kernel(self.model(mode), self.Q, self.Q))
         finally:
@@ -138,7 +140,8 @@ class DenseHelperEligibilityTests(unittest.TestCase):
             with patch.object(guarded, 'guarded_rbf', wrapped):
                 importlib.reload(norms)
                 self.assertFalse(norms._GUARDED_SOURCE_OK)
-                for mode in ('guarded_sklearn_rel_v1', 'guarded_norm_sum_rel_v1'):
+                for mode in ('guarded_sklearn_rel_v1', 'guarded_norm_sum_rel_v1',
+                             'guarded_sklearn_rel_v2', 'guarded_norm_sum_rel_v2'):
                     with self.subTest(mode=mode):
                         self.assertIsNone(norms.prepare_norm_kernel(self.model(mode), self.Q, self.Q))
                 for mode in ('sklearn', 'norm_sum'):

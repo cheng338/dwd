@@ -1,9 +1,9 @@
 """Small numerical and recovery checks for the standalone tuning example."""
 from contextlib import ExitStack
 import copy
+import inspect
 import json
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -33,51 +33,12 @@ import _grid_report as grid_report
 from _cv_checkpoint import CheckpointError, stable, write_receipt
 
 
+from _isolated_cv_test_support import (
+    _fixture_oracle_is_loaded, run_isolated_test,
+)
+
 _ISOLATED_CHILD = False
-_ISOLATED_TEST_SCRIPT = r'''
-import importlib.util
-import json
-from pathlib import Path
-import sys
-import unittest
-
-sys.path[:] = json.loads(sys.argv[5])
-spec = importlib.util.spec_from_file_location('_isolated_resumable_cv_tests', sys.argv[2])
-module = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-module._ISOLATED_CHILD = True
-case = getattr(module, sys.argv[3])(sys.argv[4])
-result = unittest.TestResult()
-case.run(result)
-payload = {
-    'tests_run': result.testsRun,
-    'successful': result.wasSuccessful(),
-    'failures': [(str(test), detail) for test, detail in result.failures],
-    'errors': [(str(test), detail) for test, detail in result.errors],
-    'skipped': [(str(test), reason) for test, reason in result.skipped],
-    'expected_failures': [(str(test), detail) for test, detail in result.expectedFailures],
-    'unexpected_successes': [str(test) for test in result.unexpectedSuccesses],
-}
-Path(sys.argv[1]).write_text(json.dumps(payload, allow_nan=False), encoding='utf-8')
-raise SystemExit(0 if result.wasSuccessful() else 1)
-'''
-
-
-def _fixture_oracle_is_loaded():
-    # Other numerical tests intentionally import historical implementations
-    # under dwd.* aliases. A resumable run must reject that process; exercise
-    # this example in a fresh interpreter without relaxing its runtime guard.
-    for name, module in tuple(sys.modules.items()):
-        if not name.startswith('dwd.'):
-            continue
-        source = str(getattr(module, '__file__', '')).replace('\\', '/').lower()
-        if '/tests/fixtures/' in source:
-            return True
-    return False
-
-
-class _ReferenceResumeObserver:
+class _SpectralResumeObserver:
     """Observe actual initialized solves and fitted states without replacing them."""
 
     def __init__(self, case):
@@ -108,8 +69,11 @@ class _ReferenceResumeObserver:
         case, event, model = self.case, self.active, self.models[-1]
         case.assertIsNotNone(event, 'solver must belong to an observed fit')
         case.assertEqual(model.random_state, 83, 'seed parameter guard')
-        case.assertEqual(model.initialization, 'auto')
-        case.assertEqual(model.implementation, 'reference')
+        case.assertEqual(model.initialization, 'random')
+        case.assertNotIn('implementation', model.get_params())
+        case.assertEqual(model.backend, 'spectral')
+        case.assertIsNone(model.acceleration)
+        case.assertEqual(model.residual_check_order, 'refinement_first')
         initial = np.random.RandomState(83).normal(size=len(y))
         initial /= np.linalg.norm(initial)
         assert_array_equal(options['alpha_init'], initial, err_msg='initialization reset guard')
@@ -118,7 +82,7 @@ class _ReferenceResumeObserver:
         case.assertEqual(float(penalty), event['task'][2], 'solver candidate guard')
         case.assertEqual(options['max_iter'], 3)
         case.assertEqual(options['stopping'], 'fixed')
-        case.assertEqual(options['implementation'], 'reference')
+        case.assertEqual(options['implementation'], 'optimized')
         event.update(K=np.array(K, copy=True), signed_y=np.array(y, copy=True),
                      alpha_init=initial.copy(), offset_init=options['offset_init'])
         return self.original_solve(K, y, penalty, **options)
@@ -146,7 +110,7 @@ class _ReferenceResumeObserver:
         case.assertEqual(model.returned_iteration_, 3)
         case.assertEqual(model.termination_reason_, 'max_iter')
         case.assertEqual(model.backend_, 'spectral')
-        case.assertEqual(model.diagnostics_['implementation'], 'reference')
+        case.assertEqual(model.diagnostics_['implementation'], 'optimized')
         case.assertEqual(model.diagnostics_['positive_eigenvalues_discarded'], 0)
         case.assertFalse(model.diagnostics_['kernel_approximation_used'])
         key = (event['task'], event['K'].tobytes(order='C'))
@@ -170,63 +134,7 @@ class ResumableKernelCVTests(unittest.TestCase):
     def run(self, result=None):
         if _ISOLATED_CHILD or not _fixture_oracle_is_loaded():
             return super().run(result)
-        own_result = result is None
-        if own_result:
-            result = self.defaultTestResult()
-            result.startTestRun()
-        result.startTest(self)
-        try:
-            with tempfile.TemporaryDirectory(prefix='dwd-cv-isolated-') as directory:
-                receipt = Path(directory) / 'result.json'
-                process = subprocess.run(
-                    [sys.executable, '-B', '-X', 'utf8', '-c', _ISOLATED_TEST_SCRIPT,
-                     str(receipt), str(Path(__file__).resolve()),
-                     type(self).__name__, self._testMethodName, json.dumps(sys.path)],
-                    capture_output=True, text=True, encoding='utf-8', errors='replace',
-                    timeout=300, check=False)
-                if process.stdout:
-                    sys.stdout.write(process.stdout)
-                if process.stderr:
-                    sys.stderr.write(process.stderr)
-                output = '\n'.join(part for part in (process.stdout, process.stderr) if part)
-                if not receipt.is_file():
-                    raise RuntimeError('Isolated test produced no result receipt; exit '
-                                       + str(process.returncode) + '\n' + output)
-                child = json.loads(receipt.read_text(encoding='utf-8'))
-                if (child['tests_run'] != 1 or type(child['successful']) is not bool
-                        or process.returncode != (0 if child['successful'] else 1)):
-                    raise RuntimeError('Isolated test count or exit status is inconsistent: '
-                                       + repr(child) + '\n' + output)
-                bad = bool(child['failures'] or child['errors']
-                           or child['unexpected_successes'])
-                if child['successful'] == bad:
-                    raise RuntimeError('Isolated test outcome is inconsistent: '
-                                       + repr(child) + '\n' + output)
-                reported = False
-                for key, exception_type, report in (
-                        ('failures', AssertionError, result.addFailure),
-                        ('errors', RuntimeError, result.addError),
-                        ('expected_failures', AssertionError, result.addExpectedFailure)):
-                    for description, detail in child[key]:
-                        error = exception_type('Isolated ' + description + '\n' + detail
-                                               + ('\n' + output if output else ''))
-                        report(self, (exception_type, error, None))
-                        reported = True
-                for description, reason in child['skipped']:
-                    result.addSkip(self, description + ': ' + reason)
-                    reported = True
-                for description in child['unexpected_successes']:
-                    result.addUnexpectedSuccess(self)
-                    reported = True
-                if not reported:
-                    result.addSuccess(self)
-        except Exception:
-            result.addError(self, sys.exc_info())
-        finally:
-            result.stopTest(self)
-            if own_result:
-                result.stopTestRun()
-        return result
+        return run_isolated_test(self, result, module_path=__file__)
 
     def setUp(self):
         self.resources = ExitStack()
@@ -242,9 +150,9 @@ class ResumableKernelCVTests(unittest.TestCase):
         self.folds = list(StratifiedKFold(2, shuffle=True, random_state=71).split(
             self.X, self.y))
 
-    def model(self, implementation='optimized', **kwargs):
+    def model(self, backend='auto', **kwargs):
         values = dict(kernel='rbf', kernel_kws={'gamma': .12},
-                      implementation=implementation, initialization='zero',
+                      backend=backend, initialization='zero',
                       stopping='fixed', max_iter=3, random_state=23)
         values.update(kwargs)
         return KernGDWD(**values)
@@ -297,14 +205,14 @@ class ResumableKernelCVTests(unittest.TestCase):
                     self.assertTrue(np.isfinite(value))
                     self.assertGreaterEqual(value, 0.)
 
-    def test_serial_matches_original_cv_for_both_implementations(self):
-        for implementation in ('reference', 'optimized'):
-            with self.subTest(implementation=implementation):
-                model = self.model(implementation)
+    def test_serial_matches_original_cv_for_both_backends(self):
+        for backend in ('spectral', 'cholesky'):
+            with self.subTest(backend=backend):
+                model = self.model(backend)
                 original_params = copy.deepcopy(model.get_params())
                 expected = run_cv(model, self.X, self.y, self.params,
                                   cv=self.folds, refit_best=True)
-                actual = self.run_example(implementation, clf=model)
+                actual = self.run_example(backend, clf=model)
                 self.assert_scores_equal(actual, expected)
                 assert_allclose(actual['best_clf'].dual_coef_,
                                 expected[2].dual_coef_, rtol=0, atol=0)
@@ -501,16 +409,23 @@ class ResumableKernelCVTests(unittest.TestCase):
         first = self.run_example(scale=True)
         before = {path: path.read_bytes() for path in self.receipts()}
         self.assertEqual(len(before), 4)
-        original_fit = KernGDWD.fit
+        # Observe the real fit body without changing estimator provenance.
+        fit_code = inspect.unwrap(KernGDWD.fit).__code__
         fit_sizes = []
+        previous = sys.getprofile()
 
-        def observed(model, X, y, *args, **kwargs):
-            fit_sizes.append(len(y))
-            return original_fit(model, X, y, *args, **kwargs)
+        def observe(frame, event, result):
+            if event == 'call' and frame.f_code is fit_code:
+                fit_sizes.append(len(frame.f_locals['y']))
 
-        with patch.object(KernGDWD, 'fit', observed), patch.object(
-                example, '_fit_and_score', side_effect=AssertionError('replayed a fit')):
-            second = self.run_example(scale=True, resume=True)
+        try:
+            sys.setprofile(observe)
+            with patch.object(example, '_fit_and_score',
+                              side_effect=AssertionError('replayed a fit')):
+                second = self.run_example(scale=True, resume=True)
+        finally:
+            sys.setprofile(previous)
+        self.assertIs(sys.getprofile(), previous)
         self.assertEqual(fit_sizes, [len(self.y)])
         self.assertIsNot(first['best_clf'], second['best_clf'])
         assert_array_equal(first['best_clf'].dual_coef_, second['best_clf'].dual_coef_)
@@ -533,18 +448,25 @@ class ResumableKernelCVTests(unittest.TestCase):
         first_query = first['scaler'].transform(self.query)
         first_scores = first['best_clf'].decision_function(first_query)
         first_predictions = first['best_clf'].predict(first_query)
-        original_fit = KernGDWD.fit
+        # Observe the real fit body without changing estimator provenance.
+        fit_code = inspect.unwrap(KernGDWD.fit).__code__
         fit_sizes = []
+        previous = sys.getprofile()
 
-        def observed_fit(model, X, y, *args, **kwargs):
-            fit_sizes.append(len(y))
-            return original_fit(model, X, y, *args, **kwargs)
+        def observe(frame, event, result):
+            if event == 'call' and frame.f_code is fit_code:
+                fit_sizes.append(len(frame.f_locals['y']))
 
-        with patch.object(grid_report, 'summarize_grid',
-                          side_effect=RuntimeError('private reporting sentinel')) as failed, \
-                patch.object(example, '_fit_and_score', side_effect=AssertionError('CV rerun')), \
-                patch.object(KernGDWD, 'fit', observed_fit):
-            result = self.run_example(scale=True, resume=True)
+        try:
+            sys.setprofile(observe)
+            with patch.object(grid_report, 'summarize_grid',
+                              side_effect=RuntimeError('private reporting sentinel')) as failed, \
+                    patch.object(example, '_fit_and_score',
+                                 side_effect=AssertionError('CV rerun')):
+                result = self.run_example(scale=True, resume=True)
+        finally:
+            sys.setprofile(previous)
+        self.assertIs(sys.getprofile(), previous)
         self.assertEqual(failed.call_count, 1)
         self.assertEqual(fit_sizes, [len(self.y)])
         self.assertIsNot(result['best_clf'], first['best_clf'])
@@ -704,28 +626,28 @@ class ResumableKernelCVTests(unittest.TestCase):
                         self.run_example(name, clf=self.model(exact_recovery=changed_policy),
                                          refit_best=False, resume=True)
 
-    def test_reference_random_initialization_resumes_exactly_after_unpublished_fit(self):
+    def test_spectral_random_initialization_resumes_exactly_after_unpublished_fit(self):
         # Control native basis variation only for the exact-output assertion.
         # The companion below still performs every independent native solve.
-        self._check_reference_resume(fixed_basis=True)
+        self._check_spectral_resume(fixed_basis=True)
 
-    def test_reference_random_initialization_resume_with_independent_native_bases(self):
-        self._check_reference_resume(fixed_basis=False)
+    def test_spectral_random_initialization_resume_with_independent_native_bases(self):
+        self._check_spectral_resume(fixed_basis=False)
 
-    def test_reference_resume_detects_changed_initialization_seed(self):
+    def test_spectral_resume_detects_changed_initialization_seed(self):
         with self.assertRaisesRegex(AssertionError, 'initialization reset guard'):
-            self._check_reference_resume(fixed_basis=True, mutation='seed')
+            self._check_spectral_resume(fixed_basis=True, mutation='seed')
 
-    def test_reference_resume_detects_advancing_initialization_generator(self):
+    def test_spectral_resume_detects_advancing_initialization_generator(self):
         with self.assertRaisesRegex(AssertionError, 'initialization reset guard'):
-            self._check_reference_resume(fixed_basis=True, mutation='reset')
+            self._check_spectral_resume(fixed_basis=True, mutation='reset')
 
-    def test_reference_resume_detects_incorrect_work_accounting(self):
+    def test_spectral_resume_detects_incorrect_work_accounting(self):
         with self.assertRaisesRegex(AssertionError, 'work accounting guard'):
-            self._check_reference_resume(fixed_basis=False, mutation='accounting')
+            self._check_spectral_resume(fixed_basis=False, mutation='accounting')
 
-    def _check_reference_resume(self, *, fixed_basis, mutation=None):
-        observed = _ReferenceResumeObserver(self)
+    def _check_spectral_resume(self, *, fixed_basis, mutation=None):
+        observed = _SpectralResumeObserver(self)
         random_state = estimator_module.check_random_state
         shared_rng = np.random.RandomState(83)
         memo = None
@@ -748,7 +670,10 @@ class ResumableKernelCVTests(unittest.TestCase):
             stack.enter_context(patch.object(KernGDWD, 'fit', observe_fit))
             stack.enter_context(patch.object(solver_module, 'solve_kernel', observed.solve))
             stack.enter_context(patch.object(estimator_module, 'check_random_state', random_state_control))
-            model = self.model('reference', initialization='auto', random_state=83)
+            # Keep the original random, ordinary-MM spectral policies explicit
+            # while exercising the real public estimator and checkpoint hooks.
+            model = self.model('spectral', initialization='random', random_state=83,
+                               acceleration=None, residual_check_order='refinement_first')
             observed.phase = 'baseline'
             expected = run_cv(model, self.X, self.y, self.params, cv=self.folds, refit_best=True)
             observed.phase = 'uninterrupted'

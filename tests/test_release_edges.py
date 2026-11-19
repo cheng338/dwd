@@ -18,13 +18,13 @@ class FinalMathChecks(unittest.TestCase):
         self.y = np.resize([-1, 1], 20)
 
     def kernel(self, **kwargs):
-        parameters = dict(kernel="linear", solver_mode="schur", lambd=.1,
+        parameters = dict(kernel="linear", lambd=.1,
                           max_iter=8, obj_tol=0, random_state=42)
         parameters.update(kwargs)
         return KernGDWD(**parameters)
 
     def linear(self, **kwargs):
-        parameters = dict(solver_mode="schur", lambd=.1, max_iter=8,
+        parameters = dict(lambd=.1, max_iter=8,
                           obj_tol=0, random_state=42)
         parameters.update(kwargs)
         return GenDWD(**parameters)
@@ -49,8 +49,7 @@ class FinalMathChecks(unittest.TestCase):
         assert_allclose(low.intercept_, high.intercept_, rtol=1e-12, atol=1e-12)
 
     def test_corrected_low_level_linear_float32_promotion(self):
-        kwargs = dict(lambd=.1, random_state=9, max_iter=8, obj_tol=0,
-                      solver_mode="schur")
+        kwargs = dict(lambd=.1, random_state=9, max_iter=8, obj_tol=0)
         low = solve_gen_dwd(self.X32, self.y, **kwargs)
         high = solve_gen_dwd(self.X64, self.y, **kwargs)
         assert_allclose(low[0], high[0], rtol=1e-12, atol=1e-12)
@@ -70,15 +69,26 @@ class FinalMathChecks(unittest.TestCase):
                         fresh.decision_function(self.X64), rtol=1e-11, atol=1e-11)
 
     def test_kernel_mode_change_does_not_reuse_float32_legacy_gram(self):
-        cached = self.kernel(kernel="rbf", solver_mode="legacy").cv_init(self.X32)
-        cached.set_params(solver_mode="schur").fit(self.X32, self.y)
+        cached = self.kernel(kernel="rbf").cv_init(self.X64)
+        # Synthetic stale-cache state: do not execute retired preparation.
+        cached._cv_X = self.X32.copy()
+        cached._cv_geometry = 'incompatible_geometry'
+        cached._cv_K = np.full_like(cached._cv_K, np.nan)
+        self.assertFalse(cached._cv_cache_matches(self.X32))
+        cached.fit(self.X32, self.y)
         fresh = self.kernel(kernel="rbf").fit(self.X64, self.y)
         assert_allclose(cached.decision_function(self.X64),
                         fresh.decision_function(self.X64), rtol=1e-11, atol=1e-11)
 
     def test_linear_mode_change_does_not_reuse_float32_legacy_gram(self):
-        cached = self.linear(solver_mode="legacy").cv_init(self.X32)
-        cached.set_params(solver_mode="schur").fit(self.X32, self.y)
+        cached = self.linear().cv_init(self.X64)
+        # The incompatible cache must be ignored, including its unusable basis.
+        cached._P0_X = self.X32.copy()
+        cached._P0_geometry = 'incompatible_geometry'
+        cached._P0_eig = (np.full_like(cached._P0_eig[0], np.nan),
+                          np.full_like(cached._P0_eig[1], np.nan))
+        self.assertFalse(cached._cv_cache_matches(self.X32))
+        cached.fit(self.X32, self.y)
         fresh = self.linear().fit(self.X64, self.y)
         assert_allclose(cached.coef_, fresh.coef_, rtol=1e-12, atol=1e-12)
         assert_allclose(cached.intercept_, fresh.intercept_, rtol=1e-12, atol=1e-12)
@@ -100,7 +110,7 @@ class FinalMathChecks(unittest.TestCase):
         for q in (.5, 1., 3.5):
             with self.subTest(q=q):
                 result = solve_gen_kern_dwd(K, self.y, .1, q=q,
-                    random_state=42, max_iter=5, solver_mode="schur")
+                    random_state=42, max_iter=5)
                 self.assertEqual(result[3], 0.)
                 self.assertTrue(np.isfinite(result[2]).all())
 

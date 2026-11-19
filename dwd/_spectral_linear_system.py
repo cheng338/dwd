@@ -8,6 +8,7 @@ from time import perf_counter
 import numpy as np
 from scipy.linalg import LinAlgError
 from ._eigen import validated_eigh
+from ._psd_policy import spectral_psd_status
 from ._kernel_linear_system import KernelLinearSystem, _sum
 
 
@@ -17,7 +18,6 @@ class SpectralLinearSystem(KernelLinearSystem):
         self.mean = self.K.mean(axis=0)
         self.vectors = vectors
         self._equilibration = None
-        self._recovery_attempted = False
         self._recovery_next = 0
         self._active_recovery_attempt = None
         self.inverse = 1. / (values + shift)
@@ -106,10 +106,9 @@ class SpectralLinearSystem(KernelLinearSystem):
         (values, vectors), eigen_info = validated_eigh(self.K, drivers=(driver,), return_info=True)
         if values.shape != (self.n,) or not np.isfinite(values).all():
             raise FloatingPointError('Invalid fresh original-kernel eigenvalues.')
-        # Keep this threshold identical to _kernel_solver._check_spectrum;
-        # importing the solver here would introduce a circular dependency.
-        limit = 100 * np.finfo(float).eps * self.n * max(1., float(np.max(np.abs(values))))
-        if not np.isfinite(limit) or values.min() < -limit:
+        # Share initial admission policy without importing the solver.
+        accepted, limit = spectral_psd_status(values, self.n)
+        if not accepted:
             raise FloatingPointError('The fresh original-kernel spectrum fails the public PSD tolerance.')
         with np.errstate(over='raise', invalid='raise', divide='raise', under='ignore'):
             shifted = np.maximum(values, 0.) + self.shift
@@ -142,7 +141,6 @@ class SpectralLinearSystem(KernelLinearSystem):
 
     def _prepare_representation(self, kind, reason):
         self._release_action()
-        self._recovery_attempted = True
         started = perf_counter()
         failure = None
         try:

@@ -204,23 +204,44 @@ def adaptive_kernel_matvec(K, alpha):
 
     Absolute-value work is limited to at most 128 query rows at a time. Sparse
     duplicates count as separate terms in both the bound and expanded product.
+    Non-binary64 CSR data are converted in those bounded blocks, preserving
+    their stored order and using one representation for all three calculations.
     """
     K, alpha, sparse = _inputs(K, alpha)
-    with np.errstate(over='ignore', invalid='ignore', under='ignore'):
-        scores = np.asarray(K @ alpha, dtype=float).reshape(-1)
+    bounded_sparse_input = sparse and K.dtype != np.dtype(float)
+    if bounded_sparse_input:
+        scores = np.empty(K.shape[0], dtype=float)
+    else:
+        with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+            scores = np.asarray(K @ alpha, dtype=float).reshape(-1)
     magnitude = np.abs(alpha)
     coefficient_upper = None if sparse else _dense_l1_upper(magnitude)
     cheap_enabled = not sparse
     split_alpha = None
     batch_enabled = True
     eps = np.finfo(float).eps
-    eta = float(np.nextafter(0., 1.))
+    # Exact minimum binary64 subnormal; no NumPy arithmetic is needed.
+    eta = float.fromhex('0x1p-1074')
     for start in range(0, K.shape[0], 128):
         stop = min(start+128, K.shape[0])
+        sparse_values = None
         if sparse:
-            block = K[start:stop].astype(float, copy=True)
+            if bounded_sparse_input:
+                # Sparse astype can sum duplicates during a dtype change.
+                # The row slice owns its arrays; replacing only its data keeps
+                # stored contributions and index order without copying all K.
+                block = K[start:stop]
+                block.data = np.asarray(block.data, dtype=float)
+            else:
+                block = K[start:stop].astype(float, copy=True)
             if not np.isfinite(block.data).all():
                 raise FloatingPointError('Nonfinite query kernel values.')
+            if bounded_sparse_input:
+                with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+                    scores[start:stop] = np.asarray(block @ alpha, dtype=float).reshape(-1)
+                # Retain the same converted data for uncertain-row refinement.
+                # Only this private block temporarily points at absolute data.
+                sparse_values = block.data
             block.data = np.abs(block.data)
             terms = np.diff(block.indptr).astype(float)
         else:
@@ -253,6 +274,8 @@ def adaptive_kernel_matvec(K, alpha):
             absolute_sum = np.asarray(block @ magnitude).reshape(-1)
             upper_sum = np.nextafter(np.nextafter(absolute_sum+underflow, np.inf)/sum_denominator, np.inf)
             bound = np.nextafter(np.nextafter(gamma*upper_sum, np.inf)+underflow, np.inf)
+        if bounded_sparse_input:
+            block.data = sparse_values
         reliable = (np.isfinite(scores[start:stop]) & np.isfinite(bound)
                     & (denominator > 0) & (sum_denominator > 0)
                     & (absolute_sum >= 0) & (bound <= threshold))
@@ -267,6 +290,9 @@ def adaptive_kernel_matvec(K, alpha):
             continue
         for local in uncertain:
             index = start+int(local)
+            if bounded_sparse_input:
+                scores[index] = _expanded_row(block, alpha, True, int(local))
+                continue
             if not sparse and split_alpha is None:
                 # Prepare only when an accurate dense row is first needed.
                 with np.errstate(over='ignore', invalid='ignore', under='ignore'):

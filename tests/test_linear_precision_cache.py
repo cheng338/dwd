@@ -19,7 +19,7 @@ class LinearPrecisionCacheTests(unittest.TestCase):
                 def observed(model,features):
                     calls.append(features.shape)
                     return original(model,features)
-                model=GenDWD(solver_mode='schur',initialization='zero',stopping='fixed',max_iter=3)
+                model=GenDWD(initialization='zero',stopping='fixed',max_iter=3)
                 with patch.object(GenDWD,'cv_init',observed):
                     got=run_cv(model,data,y,{'lambd':[.1,.2]},cv=2,refit_best=True)
                 self.assertEqual(len(calls),2)
@@ -28,17 +28,19 @@ class LinearPrecisionCacheTests(unittest.TestCase):
                 assert_allclose(got[2].coef_,expected[2].coef_,atol=0,rtol=0)
                 assert_allclose(got[2].intercept_,expected[2].intercept_,atol=0,rtol=0)
 
-    def test_changed_values_rows_representation_and_legacy_dtype_still_invalidate(self):
+    def test_changed_values_rows_representation_and_historical_cache_invalidate(self):
         X=np.arange(24,dtype=np.float32).reshape(8,3)
-        model=GenDWD(solver_mode='schur').cv_init(X)
+        model=GenDWD().cv_init(X)
         self.assertTrue(model._cv_cache_matches(X.copy()))
         changed=X.copy();changed[0,0]=np.nextafter(np.float32(0),np.float32(1))
         self.assertFalse(model._cv_cache_matches(changed))
         self.assertFalse(model._cv_cache_matches(X[::-1]))
         self.assertFalse(model._cv_cache_matches(csr_matrix(X)))
-        legacy=GenDWD(solver_mode='legacy').cv_init(X)
-        self.assertTrue(legacy._cv_cache_matches(X))
-        self.assertFalse(legacy._cv_cache_matches(X.astype(np.float64)))
+        # Synthetic historical cache metadata, not a new legacy preparation.
+        model._P0_X = X.copy()
+        model._P0_geometry = 'incompatible_geometry'
+        self.assertFalse(model._cv_cache_matches(X))
+        self.assertFalse(model._cv_cache_matches(X.astype(np.float64)))
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

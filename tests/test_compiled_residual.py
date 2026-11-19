@@ -1,12 +1,12 @@
 """Optional compiled arithmetic, guards, fallback, and thread allocation.
 
-Core tests run independently of the Python native-screen version guard. On
-runtimes without the audited math.sumprod, exact rational bounds provide the
-reference instead; the whole numerical module is never skipped for Python 3.11.
+Core tests run independently of the Python native-screen version guard. The
+fixed Dekker model checks operation order; exact rational equations and bounds
+check accuracy on every build, including those with a different sumprod product.
+The whole numerical module is never skipped for Python 3.11.
 """
 from concurrent.futures import ThreadPoolExecutor
 import ctypes
-from fractions import Fraction
 import math
 import sys
 import types
@@ -17,6 +17,11 @@ import numpy as np
 
 import dwd._compiled_residual as compiled
 import dwd._native_residual as native
+
+from residual_arithmetic_reference import (
+    assert_compiled_values_bounded, assert_public_result_bounded,
+    dekker_sumprod, reference_rows,
+)
 
 
 UNAVAILABLE = 'Optional compiled residual extension unavailable.'
@@ -66,10 +71,6 @@ def _rows(K, x, rhs, shift, intercept, start=0, stop=None):
     return (status, *outputs)
 
 
-def _exact(value):
-    return Fraction.from_float(float(value))
-
-
 class CompiledAllocationTests(unittest.TestCase):
     """These integration decisions remain testable without the optional binary."""
     def test_worker_count_uses_smallest_blas_budget_and_cpu_and_rows(self):
@@ -79,7 +80,7 @@ class CompiledAllocationTests(unittest.TestCase):
                         {'user_api': 'openmp', 'num_threads': 1}], 3),
             (8192, 2, [{'user_api': 'blas', 'num_threads': 8}], 2),
             (256, 16, [{'user_api': 'blas', 'num_threads': 8}], 1),
-            (8192, None, [{'user_api': 'blas', 'num_threads': 8}], 1),
+            (8192, 1, [{'user_api': 'blas', 'num_threads': 8}], 1),
             (8192, 16, [], 1),
             (8192, 16, [{'user_api': 'blas', 'num_threads': 0},
                         {'user_api': 'openmp', 'num_threads': 32}], 1),
@@ -87,18 +88,18 @@ class CompiledAllocationTests(unittest.TestCase):
         for n, cpus, pools, expected in examples:
             with self.subTest(n=n, cpus=cpus, pools=pools), patch(
                     'threadpoolctl.threadpool_info', return_value=pools), patch.object(
-                    compiled.os, 'cpu_count', return_value=cpus):
+                    compiled, '_available_cpu_count', return_value=cpus):
                 self.assertEqual(compiled._worker_count(n), expected)
 
     def test_single_worker_sizes_do_not_inspect_thread_pools(self):
         with patch('threadpoolctl.threadpool_info', side_effect=AssertionError('unnecessary inspection')), patch.object(
-                compiled.os, 'cpu_count', side_effect=AssertionError('unnecessary CPU query')):
+                compiled, '_available_cpu_count', side_effect=AssertionError('unnecessary CPU query')):
             for n in (0, 1, 255, 256, 1023, 1024, 2047):
                 with self.subTest(n=n):
                     self.assertEqual(compiled._worker_count(n), 1)
         with patch('threadpoolctl.threadpool_info', return_value=[
                 {'user_api': 'blas', 'num_threads': 8}]) as pools, patch.object(
-                compiled.os, 'cpu_count', return_value=16):
+                compiled, '_available_cpu_count', return_value=16):
             self.assertEqual(compiled._worker_count(2048), 2)
             pools.assert_called_once_with()
 
@@ -123,7 +124,7 @@ class CompiledAllocationTests(unittest.TestCase):
                  {'user_api': 'blas', 'num_threads': 3}]
         with patch.object(compiled, '_ACCEL', types.SimpleNamespace(evaluate=evaluate)), patch(
                 'threadpoolctl.threadpool_info', return_value=pools), patch.object(
-                compiled.os, 'cpu_count', return_value=16):
+                compiled, '_available_cpu_count', return_value=16):
             result = compiled.compiled_values(K, x, rhs, .5, .25)
         self.assertIsNotNone(result)
         ordered = sorted(intervals)
@@ -161,33 +162,14 @@ class CompiledArithmeticTests(unittest.TestCase):
     def assert_core_reference(self, K, x, rhs, shift, s, outputs):
         scores, residual, maxima = outputs
         self.assert_bits_equal(maxima, np.max(abs(K), axis=1))
-        if native._scalar_supported():
-            expected_scores = np.array([math.sumprod(row.tolist(), x.tolist()) for row in K])
-            expected_residual = np.array([
-                math.sumprod(row.tolist() + [float(rhs[i]), -s, -shift],
-                             (-x).tolist() + [1., 1., float(x[i])])
-                for i, row in enumerate(K)
-            ])
-            self.assert_bits_equal(scores, expected_scores)
-            self.assert_bits_equal(residual, expected_residual)
-        else:
-            # CPython 3.11 has no sumprod. Test the compiled arithmetic against
-            # exact rational values and the same mathematical forward bounds.
-            n = len(x)
-            eta = native._gradual_underflow()
-            absolute_x = native._up(native._up(math.fsum(abs(x).tolist())))
-            sc = native._bound_constants(n, eta)
-            rc = native._bound_constants(n+3, eta)
-            for i, row in enumerate(K):
-                dot = sum((_exact(a)*_exact(b) for a, b in zip(row, x)), Fraction())
-                wanted = _exact(rhs[i]) - _exact(s) - _exact(shift)*_exact(x[i]) - dot
-                upper = native._mul(float(maxima[i]), absolute_x)
-                score_bound = native._error_bound(float(scores[i]), upper, sc)
-                total = native._add(native._add(native._add(upper, abs(float(rhs[i]))), abs(s)),
-                                    native._mul(abs(shift), abs(float(x[i]))))
-                residual_bound = native._error_bound(float(residual[i]), total, rc)
-                self.assertLessEqual(abs(_exact(scores[i])-dot), _exact(score_bound))
-                self.assertLessEqual(abs(_exact(residual[i])-wanted), _exact(residual_bound))
+        # A scalar build may use FMA products. Only the same fixed Dekker
+        # operation sequence has a bitwise contract with this core.
+        expected = reference_rows(dekker_sumprod, K, x, rhs, shift, s)
+        self.assert_bits_equal(scores, expected[0])
+        self.assert_bits_equal(residual, expected[1])
+        # Check accuracy independently and unconditionally, not only when
+        # builtin sumprod is absent. The model above alone is not an oracle.
+        assert_compiled_values_bounded(K, x, rhs, shift, s, scores, residual)
 
     def test_48_small_cases_and_input_immutability(self):
         count = 0
@@ -233,8 +215,8 @@ class CompiledArithmeticTests(unittest.TestCase):
                     accelerated = native.native_compensated_residual(*args)
                     self.assertIsNotNone(scalar)
                     self.assertIsNotNone(accelerated)
-                    for actual, expected in zip(accelerated, scalar):
-                        self.assert_bits_equal(actual, expected)
+                    for bounded in (accelerated, scalar):
+                        assert_public_result_bounded(*args, bounded)
                 else:
                     bounded = native.native_compensated_residual(K, .125, rhs, x, .3, -.25)
                     if native._native_supported():
@@ -383,8 +365,8 @@ class CompiledArithmeticTests(unittest.TestCase):
                 enabled = native.native_compensated_residual(*args)
                 self.assertIsNotNone(disabled)
                 self.assertIsNotNone(enabled)
-                for first, second in zip(disabled, enabled):
-                    self.assert_bits_equal(first, second)
+                for bounded in (disabled, enabled):
+                    assert_public_result_bounded(*args, bounded)
             else:
                 # The self-contained core can be qualified without sumprod.
                 bounded = native.native_compensated_residual(K, .125, rhs, x, .3, -.25)

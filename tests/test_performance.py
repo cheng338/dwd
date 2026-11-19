@@ -1,6 +1,4 @@
 """Numerical checks for optimizations and the explicitly selected solver repair."""
-import importlib.util
-from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -14,14 +12,6 @@ from dwd.gen_dwd import V, V_grad, V_, V_grad_
 from dwd.gen_kern_dwd import (KernGDWD, get_K_eig, solve_gen_kern_dwd,
                                get_step_implicit_P)
 from dwd.cv import run_cv, DoL2LoD
-
-
-def legacy_module(filename):
-    source = Path(__file__).resolve().parent / '_legacy' / filename
-    spec = importlib.util.spec_from_file_location('legacy_' + source.stem, source)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 class DWDPerformanceTests(unittest.TestCase):
@@ -43,20 +33,13 @@ class DWDPerformanceTests(unittest.TestCase):
             self.assertAlmostEqual(float(V_grad(2., q=q)), V_grad_(2., q=q))
         assert_allclose(V(np.array([0, 2])), [1., .125])
 
-    def test_legacy_full_objective_trajectory_matches_compat2(self):
-        old = legacy_module('gen_kern_dwd.py')
-        old_loss = legacy_module('gen_dwd.py')
-        old.V, old.V_grad = old_loss.V, old_loss.V_grad
+    def test_retired_kernel_solver_refuses_historical_parameter_cases(self):
         for q, penalty in ((1., .1), (.5, .02), (2.3, 1.)):
             args = dict(K=self.K, y=self.y, q=q, lambd=penalty,
                         alpha_init=self.alpha, offset_init=.04,
                         obj_tol=0., max_iter=45, K_eig=self.eig)
-            before = old.solve_gen_kern_dwd(**args)
-            after = solve_gen_kern_dwd(**args, solver_mode='legacy')
-            for a, b in zip(before, after):
-                assert_allclose(a, b, rtol=1e-11, atol=1e-12)
-            assert_array_equal(self.K @ before[0] + before[1] > 0,
-                               self.K @ after[0] + after[1] > 0)
+            with self.assertRaisesRegex(TypeError, 'solver_mode'):
+                solve_gen_kern_dwd(**args, solver_mode='legacy')
 
     def test_schur_step_agrees_with_independent_augmented_solve(self):
         n, q, penalty = len(self.y), 1.3, .07
@@ -69,7 +52,7 @@ class DWDPerformanceTests(unittest.TestCase):
         g = 1. / (n - ones @ self.K @ v)
         got_a, got_b = get_step_implicit_P(
             self.K, self.y, q, penalty, self.alpha, .04, U, lam,
-            lam * (lam + shift), v, g, solver_mode='schur')
+            lam * (lam + shift), v, g)
         z = self.y * np.array([V_grad_(u, q=q) for u in
                                self.y * (self.K @ self.alpha + .04)]) / n
         gamma = np.r_[z.sum(), self.K @ z + 2 * penalty * self.K @ self.alpha]
@@ -80,8 +63,7 @@ class DWDPerformanceTests(unittest.TestCase):
 
     def test_precomputed_fit_reproducibility_diagnostics_and_cache(self):
         model = KernGDWD(kernel='rbf', kernel_kws={'gamma': .15},
-                         random_state=19, max_iter=120, obj_tol=1e-8,
-                         solver_mode='schur')
+                         random_state=19, max_iter=120, obj_tol=1e-8)
         # The explicit K in this test intentionally adds a diagonal ridge.
         # Scores use K directly so training-kernel semantics stay identical.
         a = clone(model).fit(self.X, self.y, K=self.K, K_eig=self.eig)

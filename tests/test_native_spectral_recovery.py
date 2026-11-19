@@ -124,7 +124,7 @@ class NativeSpectralRecoveryTests(unittest.TestCase):
         self.assertLess(info['minimum_eigenvalue'], 0.)
         self.assertEqual(info['negative_roundoff_eigenvalues_clipped'], 1)
         self.assertEqual(info['positive_eigenvalues_retained'], 3)
-        limit = kernel._check_spectrum(system.K.diagonal(), 4, system.shift)
+        limit = kernel._check_spectrum(system.K.diagonal(), 4)
         self.assertEqual(info['psd_tolerance'], limit)
         assert_array_equal(inverse, 1. / (np.array([0., 1., 2., 3.]) + .2))
         assert_array_equal(system.K.diagonal(), [-np.finfo(float).eps, 1., 2., 3.])
@@ -136,7 +136,7 @@ class NativeSpectralRecoveryTests(unittest.TestCase):
         for negative in (-2 * limit, -.1, -.3):
             system.K = np.diag([negative, 1., 2., 3.])
             with self.assertRaisesRegex(ValueError, 'positive semidefinite'):
-                kernel._check_spectrum(system.K.diagonal(), 4, system.shift)
+                kernel._check_spectrum(system.K.diagonal(), 4)
             with self.assertRaisesRegex(FloatingPointError, 'PSD tolerance'):
                 system._build_original('evx')
 

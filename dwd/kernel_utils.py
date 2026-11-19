@@ -8,7 +8,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils import check_array
 from dwd._fit_state import fit_with_cleanup
 from dwd._sparse_features import (canonical_sparse_features, promote_sparse_features,
-                                  checked_prediction_basis)
+                                  checked_prediction_basis, promote_cosine_query,
+                                  promote_kernel_query, prepare_laplacian_features)
 
 _PREDICTION_BATCH_DEFAULT = object()
 
@@ -17,8 +18,13 @@ class KernelClfMixin(ClassifierMixin):
     """
     Mixin for kernel classifiers.
     """
+    # Current estimator capability, independent of constructor configuration.
+    # KernMD retains numeric input; corrected DWD overrides this with float64.
+    _prediction_input_dtype = 'numeric'
+
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()
+        tags.classifier_tags.multi_class = False
         tags.input_tags.pairwise = getattr(self, 'kernel', None) == 'precomputed'
         return tags
 
@@ -27,13 +33,8 @@ class KernelClfMixin(ClassifierMixin):
     #     self.kernel = kernel
     #     self.kernel_kws = kernel_kws
 
-    def fit(self, X, y, sample_weights=None):
-
-        # the fit function needs to set the following
-        self.classes_ = np.unique(y)
-        self.__Xfit = X
-        self.intercept_ = None
-        self.dual_coef_ = None
+    def fit(self, X, y):
+        """Subclasses must implement fitting and establish their fitted state."""
         raise NotImplementedError
 
     def _compute_kernel(self, X):
@@ -89,16 +90,33 @@ class KernelClfMixin(ClassifierMixin):
                 else:
                     basis = canonical_sparse_features(basis)
                 X = basis if X is self._Xfit else canonical_sparse_features(X)
+            elif kernel == 'cosine':
+                # Historical duplicate bases can encode an incorrect cosine
+                # Gram matrix; query normalization cannot repair that fit.
+                basis = checked_prediction_basis(basis, kernel_name='cosine')
+                X = (basis if X is self._Xfit else
+                     canonical_sparse_features(promote_cosine_query(X, basis)))
+            elif kernel == 'laplacian':
+                # sklearn's sparse Manhattan distance canonicalizes CSR in
+                # place. Protect both operands while retaining its arithmetic.
+                basis = prepare_laplacian_features(basis)
+                X = (basis if X is self._Xfit else
+                     prepare_laplacian_features(X))
             mode = getattr(self, 'kernel_computation_', None)
-            if kernel == 'rbf' and mode in ('guarded_sklearn_rel_v1', 'guarded_norm_sum_rel_v1'):
+            if kernel == 'rbf' and mode in ('guarded_sklearn_rel_v1', 'guarded_norm_sum_rel_v1',
+                                          'guarded_sklearn_rel_v2', 'guarded_norm_sum_rel_v2'):
                 from ._prediction_norms import standard_kernel_sources_ok
                 if standard_kernel_sources_ok():
                     from ._guarded_rbf import guarded_rbf
+                    if mode in ('guarded_sklearn_rel_v2', 'guarded_norm_sum_rel_v2'):
+                        return guarded_rbf(basis, X, gamma=(kernel_kws or {}).get('gamma'),
+                                           mode='norm_sum' if mode == 'guarded_norm_sum_rel_v2' else 'sklearn',
+                                           self_kernel=X is basis, preserve_errors=True)
                     return guarded_rbf(basis, X, gamma=(kernel_kws or {}).get('gamma'),
                                        mode='norm_sum' if mode == 'guarded_norm_sum_rel_v1' else 'sklearn',
                                        self_kernel=X is basis)
             if (kernel == 'rbf' and
-                    mode in ('norm_sum', 'guarded_norm_sum_rel_v1')):
+                    mode in ('norm_sum', 'guarded_norm_sum_rel_v1', 'guarded_norm_sum_rel_v2')):
                 from ._rbf import norm_sum_rbf
                 return norm_sum_rbf(
                     basis, X, gamma=(kernel_kws or {}).get('gamma'),
@@ -130,9 +148,13 @@ class KernelClfMixin(ClassifierMixin):
 
         check_is_fitted(self, ['dual_coef_', 'intercept_', 'classes_', '_Xfit'])
         original_X = X
-        X = promote_sparse_features(X, force_float64=getattr(self, 'solver_mode', None) == 'schur')
-        X = check_array(X, dtype=np.float64 if getattr(self, 'solver_mode', None) == 'schur'
-                        else 'numeric', accept_sparse='csr')
+        kernel = getattr(self, 'kernel_', self.kernel)
+        if kernel == 'cosine':
+            X = promote_cosine_query(X, self._Xfit)
+        elif isinstance(kernel, str) and not callable(kernel) and kernel != 'precomputed':
+            X = promote_kernel_query(X, self._Xfit)
+        X = promote_sparse_features(X, force_float64=self._prediction_input_dtype == np.float64)
+        X = check_array(X, dtype=self._prediction_input_dtype, accept_sparse='csr')
         if getattr(self, 'kernel_', self.kernel) != 'precomputed' and X.shape[1] != self._Xfit.shape[1]:
             raise ValueError('Feature count differs from training data.')
         batch_size = (getattr(self, 'prediction_batch_size', None)
@@ -144,6 +166,8 @@ class KernelClfMixin(ClassifierMixin):
         if batch_size is None or batch_size >= X.shape[0]:
             K = self._compute_kernel(X)
             scores = self._kernel_decision_product(K)
+            if not np.isfinite(scores).all():
+                raise FloatingPointError('Nonfinite kernel decision values.')
         else:
             # Bound the query kernel allocation; training coefficients stay fixed.
             scores = np.empty((X.shape[0], self.dual_coef_.shape[0]), dtype=float)
@@ -154,7 +178,7 @@ class KernelClfMixin(ClassifierMixin):
                 direct_kernel = _direct_prediction_kernel(self)
             prepared_norm_kernel = None
             if direct_kernel is None:
-                from ._prediction_norms import prepare_norm_kernel
+                from ._prediction_norms import prepare_public_norm_kernel as prepare_norm_kernel
                 prepared_norm_kernel = prepare_norm_kernel(self, X, original_X)
             for start in range(0, X.shape[0], batch_size):
                 stop = min(start + batch_size, X.shape[0])
@@ -166,6 +190,8 @@ class KernelClfMixin(ClassifierMixin):
                 else:
                     K = self._compute_kernel(query)
                 scores[start:stop] = self._kernel_decision_product(K)
+                if not np.isfinite(scores[start:stop]).all():
+                    raise FloatingPointError('Nonfinite kernel decision values.')
                 del K
         return scores.ravel() if scores.shape[1] == 1 else scores
 
@@ -268,7 +294,13 @@ class KernelScaler(TransformerMixin, BaseEstimator):
         K : numpy array of shape (n_samples, n_samples)
             Kernel matrix with the same square shape and training-row order as in fit.
         copy : boolean, optional, default True
-            Set to False to perform inplace computation.
+            If True, compute on a copy and preserve the supplied array,
+            including when scaling raises. If False, reuse compatible writable
+            storage when possible; dtype conversion may still allocate.
+            In-place scaling has no rollback: an error can leave K and arrays
+            sharing its storage modified, possibly with nonfinite values.
+            Use True when the original must survive a failed transform, for
+            read-only input, or for internally overlapping array views.
         Returns
         -------
         K_new : numpy array of shape (n_samples, n_samples)

@@ -75,7 +75,8 @@ the version literal in `__init__.py`; the sole test difference is its matching
 version assertion. These are source timing measurements, not actual-wheel timing.
 The measured receipt is
 `whole-pipeline-final-prototype.json`, with independent exact-byte and hash review
-in `whole-pipeline-verification.json` in the retained performance evidence.
+in `whole-pipeline-verification.json`. Both files belong to a separate historical
+measurement archive.
 
 Earlier saved-query component profiles use fixed kernel/alpha arrays and exclude
 kernel construction. Their weak case uses historical coefficients on preserved
@@ -87,7 +88,8 @@ source versions and runtime attribution.
 
 ## Script, CV and runtime boundaries
 
-The script controls use AST-extracted original class bodies on 72 synthetic rows;
+The external scripts used in this comparison are separate from the packaged
+examples. The script controls use AST-extracted original class bodies on 72 synthetic rows;
 they do not import the data loaders or run either MNIST main. Original `binary.py`
 still has a classifier-tag/extra-Pipeline fitted-state limitation, and both original
 ensembles couple subset sampling to global RNG and treat M=1 differently.

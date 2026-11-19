@@ -174,3 +174,50 @@ done:
     free(terms);
     return status;
 }
+
+/* Joint affine order: all high terms, all low terms, then the intercept.
+ * This separate entry leaves the existing dense score operation unchanged.
+ */
+int dwd_expanded_affine_score_rows(const double *rows, size_t count, size_t width,
+    const double *alpha, const double *bm, const int32_t *be,
+    const double *bh, const double *bl, double *output, double b)
+{
+    if (!rows || !alpha || !bm || !be || !bh || !bl || !output ||
+        count < 1 || count > 8 || width < 1 || width > ((size_t)1 << 20))
+        return ARGUMENT;
+    if (!supported_arithmetic()) return ARITHMETIC_MODE;
+    if (!isfinite(b)) return NONFINITE;
+    for (size_t j = 0; j < width; ++j) {
+        if (!isfinite(alpha[j]) || !isfinite(bm[j]) ||
+            !isfinite(bh[j]) || !isfinite(bl[j]) || be[j] < -1073 || be[j] > 1024)
+            return NONFINITE;
+    }
+    double *terms = (double *)malloc((2 * width + 1) * sizeof(double));
+    if (!terms) return MEMORY;
+    int status = OK;
+    for (size_t i = 0; i < count; ++i) {
+        for (size_t j = 0; j < width; ++j) {
+            double a = rows[i * width + j];
+            if (!isfinite(a)) { status = NONFINITE; goto done; }
+            int ae;
+            double am = exact_frexp(a, &ae);
+            double ca = 134217729.0 * am;
+            double ah = ca - (ca - am);
+            double al = am - ah;
+            double high = am * bm[j];
+            double low = ((ah * bh[j] - high) + ah * bl[j] + al * bh[j]) + al * bl[j];
+            int exponent = ae + be[j];
+            high = exact_ldexp(high, exponent);
+            low = exact_ldexp(low, exponent);
+            if (!isfinite(high) || !isfinite(low)) { status = NONFINITE; goto done; }
+            terms[j] = high;
+            terms[width + j] = low;
+        }
+        terms[2 * width] = b;
+        status = finite_fsum(terms, 2 * width + 1, &output[i]);
+        if (status != OK) goto done;
+    }
+done:
+    free(terms);
+    return status;
+}

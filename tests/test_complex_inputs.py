@@ -40,9 +40,9 @@ class ComplexInputTests(unittest.TestCase):
         self.y = np.array([-1, 1])
 
     def routes(self):
-        for mode in ('schur', 'legacy'):
-            yield GenDWD(max_iter=0, solver_mode=mode), self.X, 'beta_init', np.array([.1])
-            yield KernGDWD(kernel='precomputed', max_iter=0, solver_mode=mode), self.K, 'alpha_init', np.array([.1, -.1])
+        for mode in ('schur',):
+            yield GenDWD(max_iter=0), self.X, 'beta_init', np.array([.1])
+            yield KernGDWD(kernel='precomputed', max_iter=0), self.K, 'alpha_init', np.array([.1, -.1])
 
     def assert_rejected(self, action, pattern='real|Complex'):
         with warnings.catch_warnings(record=True) as caught:
@@ -65,7 +65,7 @@ class ComplexInputTests(unittest.TestCase):
             for model, data, name, initial in self.routes():
                 for offset in forms:
                     for previous in (False, True):
-                        with self.subTest(mode=model.solver_mode, model=type(model).__name__,
+                        with self.subTest(model=type(model).__name__,
                                           value=repr(offset), previous=previous):
                             if previous:
                                 model.fit(data, self.y, **{name: initial})
@@ -76,22 +76,22 @@ class ComplexInputTests(unittest.TestCase):
     def test_object_wrapped_complex_coefficients_reject_without_casting(self):
         for model, data, name, initial in self.routes():
             for invalid in complex_arrays(initial):
-                with self.subTest(mode=model.solver_mode, model=type(model).__name__, value=repr(invalid)):
+                with self.subTest(model=type(model).__name__, value=repr(invalid)):
                     model.fit(data, self.y, **{name: initial})
                     self.assert_rejected(lambda: model.fit(data, self.y, **{name: invalid}), name + '.*real')
                     self.assert_unfitted(model, data)
 
     def test_direct_solver_initial_values_reject_too(self):
-        for mode in ('schur', 'legacy'):
+        for mode in ('schur',):
             calls = (
-                lambda **kw: solve_gen_dwd(self.X, self.y, 1., max_iter=0, solver_mode=mode, **kw),
-                lambda **kw: solve_gen_kern_dwd(self.K, self.y, 1., max_iter=0, solver_mode=mode, **kw),
+                lambda **kw: solve_gen_dwd(self.X, self.y, 1., max_iter=0, **kw),
+                lambda **kw: solve_gen_kern_dwd(self.K, self.y, 1., max_iter=0, **kw),
             )
             for call in calls:
                 self.assert_rejected(lambda: call(offset_init=np.complex128(1+2j)), 'offset_init.*real')
         for name in ('lambd', 'q', 'obj_tol'):
             for value in (1+0j, np.complex128(1+2j)):
-                kwargs = dict(lambd=1., max_iter=0, solver_mode='legacy')
+                kwargs = dict(lambd=1., max_iter=0)
                 kwargs[name] = value
                 self.assert_rejected(lambda: solve_gen_kern_dwd(self.K, self.y, **kwargs), name + '.*real')
 
@@ -102,7 +102,7 @@ class ComplexInputTests(unittest.TestCase):
                 for model, data, name, initial in self.routes():
                     invalid = initial.astype(object)
                     invalid[-1] = value
-                    with self.subTest(depth=depth, imaginary=imaginary, model=type(model).__name__, mode=model.solver_mode):
+                    with self.subTest(depth=depth, imaginary=imaginary, model=type(model).__name__):
                         self.assert_rejected(lambda: model.fit(data, self.y, **{name: invalid}), name + '.*real')
                         self.assert_rejected(lambda: model.fit(data, self.y, offset_init=value), 'offset_init.*real')
 

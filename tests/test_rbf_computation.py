@@ -11,6 +11,7 @@ from sklearn.metrics.pairwise import pairwise_kernels
 from sklearn.model_selection import StratifiedKFold
 
 from dwd._direct_rbf import accurate_rbf
+from dwd._guarded_rbf import guarded_rbf
 from dwd.cv import run_cv
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
 from dwd.kernel_utils import KernelClfMixin
@@ -47,9 +48,10 @@ class RBFComputationTests(unittest.TestCase):
                 np.testing.assert_array_equal(implicit.intercept_, explicit.intercept_)
                 np.testing.assert_array_equal(implicit.decision_function(features), explicit.decision_function(features))
                 implicit.cv_init(features)
-            self.assertEqual(implicit.kernel_computation_, 'guarded_sklearn_rel_v1')
+            self.assertEqual(implicit.kernel_computation_, 'guarded_norm_sum_rel_v2')
             np.testing.assert_array_equal(implicit._cv_K,
-                                          pairwise_kernels(features, features, metric='rbf', gamma=.3))
+                guarded_rbf(implicit._cv_X, implicit._cv_X, gamma=.3,
+                            mode='norm_sum', self_kernel=True, preserve_errors=True))
 
     def test_direct_fitted_policy_is_used_for_queries_and_validation(self):
         for features in (self.X, csr_matrix(self.X)):
@@ -87,12 +89,24 @@ class RBFComputationTests(unittest.TestCase):
         del model.__dict__['_cv_rbf_computation']
         restored = pickle.loads(pickle.dumps(model))
         self.assertEqual(restored.rbf_computation, 'standard')
-        self.assertTrue(restored._cv_cache_matches(self.X))
+        self.assertFalse(restored._cv_cache_matches(self.X))
+        # Loading preserves the historical predictor; a new fit selects the new
+        # qualified construction rather than relabelling its old preparation.
         np.testing.assert_array_equal(restored.decision_function(self.X.copy()), expected)
         with patch('dwd._direct_rbf.accurate_rbf', side_effect=AssertionError('Unexpected direct RBF')):
             restored.fit(self.X, self.y)
-        self.assertEqual(restored.kernel_computation_, 'norm_sum')
-        np.testing.assert_array_equal(restored.decision_function(self.X.copy()), expected)
+        self.assertEqual(restored.kernel_computation_, 'guarded_norm_sum_rel_v2')
+        self.assertEqual(restored.kernel_self_construction_, 'norm_first_v1')
+        reference = guarded_rbf(restored._Xfit, restored._Xfit, gamma=.3,
+                                mode='norm_sum', self_kernel=True, preserve_errors=True)
+        np.testing.assert_array_equal(restored._compute_kernel(restored._Xfit), reference)
+        # fit rejects but need not overwrite the stale private CV cache.
+        self.assertFalse(restored._cv_cache_matches(self.X))
+        restored.cv_init(self.X)
+        self.assertEqual(restored._cv_rbf_self_generation, 'norm_first_v1')
+        self.assertEqual(restored._cv_kernel_computation, 'guarded_norm_sum_rel_v2')
+        self.assertTrue(restored._cv_cache_matches(self.X))
+        np.testing.assert_array_equal(restored._cv_K, reference)
 
     def test_cv_cache_separates_policies_in_both_directions(self):
         model = self.estimator().cv_init(self.X)
@@ -143,7 +157,7 @@ class RBFComputationTests(unittest.TestCase):
         ]
         for options in unsupported:
             for method in ('fit', 'cv_init'):
-                with self.subTest(options=options, method=method), self.assertRaises(ValueError):
+                with self.subTest(options=options, method=method), self.assertRaises(TypeError if 'solver_mode' in options else ValueError):
                     model = self.estimator(rbf_computation='direct', **options)
                     model.fit(self.X, self.y) if method == 'fit' else model.cv_init(self.X)
         with self.assertRaises(ValueError):

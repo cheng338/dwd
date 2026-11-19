@@ -11,6 +11,7 @@ from threadpoolctl import threadpool_limits, threadpool_info
 
 import dwd._eigen as eigen
 from dwd.gen_kern_dwd import KernGDWD
+from _kernel_reference import kernel_route
 
 
 class NativeEigenRuntimeTests(unittest.TestCase):
@@ -104,8 +105,8 @@ class NativeEigenRuntimeTests(unittest.TestCase):
                      # Match the reference ordinary-MM trajectory explicitly.
                      max_iter=4,stopping='fixed',initialization='zero',acceleration=None)
         with patch.object(subprocess,'Popen',side_effect=AssertionError('no child process')):
-            reference=KernGDWD(implementation='reference',**options).fit(X,y)
-            optimized=KernGDWD(implementation='optimized',**options).fit(X,y)
+            reference=kernel_route(implementation='reference',**options).fit(X,y)
+            optimized=KernGDWD(**options).fit(X,y)
         assert_allclose(reference.decision_function(X),optimized.decision_function(X),atol=2e-8,rtol=2e-8)
         assert_allclose(reference.objective_history_,optimized.objective_history_,atol=2e-10,rtol=2e-10)
         info=reference.diagnostics_['eigendecomposition_validation']

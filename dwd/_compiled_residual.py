@@ -1,12 +1,15 @@
 """Optional compiled row arithmetic; numerical acceptance remains in Python."""
 from concurrent.futures import ThreadPoolExecutor, wait
-import os
 from threading import Event
 from types import BuiltinFunctionType
+from ._residual_cpu import available_cpu_count as _available_cpu_count
 from ._residual_worker_scope import executor_for_call, retire_for_serial_call
-from ._residual_startup_cleanup import drain_started_before_registration
+from ._residual_startup_cleanup import drain_started_before_registration, publish_cancellation
+from ._cleanup_diagnostics import (capture_exception_state, note_cleanup_failure,
+                                   note_cleanup_receipt, reraise_preserving)
 
 _DEFAULT_EXECUTOR = ThreadPoolExecutor
+_DEFAULT_EXECUTOR_FOR_CALL = executor_for_call
 
 import numpy as np
 
@@ -36,7 +39,7 @@ def _chunk_rows(n):
 
 
 def _worker_count(n):
-    """Respect the caller's active native-library thread budget."""
+    """Respect the active BLAS budget, observed CPU cap and row budget."""
     # Fewer than 2048 rows cannot use two workers under the row budget.
     # Avoid enumerating loaded BLAS libraries for every small residual check.
     if n < 2048:
@@ -45,7 +48,9 @@ def _worker_count(n):
     budgets = [int(pool['num_threads']) for pool in threadpool_info()
                if pool.get('user_api') == 'blas' and pool.get('num_threads', 0) > 0]
     budget = min(budgets) if budgets else 1
-    return max(1, min(budget, os.cpu_count() or 1, n // 1024))
+    if budget <= 1:
+        return 1
+    return max(1, min(budget, _available_cpu_count(), n // 1024))
 
 
 def compiled_values(K, x, rhs, shift, intercept):
@@ -66,6 +71,9 @@ def _compiled_values_or_refusal(K, x, rhs, shift, intercept):
     """
     # The scalar route has less setup overhead for tiny vectors.
     if _ACCEL is None or len(x) < 8:
+        return None
+    # An imported optional module may not expose its evaluator.
+    if getattr(_ACCEL, "evaluate", None) is None:
         return None
     n = len(x)
     scores, residual, maxima = np.empty(n), np.empty(n), np.empty(n)
@@ -105,6 +113,7 @@ def _compiled_values_or_refusal(K, x, rhs, shift, intercept):
         statuses = [evaluate(0)]
     else:
         primary_error = None
+        primary_state = None
         try:
             with executor_for_call(workers, ThreadPoolExecutor, _DEFAULT_EXECUTOR,
                                    type(shift) is float and type(intercept) is float and
@@ -121,21 +130,30 @@ def _compiled_values_or_refusal(K, x, rhs, shift, intercept):
                 except BaseException as error:
                     # Stop new native chunks before shutdown joins the workers.
                     # Preserve the original exception and discard all outputs.
-                    cancelled.set()
                     primary_error = error
+                    primary_state = capture_exception_state(error)
+                    publish_cancellation(cancelled)
+                    # Exact default pools are drained once by their owning
+                    # context, while omitted-worker evidence is still present.
+                    if (type(executor) is _DEFAULT_EXECUTOR
+                            and ThreadPoolExecutor is _DEFAULT_EXECUTOR
+                            and executor_for_call is _DEFAULT_EXECUTOR_FOR_CALL):
+                        raise
                     try:
                         cleanup = drain_started_before_registration(executor, error)
-                        error.add_note('Interrupted-start recovery: ' + repr(cleanup))
                     except BaseException as cleanup_error:
-                        error.add_note('Startup cleanup failed; worker drain is not established. '
-                                       'See the chained cleanup error.')
-                        raise error from cleanup_error
+                        if cleanup_error is not error:
+                            note_cleanup_failure(error, cleanup_error,
+                                'Startup cleanup failed; worker drain is not established.')
+                        reraise_preserving(error, primary_state)
+                    note_cleanup_receipt(error, cleanup, source='startup_only')
                     raise
         except BaseException as context_error:
-            if primary_error is not None and context_error is not primary_error:
-                primary_error.add_note('Executor context shutdown also failed; final drain is not '
-                                       'established. See the chained context error.')
-                raise primary_error from context_error
+            if primary_error is not None:
+                if context_error is not primary_error:
+                    note_cleanup_failure(primary_error, context_error,
+                        'Executor cleanup/context exit failed; final drain is not established.')
+                reraise_preserving(primary_error, primary_state)
             raise
     # Join every worker and propagate exceptions before interpreting refusal.
     if any(status is _COMPILED_DOMAIN_REFUSAL for status in statuses):

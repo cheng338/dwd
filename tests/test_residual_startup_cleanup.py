@@ -13,11 +13,29 @@ import sys
 import psutil
 import pytest
 
+from _residual_probe_python import probe_python
+
+
+def test_probe_preserves_python_prefix_and_direct_parent():
+    executable, environment = probe_python()
+    code = ("import json, os, sys; "
+            "print(json.dumps([sys.prefix, sys.executable, os.getppid()]))")
+    result = subprocess.run(
+        [executable, "-I", "-B", "-c", code], env=environment,
+        capture_output=True, text=True, check=True, timeout=20,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    prefix, interpreter, parent = json.loads(result.stdout)
+    assert Path(prefix) == Path(sys.prefix)
+    assert Path(interpreter) == Path(sys.executable)
+    assert parent == os.getpid()
+
 
 def test_supported_cpython_startup_capability():
     from dwd import _residual_startup_cleanup as cleanup
 
-    if sys.implementation.name == "cpython" and (3, 11) <= sys.version_info[:2] <= (3, 14):
+    if (sys.implementation.name == "cpython" and sys.version_info[0] == 3
+            and sys.version_info[:2] >= (3, 11)):
         assert cleanup._qualified_wait_line() is not None
 
 
@@ -30,17 +48,12 @@ def test_interrupted_native_start_drains_owned_worker_process(mode):
         pytest.skip("Runtime does not expose a qualified CPython startup capability")
     if compiled._ACCEL is None:
         pytest.skip("Optional native residual extension is unavailable")
-    # Windows venv redirectors spawn another process. Use the same interpreter's
-    # base executable so Popen owns the process whose native threads we inspect;
-    # the explicit module paths below preserve this test environment's packages.
-    executable = getattr(sys, "_base_executable", None) or sys.executable
+    executable, environment = probe_python()
     command = [executable, "-B", str(Path(__file__).resolve()), "--startup-control", mode]
-    environment = os.environ.copy()
     environment["PYTHONPATH"] = os.pathsep.join([
         str(Path(compiled.__file__).resolve().parent.parent),
         *[str(Path(p).resolve()) for p in sys.path if p and Path(p).is_dir()]
     ])
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
     child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, env=environment,
                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
@@ -69,6 +82,7 @@ def test_interrupted_native_start_drains_owned_worker_process(mode):
     assert result["deferred_interrupts"] == (2 if mode == "repeated" else 0)
     assert "'qualified': True" in result["cleanup_note"]
     assert "'drained': True" in result["cleanup_note"]
+    assert result["cleanup_note"].startswith("Owned executor cleanup:")
 
 
 def test_nonstartup_error_declines_without_claiming_drain():
@@ -149,7 +163,13 @@ def test_cleanup_failure_keeps_primary_exception(monkeypatch, failure_stage):
     with pytest.raises(KeyboardInterrupt) as caught:
         compiled.compiled_values(np.eye(8), np.ones(8), np.zeros(8), .125, .3)
     assert caught.value is primary
-    assert primary.__cause__ is secondary
+    assert primary.__cause__ is None
+    assert primary.__context__ is None
+    assert primary.__suppress_context__ is False
+    records = primary._dwd_cleanup_failures
+    assert len(records) == 1
+    assert records[0]['exception_type'] == 'builtins.RuntimeError'
+    assert str(secondary) in records[0]['traceback']
     assert any("drain is not established" in note for note in primary.__notes__)
 
 
@@ -250,7 +270,7 @@ def _startup_control(mode):
                   "foreign_thread_survived": foreign.is_alive() and foreign_id in current_ids,
                   "scope_retired": scope is None or scope.executor is None,
                   "deferred_interrupts": len(repetitions),
-                  "cleanup_note": next(n for n in primary.__notes__ if n.startswith("Interrupted-start recovery:"))}
+                  "cleanup_note": next(n for n in primary.__notes__ if n.startswith("Owned executor cleanup:"))}
     finally:
         sys.settrace(previous_trace)
         cancelled.set()

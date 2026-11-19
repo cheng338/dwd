@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -19,10 +19,9 @@ dependencies = [
 ]
 requires-python=">=3.11"
 readme = 'README.md'
-license = {file = 'LICENSE.txt'}
+license = "MIT AND Python-2.0.1"
+license-files = ["LICENSE.txt", "dwd/CPYTHON-LICENSE.txt"]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
-
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -50,13 +49,13 @@ test = [
     "psutil>=7.2,<8",
     "cvxpy",
     "matplotlib",
-    "setuptools>=68",
+    "setuptools>=77.0.3",
 ]
 test-base = [
     "pytest>=9.0,<10",
     "psutil>=7.2,<8",
     "matplotlib",
-    "setuptools>=68",
+    "setuptools>=77.0.3",
 ]
 doc = [
     'sphinx',
@@ -77,5 +76,3 @@ include = ["dwd*"]
 [tool.setuptools.package-data]
 dwd = ["*.c", "CPYTHON-LICENSE.txt"]
 
-[tool.setuptools]
-license-files = ["LICENSE.txt", "dwd/CPYTHON-LICENSE.txt"]
