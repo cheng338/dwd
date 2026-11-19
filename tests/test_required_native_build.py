@@ -105,7 +105,8 @@ def compiler_error_classes(command):
     link_error = c_errors.LinkError
     platform_error = getattr(compiler_errors, "PlatformError", None)
     if platform_error is None:
-        platform_error = compiler_errors.DistutilsPlatformError
+        # Older setuptools defines this under the general distutils errors.
+        platform_error = importlib.import_module(distutils_base.__module__).DistutilsPlatformError
     assert c_errors.CompileError is compile_error
     assert issubclass(compile_error, compiler_base)
     assert issubclass(link_error, compiler_base)

@@ -13,7 +13,7 @@ metadata, but no importable package source root.
 
 ## Prepare the inputs and environment
 
-- For DWD 2.0.0, use the source tree and tests from the 2.0.0 tag or its source
+- For DWD 2.0.1, use the source tree and tests from the 2.0.1 tag or its source
   distribution. This version uses the `current` route contract. For other
   versions, select the source and checker that accompany the wheel.
 - Put exactly one compatible DWD wheel in a dedicated wheel directory. The
@@ -81,7 +81,7 @@ alone does not replace the artifact check and detached bundle.
 
 The `released-1.3.19` route contract describes historical DWD 1.3.19 route
 expectations. Use it with that version's matching artifacts and tests. For
-DWD 2.0.0 use `current`. The [CI workflow](../.github/workflows/tests.yml)
+DWD 2.0.1 use `current`. The [CI workflow](../.github/workflows/tests.yml)
 defines the build matrix. It builds a source distribution, verifies its contents, builds the wheel from
 that distribution and qualifies the installed artifact. This page reuses those
 helpers; it does not introduce a second build or validation implementation.

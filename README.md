@@ -20,41 +20,11 @@ this fork is guided by [Chang Cheng](https://github.com/cheng338) and maintained
 at [cheng338/dwd](https://github.com/cheng338/dwd). Original credits and the
 [MIT license](LICENSE.txt) are retained.
 
-The bundled arithmetic adapted from CPython is covered by the complete
-[Python license](dwd/CPYTHON-LICENSE.txt), identified as `Python-2.0.1` in SPDX.
-The distribution metadata therefore declares `MIT AND Python-2.0.1` for the
-combined contents. This applies to source distributions and both native and
-portable wheels: portable wheels also include the adapted C sources. Each
-component retains its license and attribution; this does not relicense the
-original DWD code or the CPython-derived code.
-
 This fork corrects update and numerical errors and adds an optimized kernel
 implementation with optional compiled residual checks. It also adds numerical
 validation and recovery, clears fitted state after failed fits, fixes
 cross-validation issues, and repairs the examples. The DWD formulations and
 unregularized intercepts follow the cited methods.
-
-When upgrading to DWD 2.0.0, remove `solver_mode`, kernel `implementation` and
-kernel `implicit_P` from estimator settings and parameter grids. Replace
-`initialization='auto'` with `'zero'` and `affine_computation='auto'` with
-`'joint'`. Omit training `sample_weight`, including `None`. Users of the
-former reference solver should check the initialization, backend and stopping
-guidance before refitting. Install Ensemble DWD 0.4.0 if using the companion
-estimators. Earlier companions can forward removed keywords.
-See [solver migration](docs/kernel_dwd.md#removed-public-solver-controls)
-and [fitting arguments](docs/fitting_and_conic_persistence.md).
-[Ensemble DWD 0.4.0 release](https://github.com/cheng338/ensemble-dwd/releases/tag/v0.4.0).
-
-The November 19 comparison used the pre-release pair numbered 1.3.20/0.3.16.
-The 256-row, 2,048-feature L-BFGS workload spent more time on final diagnostics.
-The median additional time over the 1.3.19 baseline for a second fresh fit was 137 ms on Windows and
-296 ms on Linux. A larger complete CV, final-fit and scoring workflow ran faster
-on both. [Test counts, workloads and artifact provenance](VALIDATION.md#november-19-2026-paired-release-comparison).
-
-For practical reasons to select an optional numerical, resource or workflow
-setting, see [choosing options](docs/choosing_options.md). Maintainers comparing
-the retained private reference implementation should use the separate
-[reference validation guide](docs/developer_reference.md).
 
 Marron, J. S., Todd, M. J., and Ahn, J. (2007).
 [Distance-weighted discrimination](https://doi.org/10.1198/016214507000001120).
@@ -64,104 +34,21 @@ Wang, B., and Zou, H. (2018).
 [Another look at distance-weighted discrimination](https://doi.org/10.1111/rssb.12244).
 *Journal of the Royal Statistical Society: Series B*, 80(1), 177-198.
 
-The companion Ensemble DWD package implements the ensemble kernel DWD method
-described in Chapter 5 of the following dissertation.
-
-Cheng, Chang (2026). *Ensemble Kernel Distance-Weighted Discrimination and
-Supervised Nonnegative Matrix Factorization for Classification* [Doctoral
-dissertation, Purdue University]. Purdue University Graduate School.
-[https://doi.org/10.25394/PGS.34548831.v1](https://doi.org/10.25394/PGS.34548831.v1)
-
-# Classification and input support
-
-The base classifiers `GenDWD`, `GenDWDCV`, `KernGDWD`, `KernGDWDCV`, `KernMD`,
-`dwd.socp_dwd.DWD` and `dwd.svm.SVM` require exactly two classes. Their
-scikit-learn tags describe this binary contract. For multiclass classification,
-use the separate `ensemble_dwd.OvOClassifier` around a supported binary
-classifier; the wrapper retains multiclass support and requires dense feature
-input. `EnsembleKernelDWD` and `EnsembleKernelSVM` themselves remain binary
-classifiers with dense feature input.
-
-| Estimator/configuration | Training input |
-|---|---|
-| `GenDWD`, `GenDWDCV`, SOCP `DWD`, conic `SVM` | Dense features or sparse features validated as CSR. `GenDWD` and `GenDWDCV` still prepare dense feature-square systems; see [linear resource costs](docs/linear_resources.md). The conic classifiers require the optional CVXPY dependency and a suitable solver. |
-| `KernGDWD`, `KernGDWDCV` with `linear`, `poly`, `polynomial`, `rbf`, `laplacian`, `sigmoid` or `cosine` | Dense features or sparse features validated as CSR, with valid kernel arguments. Sparse features do not remove the full dense training-kernel cost. |
-| `KernGDWD`, `KernGDWDCV` with a callable kernel | Dense or CSR features, subject to the callback's own input contract and the required kernel output. |
-| `KernGDWD`, `KernGDWDCV` with `chi2` or `additive_chi2` | Dense features, subject to the kernel's numerical requirements. |
-| `KernGDWD`, `KernGDWDCV` with `precomputed` | A dense square training Gram matrix. Sparse training Gram matrices are rejected. |
-| `KernMD` | Dense training input, including a dense square Gram matrix when `kernel='precomputed'`. |
-
-Where sparse features are supported, validation accepts CSR, CSC and COO
-matrices and CSR arrays; conversion to CSR can allocate a copy. Callable kernels
-receive the training features as their first argument and the supplied
-training/query features as their second. A callback used with sparse features
-must handle those sparse
-arguments and return a usable dense training Gram matrix. Its output has one
-row per training sample and one column per supplied sample. The callable sparse
-tag describes this supported delegation; it does not guarantee that an
-arbitrary callback accepts sparse input or produces a valid kernel.
-
-For precomputed kernels, prediction input is query-by-training and may be dense
-or sparse. This does not imply sparse training support. The pairwise tag lets
-scikit-learn searches slice both axes for training folds and retain the training
-columns for validation queries. `KernelScaler` is a separate dense, square-kernel
-transformer; it does not provide sparse or rectangular query-kernel scaling.
-Its default `transform(K, copy=True)` preserves the supplied array even if
-scaling raises. Choose `copy=False` only when modifying compatible writable
-storage is acceptable: a failed transform can leave the input and its aliases
-changed or nonfinite, with no rollback. Dtype conversion can still allocate.
-Use the default for read-only or internally overlapping views, or whenever the
-original data must remain usable after failure. See the
-[copy-mode contract](docs/kernel_dwd.md#kernelscaler-copy-modes).
-
-At supported sparse input boundaries, signed and unsigned integer duplicates
-are summed exactly by coordinate, then each sum is converted once to float64.
-Linear prediction skips extra conversion for verified-unique storage and keeps
-its usual dot-product conversion. Integer sparse precomputed queries use the
-same duplicate rule; precomputed training remains dense-only.
-Floating and Boolean input policies are unchanged.
-Callable returned kernels and direct score helpers retain their separate
-working-representation contracts. Large final integers can still round in
-float64, and earlier overflow or rounding cannot be undone. See
-[integer sparse coordinates](docs/kernel_dwd.md#integer-sparse-coordinate-inputs)
-for compatibility and saved-model guidance.
-
-Tags describe the configured estimator and are recomputed after parameter
-changes. Inspect them through `sklearn.utils.get_tags(estimator)`. The metadata
-does not convert input, bypass validation, change solver arithmetic or select
-different defaults.
-
-# Fitting weights and solver arguments
-
-Training sample weights are unsupported. DWD 2.0.0 removes the
-`sample_weight` argument from the six linear, kernel, CV and conic classifier
-`fit` methods that previously accepted only `None`, and from their four
-standalone solvers. Omit the argument entirely, including an explicit `None`;
-direct calls that supply it now raise `TypeError`. Genuine fitting controls
-remain available through their documented keyword arguments.
-
-`score(X, y, sample_weight=weights)` still computes weighted accuracy; it does
-not make fitting weighted. These classifiers cannot serve as AdaBoost base
-estimators, which must support weighted fitting. See
-[argument and metadata migration](docs/fitting_and_conic_persistence.md#fitting-arguments-and-metadata)
-for positional-call boundaries and saved metadata requests. Cloning an old
-object does not remove stale requests.
-
 # Installation
 
-DWD 2.0.0 requires Python 3.11+ and scikit-learn 1.6+. Download a compatible
-wheel from the [2.0.0 release assets](https://github.com/cheng338/dwd/releases/tag/v2.0.0).
+DWD 2.0.1 requires Python 3.11+ and scikit-learn 1.6+. Download a compatible
+wheel from the [2.0.1 release assets](https://github.com/cheng338/dwd/releases/tag/v2.0.1).
 The native wheel for 64-bit Windows and standard CPython 3.12 contains three
 compiled helpers for residuals, ordered reductions and feature expansions.
 
 ```shell
-python -m pip install ./dwd-2.0.0-cp312-cp312-win_amd64.whl
+python -m pip install ./dwd-2.0.1-cp312-cp312-win_amd64.whl
 ```
 
 The portable wheel supports Python 3.11+:
 
 ```shell
-python -m pip install ./dwd-2.0.0-py3-none-any.whl
+python -m pip install ./dwd-2.0.1-py3-none-any.whl
 ```
 
 To build from the source distribution, extract it and run
@@ -263,7 +150,36 @@ remain available; models fitted and saved with earlier versions retain their
 recorded scoring behavior. This does not retain the retired legacy fitting
 algorithm described in historical release notes.
 
+## Companion package and citation
+
+If you also use the companion estimators, install
+[Ensemble DWD 0.4.0](https://github.com/cheng338/ensemble-dwd/releases/tag/v0.4.0).
+Older companions can pass solver arguments that DWD 2.0.1 has removed.
+
+The companion Ensemble DWD package implements the ensemble kernel DWD method
+described in Chapter 5 of the following dissertation.
+
+Cheng, Chang (2026). *Ensemble Kernel Distance-Weighted Discrimination and
+Supervised Nonnegative Matrix Factorization for Classification* [Doctoral
+dissertation, Purdue University]. Purdue University Graduate School.
+[https://doi.org/10.25394/PGS.34548831.v1](https://doi.org/10.25394/PGS.34548831.v1)
+
+## License
+
+The bundled arithmetic adapted from CPython is covered by the complete
+[Python license](dwd/CPYTHON-LICENSE.txt), identified as `Python-2.0.1` in SPDX.
+The distribution metadata therefore declares `MIT AND Python-2.0.1` for the
+combined contents. This applies to source distributions and both native and
+portable wheels: portable wheels also include the adapted C sources. Each
+component retains its license and attribution; this does not relicense the
+original DWD code or the CPython-derived code.
+
 # Kernel DWD
+
+For practical reasons to select an optional numerical, resource or workflow
+setting, see [choosing options](docs/choosing_options.md). Maintainers comparing
+the retained private reference implementation should use the separate
+[reference validation guide](docs/developer_reference.md).
 
 Kernel DWD uses the corrected optimized implementation with explicit choices
 of numerical backend, initialization, acceleration and stopping policy. The
@@ -643,9 +559,84 @@ Passing numerical and API tests is not a universal accuracy or speed guarantee.
 Historical notebooks and figures under `doc/` describe earlier implementations;
 they have not been relabeled as new release results.
 
+## Classification and input support
+
+The base classifiers `GenDWD`, `GenDWDCV`, `KernGDWD`, `KernGDWDCV`, `KernMD`,
+`dwd.socp_dwd.DWD` and `dwd.svm.SVM` require exactly two classes. Their
+scikit-learn tags describe this binary contract. For multiclass classification,
+use the separate `ensemble_dwd.OvOClassifier` around a supported binary
+classifier; the wrapper retains multiclass support and requires dense feature
+input. `EnsembleKernelDWD` and `EnsembleKernelSVM` themselves remain binary
+classifiers with dense feature input.
+
+| Estimator/configuration | Training input |
+|---|---|
+| `GenDWD`, `GenDWDCV`, SOCP `DWD`, conic `SVM` | Dense features or sparse features validated as CSR. `GenDWD` and `GenDWDCV` still prepare dense feature-square systems; see [linear resource costs](docs/linear_resources.md). The conic classifiers require the optional CVXPY dependency and a suitable solver. |
+| `KernGDWD`, `KernGDWDCV` with `linear`, `poly`, `polynomial`, `rbf`, `laplacian`, `sigmoid` or `cosine` | Dense features or sparse features validated as CSR, with valid kernel arguments. Sparse features do not remove the full dense training-kernel cost. |
+| `KernGDWD`, `KernGDWDCV` with a callable kernel | Dense or CSR features, subject to the callback's own input contract and the required kernel output. |
+| `KernGDWD`, `KernGDWDCV` with `chi2` or `additive_chi2` | Dense features, subject to the kernel's numerical requirements. |
+| `KernGDWD`, `KernGDWDCV` with `precomputed` | A dense square training Gram matrix. Sparse training Gram matrices are rejected. |
+| `KernMD` | Dense training input, including a dense square Gram matrix when `kernel='precomputed'`. |
+
+Where sparse features are supported, validation accepts CSR, CSC and COO
+matrices and CSR arrays; conversion to CSR can allocate a copy. Callable kernels
+receive the training features as their first argument and the supplied
+training/query features as their second. A callback used with sparse features
+must handle those sparse
+arguments and return a usable dense training Gram matrix. Its output has one
+row per training sample and one column per supplied sample. The callable sparse
+tag describes this supported delegation; it does not guarantee that an
+arbitrary callback accepts sparse input or produces a valid kernel.
+
+For precomputed kernels, prediction input is query-by-training and may be dense
+or sparse. This does not imply sparse training support. The pairwise tag lets
+scikit-learn searches slice both axes for training folds and retain the training
+columns for validation queries. `KernelScaler` is a separate dense, square-kernel
+transformer; it does not provide sparse or rectangular query-kernel scaling.
+Its default `transform(K, copy=True)` preserves the supplied array even if
+scaling raises. Choose `copy=False` only when modifying compatible writable
+storage is acceptable: a failed transform can leave the input and its aliases
+changed or nonfinite, with no rollback. Dtype conversion can still allocate.
+Use the default for read-only or internally overlapping views, or whenever the
+original data must remain usable after failure. See the
+[copy-mode contract](docs/kernel_dwd.md#kernelscaler-copy-modes).
+
+At supported sparse input boundaries, signed and unsigned integer duplicates
+are summed exactly by coordinate, then each sum is converted once to float64.
+Linear prediction skips extra conversion for verified-unique storage and keeps
+its usual dot-product conversion. Integer sparse precomputed queries use the
+same duplicate rule; precomputed training remains dense-only.
+Floating and Boolean input policies are unchanged.
+Callable returned kernels and direct score helpers retain their separate
+working-representation contracts. Large final integers can still round in
+float64, and earlier overflow or rounding cannot be undone. See
+[integer sparse coordinates](docs/kernel_dwd.md#integer-sparse-coordinate-inputs)
+for compatibility and saved-model guidance.
+
+Tags describe the configured estimator and are recomputed after parameter
+changes. Inspect them through `sklearn.utils.get_tags(estimator)`. The metadata
+does not convert input, bypass validation, change solver arithmetic or select
+different defaults.
+
+## Fitting weights and solver arguments
+
+Training sample weights are unsupported. DWD 2.0.0 removes the
+`sample_weight` argument from the six linear, kernel, CV and conic classifier
+`fit` methods that previously accepted only `None`, and from their four
+standalone solvers. Omit the argument entirely, including an explicit `None`;
+direct calls that supply it now raise `TypeError`. Genuine fitting controls
+remain available through their documented keyword arguments.
+
+`score(X, y, sample_weight=weights)` still computes weighted accuracy; it does
+not make fitting weighted. These classifiers cannot serve as AdaBoost base
+estimators, which must support weighted fitting. See
+[argument and metadata migration](docs/fitting_and_conic_persistence.md#fitting-arguments-and-metadata)
+for positional-call boundaries and saved metadata requests. Cloning an old
+object does not remove stale requests.
+
 # Release history
 
-See the [2.0.0 release notes](RELEASE_NOTES.md) and [validation history](VALIDATION.md).
+See the [2.0.1 release notes](RELEASE_NOTES.md) and [validation history](VALIDATION.md).
 
 ## Changes in 1.3.19
 

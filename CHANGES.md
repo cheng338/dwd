@@ -6,6 +6,14 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 2.0.1
+
+- Repair the native-build tests' lookup of the platform-error exception in
+  setuptools and the public-fit affinity test's expectations for Linux
+  CPython 3.11. The affinity test exercises portable compensated recovery on
+  that platform and checks the one-worker limit when native dispatch applies.
+  [Test results for the 2.0.0 source tag](VALIDATION.md#dwd-200-source-tag-tests).
+
 ## 2.0.0
 
 - Remove the unused private feature-gradient interface that recomputed operand
@@ -266,8 +274,8 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
   initialization, acceleration, residual-order and stopping controls, and keep
   their existing optimized defaults. Reject removed constructor/CV requests
   instead of silently translating former reference settings. Require current
-  optimized preparation identity before reuse. DWD 2.0.0 pairs with
-  Ensemble DWD 0.4.0. The upgrade does not migrate old checkpoints
+  optimized preparation identity before reuse. Ensemble DWD 0.4.0 requires the
+  DWD 2.0.1 patch. The upgrade does not migrate old checkpoints
   or guarantee arbitrary old serialized objects. See the kernel guide for
   reference-user migration and the bounded quality/performance evidence.
 

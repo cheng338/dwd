@@ -1,8 +1,16 @@
-# DWD 2.0.0
+# DWD 2.0.1
+
+This patch corrects two regression tests present in the public 2.0.0 source
+tag. The build tests now resolve the platform-error
+exception for the installed setuptools layout. The kernel-fit affinity test
+checks portable compensated recovery on Linux CPython 3.11 and the one-worker
+limit on platforms where the guarded native residual evaluator runs.
+The estimator, solver and native-extension implementations match the 2.0.0
+sources. [2.0.0 CI results](VALIDATION.md#dwd-200-source-tag-tests).
 
 ## Upgrading from 1.3.19
 
-Install DWD 2.0.0 with Ensemble DWD 0.4.0 when using the ensemble estimators.
+Install DWD 2.0.1 with Ensemble DWD 0.4.0 when using the ensemble estimators.
 Earlier companion versions can forward removed fitting keywords.
 
 - Remove `solver_mode`, kernel `implementation` and kernel `implicit_P` from
