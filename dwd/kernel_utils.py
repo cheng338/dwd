@@ -2,7 +2,7 @@ import numpy as np
 from sklearn.metrics.pairwise import pairwise_kernels
 
 from sklearn.utils.extmath import safe_sparse_dot
-from sklearn.base import ClassifierMixin
+from dwd._validation import ExactLabelClassifierMixin
 from sklearn.utils.validation import FLOAT_DTYPES, check_is_fitted
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils import check_array
@@ -14,7 +14,7 @@ from dwd._sparse_features import (canonical_sparse_features, promote_sparse_feat
 _PREDICTION_BATCH_DEFAULT = object()
 
 
-class KernelClfMixin(ClassifierMixin):
+class KernelClfMixin(ExactLabelClassifierMixin):
     """
     Mixin for kernel classifiers.
     """

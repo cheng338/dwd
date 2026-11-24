@@ -266,6 +266,19 @@ def test_exact_low_rank_gram_remains_admitted_across_scales(exponent, path):
     assert K.tobytes() == before
 
 
+def test_spectral_fit_preserves_subnormal_gram_under_strict_overflow():
+    # An odd dimension exposes the spurious overflow in NumPy 1.26.0–1.26.2.
+    gram = np.diag(np.full(3, math.ldexp(1., -1040)))
+    model = KernGDWD(kernel='precomputed', backend='spectral', max_iter=2, stopping='fixed')
+    with np.errstate(over='raise', under='ignore'):
+        model.fit(gram, [-1, 1, -1])
+        scores = model.decision_function(gram)
+    assert model.backend_ == 'spectral'
+    assert model.diagnostics_['positive_eigenvalues_retained'] == 3
+    assert scores.shape == (3,)
+    assert np.isfinite(scores).all()
+
+
 def ordinary_data():
     X = np.array([[i / 8., ((i * 5) % 13 - 6) / 8., ((i * 7) % 11 - 5) / 8.]
                   for i in range(12)], dtype=float)

@@ -33,7 +33,7 @@ def _fresh_compressed_is_canonical(X):
 
 def _coo_is_sorted_unique(X):
     # Never read X.has_canonical_format, including for COO with stale flags.
-    rows, cols = X.coords
+    rows, cols = X.row, X.col
     if len(rows) < 2:
         return True
     return bool(np.all(
@@ -96,7 +96,7 @@ def _exact_compressed(X, count):
 
 
 def _exact_coo(X):
-    rows, cols = X.coords
+    rows, cols = X.row, X.col
     order, starts, _ = _groups(rows, cols)
     if len(starts) == len(X.data):
         return _ordinary_integer_cast(X)

@@ -1,4 +1,4 @@
-from sklearn.base import ClassifierMixin
+from dwd._validation import ExactLabelClassifierMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
 from sklearn.utils.extmath import safe_sparse_dot
@@ -10,7 +10,7 @@ from ._integer_sparse import prepare_integer_linear_query
 __all__ = ['LinearClassifierMixin']
 
 
-class LinearClassifierMixin(ClassifierMixin):
+class LinearClassifierMixin(ExactLabelClassifierMixin):
     """
     Shared binary prediction methods for the package's linear classifiers.
     The mixin follows scikit-learn's estimator conventions and requires

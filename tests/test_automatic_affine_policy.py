@@ -11,6 +11,8 @@ from sklearn.base import clone
 from sklearn.exceptions import NotFittedError
 from sklearn.model_selection import GridSearchCV
 from threadpoolctl import threadpool_limits
+from _search_resources import single_worker_search_parent
+
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
 from _kernel_reference import kernel_route
 from dwd.cv import run_cv
@@ -150,6 +152,7 @@ class AutomaticAffinePolicyTests(unittest.TestCase):
             np.testing.assert_array_equal(cv.decision_function(query), scores)
             np.testing.assert_array_equal(pickle.loads(pickle.dumps(cv)).decision_function(query), scores)
 
+    @single_worker_search_parent()
     def test_run_cv_and_sklearn_grid_mixed_policies(self):
         grid = {'affine_computation': ['standard', 'joint'], 'lambd': [0.1]}
         results = run_cv(self.model(max_iter=2), self.Xn, self.yn, grid, cv=2, refit_best=False)[3]

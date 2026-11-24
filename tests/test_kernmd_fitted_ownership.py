@@ -16,6 +16,8 @@ from sklearn.exceptions import NotFittedError
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
 
+from _search_resources import single_worker_search_parent
+
 from dwd.kern_md import KernMD
 
 
@@ -369,6 +371,7 @@ def test_frozen_polynomial_keeps_nonfinite_prediction_refusal_and_recovery(batch
 
 
 @pytest.mark.parametrize('kind', ['features', 'precomputed'])
+@single_worker_search_parent()
 def test_sklearn_grid_search_clone_and_refit_keep_owned_final_predictor(kind):
     # KernMD has no package cv_init method; use its supported sklearn estimator API.
     if kind == 'features':

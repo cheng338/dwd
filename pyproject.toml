@@ -12,10 +12,11 @@ maintainers = [
     {name = 'Chang Cheng'}
 ]
 dependencies = [
-    "numpy",
-    "scipy",
-    "scikit-learn>=1.6",
-    "threadpoolctl>=3.1",
+    "joblib>=1.6.0",
+    "numpy>=1.26.3",
+    "scipy>=1.11.4",
+    "scikit-learn>=1.6.1",
+    "threadpoolctl>=3.7.0",
 ]
 requires-python=">=3.11"
 readme = 'README.md'
@@ -42,19 +43,31 @@ dynamic = ['version']
 
 [project.optional-dependencies]
 socp = [
-    "cvxpy",
+    "cvxpy>=1.6.7",
+    "clarabel>=0.11.0",
+    "osqp>=1.0.4",
+    "scs>=3.2.4.post3,!=3.3.0",
+    "highspy>=1.7.1",
 ]
 test = [
-    "pytest>=9.0,<10",
-    "psutil>=7.2,<8",
-    "cvxpy",
-    "matplotlib",
+    "pytest>=9.0.3",
+    "pandas>=2.2.2; python_version < '3.13'",
+    "pandas>=2.2.3; python_version >= '3.13'",
+    "psutil>=7.2.0",
+    "cvxpy>=1.6.7",
+    "clarabel>=0.11.0",
+    "osqp>=1.0.4",
+    "scs>=3.2.4.post3,!=3.3.0",
+    "highspy>=1.7.1",
+    "matplotlib>=3.7.3",
     "setuptools>=77.0.3",
 ]
 test-base = [
-    "pytest>=9.0,<10",
-    "psutil>=7.2,<8",
-    "matplotlib",
+    "pytest>=9.0.3",
+    "pandas>=2.2.2; python_version < '3.13'",
+    "pandas>=2.2.3; python_version >= '3.13'",
+    "psutil>=7.2.0",
+    "matplotlib>=3.7.3",
     "setuptools>=77.0.3",
 ]
 doc = [

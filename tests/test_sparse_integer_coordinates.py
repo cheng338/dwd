@@ -48,7 +48,7 @@ def _scalar_state(value):
 
 def _numeric_buffers(value):
     if value.format == "coo":
-        return (value.data, *value.coords)
+        return (value.data, value.row, value.col)
     if value.format in ("csr", "csc", "bsr"):
         return (value.data, value.indices, value.indptr)
     if value.format == "dia":
@@ -83,7 +83,12 @@ def _readonly(value):
 
 def _width(value, dtype):
     if value.format == "coo":
-        value.coords = tuple(item.astype(dtype) for item in value.coords)
+        row, col = value.row.astype(dtype), value.col.astype(dtype)
+        if hasattr(value, "coords"):
+            # The newer row/col setters cast to the existing index width.
+            value.coords = (row, col)
+        else:
+            value.row, value.col = row, col
     elif value.format in ("csr", "csc", "bsr"):
         value.indices = value.indices.astype(dtype)
         value.indptr = value.indptr.astype(dtype)
@@ -96,7 +101,7 @@ def _stored_integer_literals(value):
     literals = []
     if value.format == "coo":
         literals = [(int(r), int(c), int(v))
-                    for r, c, v in zip(*value.coords, value.data, strict=True)]
+                    for r, c, v in zip(value.row, value.col, value.data, strict=True)]
     elif value.format in ("csr", "csc"):
         for major in range(len(value.indptr) - 1):
             for offset in range(int(value.indptr[major]), int(value.indptr[major + 1])):
@@ -261,19 +266,31 @@ def test_unsorted_unique_integer_storage(admission, fmt, kind):
 @pytest.mark.parametrize("kind", KINDS)
 def test_non_native_endian_integer_cancellation(admission, fmt, kind, record_property):
     dtype = np.dtype(np.int64).newbyteorder("S")
-    if fmt in ("coo", "bsr"):
-        # These actual SciPy constructors reject the dtype before promotion.
-        # Record that dependency boundary, not an exact-summation success.
-        with pytest.raises(ValueError, match=r"scipy\.sparse does not support dtype") as observed:
-            _fixture(fmt, kind, dtype, (2**53 + 1, -(2**53)), stale=True)
+    operands = (2**53 + 1, -(2**53))
+    try:
+        value = _fixture(fmt, kind, dtype, operands, stale=True)
+    except ValueError as exc:
+        if fmt not in ("coo", "bsr") or "scipy.sparse does not support dtype" not in str(exc):
+            raise
         record_property("scope", "dependency constructor refusal; candidate not called")
         record_property("dtype", dtype.str)
-        record_property("refusal", str(observed.value))
+        record_property("refusal", str(exc))
         return
-    value = _fixture(fmt, kind, dtype, (2**53 + 1, -(2**53)), stale=True)
-    assert not value.dtype.isnative
-    _assert_exact(admission, value)
-    record_property("scope", "accepted CSR storage; candidate exact-coordinate check")
+    column = 2 if fmt == "bsr" else 1
+    stored = [n for r, c, n in _stored_integer_literals(value) if (r, c) == (0, column)]
+    assert sorted(stored) == sorted(operands)
+    # Some SciPy constructors normalize the supplied buffer to native byte order.
+    record_property("constructor_dtype", value.dtype.str)
+    if value.dtype != dtype:
+        assert value.dtype == dtype.newbyteorder("=")
+        _assert_exact(admission, value)
+        value.data = value.data.astype(dtype)
+        value.data.flags.writeable = False
+    assert value.dtype == dtype
+    _, expected = _assert_exact(admission, value)
+    assert expected[0, column] == 1.
+    record_property("scope", "accepted storage; candidate exact-coordinate check")
+    record_property("dtype", value.dtype.str)
 
 
 READONLY_LIL = (
@@ -316,6 +333,7 @@ def test_readonly_lil_outer_arrays_retain_existing_refusal(
 def test_exact_groups_accept_both_structural_index_widths(admission, fmt, kind, index_dtype):
     value = _fixture(fmt, kind, np.int64, (2**53 + 1, -(2**53)),
                      stale=True, index_dtype=index_dtype)
+    assert all(item.dtype == index_dtype for item in _numeric_buffers(value)[1:])
     _assert_exact(admission, value)
 
 
@@ -417,6 +435,6 @@ def test_wide_sparse_input_does_not_require_dense_feature_storage(admission, mon
         actual = admission.promote_sparse_features(value)
     assert actual.shape == value.shape and actual.nnz == 1
     np.testing.assert_array_equal(actual.data, [1.0])
-    np.testing.assert_array_equal(actual.coords[0], [0])
-    np.testing.assert_array_equal(actual.coords[1], [9_999_999])
+    np.testing.assert_array_equal(actual.row, [0])
+    np.testing.assert_array_equal(actual.col, [9_999_999])
     assert _state(value) == before

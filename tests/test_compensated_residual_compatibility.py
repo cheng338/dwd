@@ -71,7 +71,7 @@ class CompensatedResidualCompatibilityTests(unittest.TestCase):
 
     def test_products_preserve_wide_scale_and_signed_zero_bits(self):
         rng = np.random.default_rng(894123)
-        a = np.ldexp(rng.uniform(-1, 1, 1000), rng.integers(-1000, 1001, 1000))
+        a = np.ldexp(rng.uniform(-1, 1, 1000), rng.integers(-1000, 1001, 1000).astype(np.intc))
         b = np.ldexp(rng.uniform(-1, 1, 1000), -np.frexp(a)[1])
         a = np.r_[a, 0., -0., 0., -0., np.finfo(float).tiny]
         b = np.r_[b, 1., 1., -1., -1., 2.**-53]

@@ -61,13 +61,13 @@ def cases():
                 x[-1] = -math.fsum(x[:-1].tolist())
                 shift = 1e-9
             elif mode == 'broad':
-                K = np.ldexp(rng.uniform(.5, 1., size=(n, n)), rng.integers(-199, 201, size=(n, n)))
-                x = np.ldexp(rng.uniform(.5, 1., size=n), rng.integers(-199, 201, size=n))
+                K = np.ldexp(rng.uniform(.5, 1., size=(n, n)), rng.integers(-199, 201, size=(n, n)).astype(np.intc))
+                x = np.ldexp(rng.uniform(.5, 1., size=n), rng.integers(-199, 201, size=n).astype(np.intc))
                 K *= rng.choice([-1., 1.], size=(n, n))
                 x *= rng.choice([-1., 1.], size=n)
             elif mode == 'powers':
-                K = np.ldexp(rng.choice([-1., 1.], size=(n, n)), rng.integers(-200, 201, size=(n, n)))
-                x = np.ldexp(rng.choice([-1., 1.], size=n), rng.integers(-200, 201, size=n))
+                K = np.ldexp(rng.choice([-1., 1.], size=(n, n)), rng.integers(-200, 201, size=(n, n)).astype(np.intc))
+                x = np.ldexp(rng.choice([-1., 1.], size=n), rng.integers(-200, 201, size=n).astype(np.intc))
             elif mode == 'fortran':
                 K = np.asfortranarray(K)
             elif mode == 'negative_stride':
@@ -103,7 +103,7 @@ class ProductSignArgumentTests(unittest.TestCase):
         rng = np.random.default_rng(68215)
         reuse = fallback = 0
         for i in range(20000):
-            x, y = np.ldexp(rng.uniform(.5, 1., size=2), rng.integers(-199, 201, size=2))
+            x, y = np.ldexp(rng.uniform(.5, 1., size=2), rng.integers(-199, 201, size=2).astype(np.intc))
             if i % 4 == 0:
                 y = 1. if i % 8 else -0.
             p = product(float(x), float(y))

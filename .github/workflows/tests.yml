@@ -57,6 +57,15 @@ jobs:
       - name: Install the exact wheel and optional conic tests
         if: matrix.dependencies == 'socp'
         run: python -I -B tests/ci_artifacts.py install --wheel-dir .ci-wheels --extras test
+      - name: Check installed dependencies
+        run: python -m pip check
+      - name: Require CVXPY to register the supported solvers
+        if: matrix.dependencies == 'socp'
+        run: >-
+          python -I -c "import cvxpy as cp;
+          required = {'CLARABEL', 'HIGHS', 'OSQP', 'SCIPY', 'SCS'};
+          missing = required.difference(cp.installed_solvers());
+          assert not missing, f'Missing CVXPY solvers {sorted(missing)}'"
       - name: Prepare tests from the verified source distribution
         run: >-
           python -I -B tests/ci_artifacts.py bundle
@@ -74,3 +83,88 @@ jobs:
       - name: Run the complete bundled test suite
         working-directory: ${{ runner.temp }}/dwd-installed-tests
         run: python -I -B -m pytest tests -o "python_files=test*.py" -ra
+      - name: Check OSQP infeasible refits at the supported minimum
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' && matrix.dependencies == 'socp'
+        working-directory: ${{ runner.temp }}/dwd-installed-tests
+        run: |
+          python -m pip install --no-deps "osqp==1.0.4"
+          python -m pip check
+          python -I -c "import osqp; assert osqp.__version__ == '1.0.4'"
+          python -I -B -m pytest tests/test_conic_solver_objectives.py::test_osqp_infeasible_refit_reports_status_and_clears_state -q
+      - name: Fit conic DWD with the minimum SCS wheel on NumPy 2
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' && matrix.dependencies == 'socp'
+        working-directory: ${{ runner.temp }}/dwd-installed-tests
+        run: |
+          python -m pip install --only-binary=scs "numpy>=2,<3" "scs==3.2.4.post3"
+          python -m pip check
+          python -I -B - <<'PY'
+          from importlib.metadata import version
+          import cvxpy
+          from dwd.socp_dwd import DWD
+
+          assert version("scs") == "3.2.4.post3"
+          assert version("numpy").startswith("2.")
+          assert "SCS" in cvxpy.installed_solvers()
+          X, y = [[-1.0], [1.0]], [0, 1]
+          model = DWD(C=4.0, solver_kws={"solver": "SCS"}).fit(X, y)
+          assert model.problem_.solver_stats.solver_name == "SCS"
+          assert model.predict(X).tolist() == y
+          PY
+      - name: Fit and reload a HiGHS SVM from the conic extra
+        if: matrix.os == 'ubuntu-latest' && matrix.dependencies == 'socp'
+        working-directory: ${{ runner.temp }}/dwd-installed-tests
+        env:
+          CVXPY_VERSION: ${{ matrix.python-version == '3.12' && '1.6.7' || '1.9.3' }}
+          HIGHSPY_VERSION: ${{ matrix.python-version == '3.12' && '1.7.1' || '1.15.1' }}
+        run: |
+          python -m venv "$RUNNER_TEMP/highs-env"
+          py="$RUNNER_TEMP/highs-env/bin/python"
+          export PIP_CONSTRAINT="$RUNNER_TEMP/highs-constraints.txt"
+          printf '%s\n' "cvxpy==$CVXPY_VERSION" "highspy==$HIGHSPY_VERSION" > "$PIP_CONSTRAINT"
+          "$py" -I -B tests/ci_artifacts.py install --wheel-dir "$GITHUB_WORKSPACE/.ci-wheels" --extras socp
+          "$py" -m pip check
+          "$py" -I -B - <<'PY'
+          import os
+          import pickle
+          from importlib.metadata import version
+          import numpy as np
+          from scipy.sparse import csr_matrix
+          from dwd.svm import SVM
+
+          assert version("cvxpy") == os.environ["CVXPY_VERSION"]
+          assert version("highspy") == os.environ["HIGHSPY_VERSION"]
+          # A separating slope of 1 gives 0.25. With zero features the
+          # majority-class intercept gives mean hinge loss 2 * 3 / 16.
+          cases = [
+              (np.array([[-1.], [1.]]), np.array([0, 1]), 0.25),
+              (csr_matrix((16, 1)), np.repeat([0, 1], [3, 13]), 0.375),
+          ]
+          for X, y, optimum in cases:
+              model = SVM(C=0.25, solver_kws={"solver": "HIGHS", "threads": 1}).fit(X, y)
+              assert model.problem_.solver_stats.solver_name == "HIGHS"
+              scores = model.decision_function(X)
+              hinge = np.maximum(0., 1. - (2 * y - 1) * scores).mean()
+              np.testing.assert_allclose(hinge + model.C * np.abs(model.coef_).sum(), optimum, rtol=0, atol=1e-7)
+              restored = pickle.loads(pickle.dumps(model))
+              np.testing.assert_array_equal(restored.decision_function(X), scores)
+              np.testing.assert_array_equal(restored.predict(X), model.predict(X))
+          PY
+      - name: Check conic HiGHS fit and duals in the minimum solver environment
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' && matrix.dependencies == 'socp'
+        working-directory: ${{ runner.temp }}/dwd-installed-tests
+        run: '"$RUNNER_TEMP/highs-env/bin/python" -I -B tests/highs_conic_floor_probe.py'
+      - name: Check search, routed cross-validation and worker counts at dependency floors
+        if: matrix.backend == 'portable' && matrix.dependencies == 'base'
+        working-directory: ${{ runner.temp }}/dwd-installed-tests
+        run: |
+          python -m pip install "joblib==1.6.0" "scikit-learn==1.6.1" "numpy>=2,<3" "pandas==2.2.2" "threadpoolctl==3.7.0"
+          python -m pip check
+          python -I -c "import joblib, pandas, sklearn, threadpoolctl; assert joblib.__version__ == '1.6.0' and pandas.__version__ == '2.2.2' and sklearn.__version__ == '1.6.1' and threadpoolctl.__version__ == '3.7.0'"
+          python -I -B -m pytest tests/test_joblib_search_transport.py tests/test_pandas_*.py tests/threadpoolctl_floor_probe.py::test_worker_count_observes_live_blas_limits tests/test_compatibility.py::test_routed_cross_validation_without_params -q
+      - name: Check sparse label iterators on NumPy 2.2.6
+        if: matrix.backend == 'portable' && matrix.dependencies == 'base'
+        working-directory: ${{ runner.temp }}/dwd-installed-tests
+        run: |
+          python -m pip install "numpy==2.2.6" "scipy==1.15.3"
+          python -m pip check
+          python -I -B -m pytest tests/test_sparse_iterator_membership.py::test_byte_label_with_integer_rows_fits_original_classes tests/test_sparse_iterator_membership.py::test_byte_membership_uses_fitted_integer_operands -q

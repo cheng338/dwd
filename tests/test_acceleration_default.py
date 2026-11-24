@@ -10,6 +10,8 @@ from numpy.testing import assert_array_equal
 from scipy.linalg import eigh
 from sklearn.base import clone
 from sklearn.model_selection import GridSearchCV
+from _search_resources import single_worker_search_parent
+
 from dwd._acceleration_policy import resolve_acceleration
 from dwd._kernel_solver import solve_kernel
 from dwd._kernel_recovery import MMRecoveryExhausted
@@ -176,6 +178,7 @@ class RestartDefaultTests(unittest.TestCase):
         same_science(model, KernGDWD(**COMMON, backend='spectral', acceleration='restart',
                                   residual_check_order='refinement_first').fit(X, y))
 
+    @single_worker_search_parent()
     def test_11_cv_and_grid_keep_requests(self):
         cv = KernGDWDCV(lambd_vals=[.1], q_vals=[1.], cv=2,
                        max_iter=3, stopping='fixed', random_state=44).fit(X, y)

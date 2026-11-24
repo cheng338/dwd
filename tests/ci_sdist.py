@@ -162,8 +162,8 @@ def _archive_payload(payload, required):
     return root, entries, files
 
 
-def verify_and_extract(source, sdist_directory, destination):
-    """Extract one verified archive exclusively; never write during preflight."""
+def verify_and_extract(source, sdist_directory, destination, *, required=None):
+    """Extract one verified archive using DWD's inventory or supplied source bytes."""
     source = Path(source)
     destination = Path(destination)
     if os.path.lexists(destination):
@@ -171,7 +171,8 @@ def verify_and_extract(source, sdist_directory, destination):
     resolved_destination = destination.resolve()
     if resolved_destination.is_relative_to(source.resolve()):
         raise RuntimeError('Extraction destination must be outside the source checkout.')
-    required = source_inventory(source)
+    if required is None:
+        required = source_inventory(source)
     archive = single_sdist(sdist_directory)
     payload = _regular_bytes(archive)
     root, entries, files = _archive_payload(payload, required)

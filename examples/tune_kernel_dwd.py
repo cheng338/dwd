@@ -52,8 +52,8 @@ def main(argv=None):
     parser.add_argument('--cv-worker-memory-mib', type=_positive_float,
                         help='Caller-estimated memory per CV worker in MiB, including headroom; '
                              'requires --cv-memory-budget-mib. These allowances only cap worker count.')
-    parser.add_argument('--final-native-threads', type=_positive_int, default=1,
-                        help='Native thread limit for fresh final scaling and fitting only (default: 1).')
+    parser.add_argument('--final-native-threads', type=_positive_int, choices=(1,), default=1,
+                        help='Timed final scaling and fitting use one native thread.')
     parser.add_argument('--max-iter', type=_positive_int, default=100)
     parser.add_argument('--scale', action='store_true', help='Fit StandardScaler within each training fold.')
     parser.add_argument('--resume', action='store_true')

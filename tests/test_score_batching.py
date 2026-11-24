@@ -100,8 +100,8 @@ def dense_cases():
     yield 'late_uncertain', late, alpha
     rng = np.random.default_rng(61005011)
     for n in (1, 2, 7, 32):
-        K = np.ldexp(rng.uniform(-1., 1., size=(17, n)), rng.integers(-400, 401, size=(17, n)))
-        alpha = np.ldexp(rng.uniform(-1., 1., size=n), rng.integers(-400, 401, size=n))
+        K = np.ldexp(rng.uniform(-1., 1., size=(17, n)), rng.integers(-400, 401, size=(17, n)).astype(np.intc))
+        alpha = np.ldexp(rng.uniform(-1., 1., size=n), rng.integers(-400, 401, size=n).astype(np.intc))
         yield 'random_exponents_' + str(n), K, alpha
 
 

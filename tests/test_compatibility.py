@@ -4,10 +4,12 @@ import unittest
 
 import numpy as np
 from numpy.testing import assert_allclose
-from sklearn.base import BaseEstimator
+from sklearn import config_context
+from sklearn.base import BaseEstimator, clone
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_val_score, cross_validate
 
 import dwd
-from dwd.gen_dwd import V_grad, V_grad_
+from dwd.gen_dwd import GenDWD, V_grad, V_grad_
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
 from dwd.kernel_utils import KernelClfMixin
 
@@ -21,7 +23,7 @@ else:
 
 class CompatibilityTests(unittest.TestCase):
     def test_compatibility_version(self):
-        self.assertEqual(dwd.__version__, "2.0.1")
+        self.assertEqual(dwd.__version__, "2.0.2")
 
     def test_vectorized_gradient_preserves_fractional_values(self):
         margins = np.array([0, 2], dtype=np.int64)
@@ -57,6 +59,31 @@ class CompatibilityTests(unittest.TestCase):
 
         mro = DWD.mro()
         self.assertLess(mro.index(LinearClassifierMixin), mro.index(BaseEstimator))
+
+
+def test_routed_cross_validation_without_params():
+    # scikit-learn 1.6.0 rejected the default params argument with routing enabled.
+    X = np.array([[-3.], [3.], [-2.5], [2.5], [-2.], [2.],
+                  [-1.5], [1.5], [-1.], [1.], [-0.5], [0.5]])
+    y = np.where(X[:, 0] < 0, "low", "high")
+    folds = list(StratifiedKFold(3, shuffle=True, random_state=27).split(X, y))
+    model = GenDWD(lambd=0.1, stopping="fixed", max_iter=8, random_state=0)
+
+    predictions = np.empty_like(y)
+    scores = []
+    for train, test in folds:
+        fitted = clone(model).fit(X[train], y[train])
+        predictions[test] = fitted.predict(X[test])
+        scores.append(np.mean(predictions[test] == y[test]))
+    np.testing.assert_array_equal(predictions, y)
+
+    with config_context(enable_metadata_routing=True):
+        options = dict(cv=folds, scoring="accuracy", error_score="raise", n_jobs=1)
+        np.testing.assert_array_equal(cross_val_score(model, X, y, **options), scores)
+        results = cross_validate(model, X, y, **options)
+        np.testing.assert_array_equal(results["test_score"], scores)
+        np.testing.assert_array_equal(cross_val_predict(model, X, y, cv=folds, n_jobs=1),
+                                      predictions)
 
 
 if __name__ == "__main__":

@@ -107,6 +107,20 @@ def test_cv_boundaries(factory,estimator):
     assert snapshot(raw)==before
 
 
+@pytest.mark.parametrize("layout", ["coo_matrix", "coo_array"])
+def test_linear_integer_coo_queries_match_exact_dense_scores(layout):
+    duplicate, dense = raw_features(layout)
+    unique = type(duplicate)(dense.astype(np.int64))
+    for buffer in (unique.row, unique.col, unique.data):
+        buffer.flags.writeable = False
+    model = GenDWD(**OPTIONS).fit(dense, Y)
+    expected = model.decision_function(dense)
+    for query in (unique, duplicate):
+        before = snapshot(query)
+        assert_allclose(model.decision_function(query), expected, rtol=1e-11, atol=1e-13)
+        assert snapshot(query) == before
+
+
 def test_callable_input_normalized_but_kernel_return_contract_separate():
     raw,dense=raw_features('coo_matrix')
     before=snapshot(raw)

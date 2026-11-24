@@ -23,7 +23,7 @@ def _require(condition, message):
         raise RuntimeError(_PREFIX + message)
 
 
-def expected_routes(backend, contract, expected_platform, expected_python):
+def expected_routes(backend, contract, expected_platform, expected_python, numpy_version):
     """Return the declared CI contract without consulting production guards."""
     _require(backend in ('native', 'portable'), 'unknown wheel backend')
     _require(contract in ('current', 'released-1.3.19'), 'unknown route contract')
@@ -44,7 +44,8 @@ def expected_routes(backend, contract, expected_platform, expected_python):
     }
     if contract == 'current':
         routes['ordered_gradient'] = extension
-        routes['feature_expansion'] = extension and scalar
+        # NumPy 1.26 errstate inherits Python callbacks from ContextDecorator.
+        routes['feature_expansion'] = extension and scalar and not numpy_version.startswith('1.26.')
     return routes
 
 
@@ -255,7 +256,7 @@ def _ordered_gradient_probe(np, expected_native):
             'witness': 'Untimed sys.setprofile observation; no entry or guard replacement.'}
 
 
-def _feature_expansion_probe(np, expected_native):
+def _feature_expansion_probe(np, expected_native, expected_artifact):
     """Unprofiled genuine facade acceptance; hooks deliberately force fallback."""
     from dwd import _linear_feature_diagnostics as feature
     from dwd import _feature_expansion as facade
@@ -264,7 +265,7 @@ def _feature_expansion_probe(np, expected_native):
              'feature_expansion witness requires an unhooked thread')
     name = 'dwd._feature_expansion_accel'
     spec = importlib.util.find_spec(name)
-    _require((spec is not None) is expected_native,
+    _require((spec is not None) is expected_artifact,
              'feature_expansion artifact presence does not match the build contract')
     X = np.array([[1., .5], [-.25, 2.]])
     z, alpha = np.array([.25, -.5]), np.array([.125, .25])
@@ -287,12 +288,6 @@ def _feature_expansion_probe(np, expected_native):
         accelerator = sys.modules.get(name)
         _require(type(accelerator) is types.ModuleType,
                  'feature_expansion required native module did not load')
-        origin = Path(accelerator.__file__).resolve()
-        _require(origin.parent == Path(feature.__file__).resolve().parent,
-                 'feature_expansion module is outside the installed package')
-        _require(accelerator.API_VERSION == 2 and accelerator.BETA_API_VERSION == 1
-                 and accelerator.COMPILED_PY_HEX == sys.hexversion,
-                 'feature_expansion ABI/capability does not match this interpreter')
         _require(facade._ENTRY is _native_entry(accelerator, 'gradient_from_splits')
                  and facade._BETA_ENTRY is _native_entry(accelerator, 'beta_from_split'),
                  'feature_expansion cache does not own the genuine native entries')
@@ -302,7 +297,6 @@ def _feature_expansion_probe(np, expected_native):
             _require(actual.tobytes() == expected.tobytes() and actual.flags.owndata,
                      'feature_expansion ' + key + ' changed bits/private output')
     else:
-        origin = None
         _require(gradient is None and beta is None and name not in sys.modules,
                  'unsupported/portable build unexpectedly used feature expansion')
     _require(feature._feature_gradient(X, z, alpha, .5).tobytes() == expected_gradient.tobytes()
@@ -310,19 +304,41 @@ def _feature_expansion_probe(np, expected_native):
              'feature_expansion full contraction/fallback changed exact bits')
     _require(before == (X.tobytes(), z.tobytes(), alpha.tobytes()),
              'feature_expansion mutated inputs')
-    return {'expected_native': expected_native,
+    loaded_by_facade = name in sys.modules
+    _require(loaded_by_facade is expected_native,
+             'feature_expansion full contraction loaded an unexpected module')
+    if expected_artifact and not expected_native:
+        from contextlib import ContextDecorator
+        _require(np.errstate.__bases__ == (ContextDecorator,)
+                 and facade._LOAD_ATTEMPTED is False and facade._CONTEXT is None,
+                 'feature_expansion must decline the NumPy 1.26 callback family before loading')
+    origin = None
+    if expected_artifact:
+        # Inspect the installed binary only after observing genuine public dispatch.
+        accelerator = importlib.import_module(name)
+        origin = Path(accelerator.__file__).resolve()
+        _require(origin.parent == Path(feature.__file__).resolve().parent,
+                 'feature_expansion module is outside the installed package')
+        _require(accelerator.API_VERSION == 2 and accelerator.BETA_API_VERSION == 1
+                 and accelerator.COMPILED_PY_HEX == sys.hexversion,
+                 'feature_expansion ABI/capability does not match this interpreter')
+        _native_entry(accelerator, 'gradient_from_splits')
+        _native_entry(accelerator, 'beta_from_split')
+    return {'expected_native': expected_native, 'artifact_present': spec is not None,
+            'loaded_by_facade': loaded_by_facade,
             'gradient_native_accepted': gradient is not None,
             'beta_native_accepted': beta is not None,
             'output_verified': True,
             'accelerator_origin': str(origin) if origin is not None else None,
-            'witness': 'Unprofiled unchanged facade returns after genuine C success; no wrapper or guard replacement.'}
+            'witness': 'Unprofiled facade returns and exact full contractions before explicit artifact inspection.'}
 
 
 def verify_routes(backend, contract, expected_platform, expected_python):
     """Require intended routes and exact tiny results; never skip from a guard."""
-    expected = expected_routes(backend, contract, expected_platform, expected_python)
     actual_runtime = _runtime_identity(expected_platform, expected_python)
     import numpy as np
+    actual_runtime['numpy'] = np.__version__
+    expected = expected_routes(backend, contract, expected_platform, expected_python, np.__version__)
     from dwd import _compiled_residual as compiled
     from dwd import _native_residual as native
     from dwd import _kernel_scores as scores
@@ -383,7 +399,8 @@ def verify_routes(backend, contract, expected_platform, expected_python):
     _array_equal(np, rhs, np.zeros(8), 'fixture rhs immutability')
     if contract == 'current':
         routes['ordered_gradient'] = _ordered_gradient_probe(np, expected['ordered_gradient'])
-        routes['feature_expansion'] = _feature_expansion_probe(np, expected['feature_expansion'])
+        routes['feature_expansion'] = _feature_expansion_probe(
+            np, expected['feature_expansion'], backend == 'native' and expected_python == '3.12')
     return {'contract': contract, 'backend': backend,
             'expected_runtime': {'platform': expected_platform, 'python': expected_python},
             'actual_runtime': actual_runtime, 'expected_routes': expected, 'routes': routes}

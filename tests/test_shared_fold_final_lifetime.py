@@ -20,6 +20,9 @@ from dwd.kern_md import KernMD
 import test_shared_fold_search as shared_contract
 
 
+pytestmark = pytest.mark.usefixtures("numerical_search_parent")
+
+
 def capture_stores(monkeypatch):
     """Observe exact instances without replacing their class or indexing."""
     stores = []

@@ -26,6 +26,35 @@ class GeneralEigenValidationTests(unittest.TestCase):
         self.assertTrue(info['attempts'][0]['eigenvectors_validated'])
         self.assertEqual(len(info['attempts']),1)
 
+    def test_singleton_evd_preserves_values_and_validates_both_jobs(self):
+        for value in (-3., -0., np.nextafter(0., 1.), np.finfo(float).max):
+            for values_only in (False, True):
+                with self.subTest(value=value, values_only=values_only):
+                    matrix = np.array([[value]])
+                    matrix.flags.writeable = False
+                    result, info = validated_eigh(matrix, drivers=('evd',),
+                                                  eigvals_only=values_only, return_info=True)
+                    if values_only:
+                        values = result
+                    else:
+                        values, vectors = result
+                        assert_array_equal(vectors, [[1.]])
+                    assert_array_equal(values.view(np.uint64), matrix[0].view(np.uint64))
+                    self.assertEqual(info['accepted_driver'], 'evd')
+                    self.assertEqual(len(info['attempts']), 1)
+                    self.assertEqual(info['attempts'][0]['eigenvectors_validated'], not values_only)
+
+    def test_singleton_evd_failure_uses_configured_retries(self):
+        matrix = np.array([[-2.]])
+        with patch.object(implementation, 'dsyevd', return_value=(None, None, 1)):
+            with self.assertRaisesRegex(EigenDecompositionError, 'info=1'):
+                validated_eigh(matrix, drivers=('evd',))
+            (values, vectors), info = validated_eigh(matrix, return_info=True)
+        self.assertEqual([a['driver'] for a in info['attempts']], ['evd', 'evr'])
+        self.assertEqual(info['accepted_driver'], 'evr')
+        assert_array_equal(values, [-2.])
+        assert_array_equal(np.abs(vectors), [[1.]])
+
     def test_valid_singular_tiny_and_repeated_eigenspaces(self):
         values=np.array([0.,0.,1e-200,1e-10,1.,1.,2.,2.])
         matrix=np.diag(values)

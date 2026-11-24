@@ -7,6 +7,8 @@ from sklearn.base import clone, is_classifier
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.model_selection import GridSearchCV
 
+from _search_resources import single_worker_search_parent
+
 from dwd.kern_md import KernMD, kern_md
 from dwd.kernel_utils import KernelScaler
 from dwd.gen_kern_dwd import KernGDWD
@@ -64,6 +66,7 @@ class RemainingAuditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             KernelScaler().fit(np.zeros((2, 2)))
 
+    @single_worker_search_parent()
     def test_precomputed_cross_validation_slices_both_axes(self):
         X = np.random.RandomState(23).normal(size=(12, 3))
         y = np.tile([-1, 1], 6)

@@ -19,6 +19,8 @@ from sklearn.model_selection import GridSearchCV
 
 import dwd.gen_dwd as linear
 import dwd._explicit_factor as factor
+from _search_resources import single_worker_search_parent
+
 from dwd._eigen import validated_eigh
 
 
@@ -363,6 +365,7 @@ def cv_data():
 
 @pytest.mark.parametrize('framework', ['package', 'sklearn'])
 @pytest.mark.parametrize('implicit', [False, True])
+@single_worker_search_parent()
 def test_zero_and_positive_penalty_public_cv_matches_original(framework, implicit, baseline):
     X, y, folds = cv_data()
     def fit(module):

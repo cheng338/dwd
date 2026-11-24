@@ -1,0 +1,2 @@
+# Reference version for cross-host conic fit timings.
+clarabel==0.11.1

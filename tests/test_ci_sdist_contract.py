@@ -108,6 +108,21 @@ def test_changed_fixture_bytes_are_detected(tmp_path, source, source_files):
     _reject_before_extraction(source, tmp_path / 'sdists', tmp_path / 'out', 'changed required resource')
 
 
+def test_explicit_inventory_requires_the_callers_fixtures(tmp_path):
+    source = tmp_path / 'checkout'
+    source.mkdir()
+    files = {'tests/test_pair.py': b'test code', 'tests/fixtures/sample.bin': b'\x00\x01'}
+    archive_dir = tmp_path / 'sdists'
+    _write_sdist(archive_dir, {'tests/test_pair.py': files['tests/test_pair.py']})
+    destination = tmp_path / 'bundle'
+    with pytest.raises(RuntimeError, match='missing=.*sample.bin'):
+        ci_sdist.verify_and_extract(source, archive_dir, destination, required=files)
+    assert not destination.exists()
+    _write_sdist(archive_dir, files)
+    result = ci_sdist.verify_and_extract(source, archive_dir, destination, required=files)
+    assert (Path(result['source']) / 'tests/fixtures/sample.bin').read_bytes() == b'\x00\x01'
+
+
 def test_unknown_new_fixture_is_discovered_without_updating_allowlist(tmp_path, source, source_files):
     _write_sdist(tmp_path / 'sdists', source_files)
     (source / 'tests' / 'fixtures' / 'future.custom-format').write_bytes(b'new resource')

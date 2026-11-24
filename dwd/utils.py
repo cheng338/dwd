@@ -1,6 +1,6 @@
 import numpy as np
 from collections.abc import Mapping
-from dwd._validation import require_real
+from dwd._validation import exact_sparse_uint64_target, require_real
 
 
 def parameters_equal(left, right):
@@ -54,8 +54,8 @@ def pm1(y):
         y with +/- 1 values. Note the positive label is determined
         by np.unique(y)[1].
     """
-    y = np.array(y).reshape(-1)
-    require_real(y, 'y')
+    y = np.array(exact_sparse_uint64_target(y)).reshape(-1)
+    require_real(y, 'y', training_labels=True)
     labels = np.unique(y)
 
     # check binary
@@ -64,5 +64,6 @@ def pm1(y):
                          ' found {} labels'.format(len(labels)))
 
     y_pm1 = np.ones(len(y))
-    y_pm1[y == labels[0]] = -1
+    # Retain the boxed representative's scalar equality during broadcasting.
+    y_pm1[y == labels[:1]] = -1
     return y_pm1

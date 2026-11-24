@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from _feature_expansion_test_support import (
-    arithmetic, facade, feature, genuine, layout, LAYOUTS, prepare, reference,
+    arithmetic, facade, feature, expansion_bridge, genuine, layout, LAYOUTS, prepare, reference,
 )
 
 CASES = ('zeros', 'signed-zero', 'dyadic', 'cancel', 'low-product', 'half-even',
@@ -60,9 +60,9 @@ def bundle(context, columns, prep, split):
     return (context, tuple(memoryview(value) for value in arrays)), arrays, output
 
 
-def unprofiled_beta(genuine, columns, alpha):
+def unprofiled_beta(expansion_bridge, columns, alpha):
     assert sys.getprofile() is None and sys.gettrace() is None
-    module, context = genuine
+    module, context = expansion_bridge
     prep, split = prepared(alpha)
     native, arrays, output = bundle(context, columns, prep, split)
     before = [value.tobytes() for value in arrays]
@@ -74,14 +74,17 @@ def unprofiled_beta(genuine, columns, alpha):
     status = module.beta_from_split(native)
     assert all(value.tobytes() == old for value, old in zip(arrays[:-1], before[:-1]))
     actual = facade.try_beta(feature, columns, prep, split)
+    if context is None:
+        assert status == module.GUARD and output.tobytes() == before[-1] and actual is None
     if error is None:
-        assert status == module.OK
-        assert output.tobytes() == expected.tobytes() == actual.tobytes()
-        assert actual.flags.owndata and not np.shares_memory(actual, columns)
+        if context is not None:
+            assert status == module.OK
+            assert output.tobytes() == expected.tobytes() == actual.tobytes()
+            assert actual.flags.owndata and not np.shares_memory(actual, columns)
         rational = np.array([float(sum((Fraction(float(x))*Fraction(float(y))
                                        for x, y in zip(row, alpha)), Fraction()))
                              for row in columns])
-        assert actual.tobytes() == rational.tobytes()
+        assert expected.tobytes() == rational.tobytes()
         assert feature._beta_tile(columns, *prep, _split=split).tobytes() == expected.tobytes()
     else:
         assert status != module.OK and output.tobytes() == before[-1] and actual is None
@@ -92,11 +95,11 @@ def unprofiled_beta(genuine, columns, alpha):
 
 @pytest.mark.parametrize('arrangement', LAYOUTS)
 @pytest.mark.parametrize('name', CASES)
-def test_literal_beta_bits_and_full_tile_fallback(genuine, arrangement, name):
+def test_literal_beta_bits_and_full_tile_fallback(expansion_bridge, arrangement, name):
     columns, alpha = data(name)
     columns = layout(columns, arrangement)
     before = columns.tobytes(), alpha.tobytes()
-    unprofiled_beta(genuine, columns, alpha)
+    unprofiled_beta(expansion_bridge, columns, alpha)
     assert before == (columns.tobytes(), alpha.tobytes())
 
 
@@ -104,15 +107,17 @@ CAPS = ((2, 1), (64, 32), (2, 1024), (65, 1), (2, 1025), (1, 1), (2, 0))
 
 
 @pytest.mark.parametrize('shape', CAPS, ids=('min', 'max-rows', 'max-width', 'rows-over', 'width-over', 'scalar', 'empty'))
-def test_original_tile_caps_and_atomic_refusal(genuine, shape):
-    module, context = genuine
+def test_original_tile_caps_and_atomic_refusal(expansion_bridge, shape):
+    module, context = expansion_bridge
     columns, alpha = np.ones(shape), np.full(shape[1], .5)
     prep, split = prepared(alpha)
     native, arrays, output = bundle(context, columns, prep, split)
     before = output.tobytes()
     status = module.beta_from_split(native)
     accepted = 2 <= shape[0] <= 64 and 0 < shape[1] <= 1024 and shape[0]*shape[1] <= 16384
-    if accepted:
+    if accepted and context is None:
+        assert status == module.GUARD and output.tobytes() == before
+    elif accepted:
         assert status == module.OK
         assert output.tobytes() == reference._beta_tile(columns, *prep).tobytes()
     else:
@@ -125,8 +130,8 @@ MALFORMED = ('float32', 'nonnative', 'unaligned', 'F', 'negative', 'strided',
 
 
 @pytest.mark.parametrize('change', MALFORMED)
-def test_beta_bridge_layout_refusal_is_atomic(genuine, change):
-    module, context = genuine
+def test_beta_bridge_layout_refusal_is_atomic(expansion_bridge, change):
+    module, context = expansion_bridge
     columns, alpha = data()
     prep, split = prepared(alpha)
     _, arrays, output = bundle(context, columns, prep, split)
@@ -300,7 +305,7 @@ def test_fault_only_entry_preserves_public_fallback(genuine, monkeypatch, fault)
         assert feature._feature_coefficients(x, alpha).tobytes() == reference._feature_coefficients(x, alpha).tobytes()
 
 
-def test_scalar_no_new_modules(genuine, monkeypatch):
+def test_scalar_no_new_modules(monkeypatch):
     names = ('dwd._feature_expansion', 'dwd._feature_expansion_accel',
              'dwd._ordered_gradient_reduction', 'dwd._ordered_reduction_accel')
     for name in names: monkeypatch.delitem(sys.modules, name, raising=False)
@@ -347,7 +352,7 @@ def test_allocation_failure_replays_all_scalar_columns(genuine, monkeypatch, poi
 
 
 @pytest.mark.parametrize('cached', ('unknown', 'subclass'))
-def test_unknown_cached_facade_has_no_attribute_hooks(genuine, monkeypatch, cached):
+def test_unknown_cached_facade_has_no_attribute_hooks(monkeypatch, cached):
     class NoHooks:
         def __getattribute__(self, name): raise AssertionError('Unknown metadata access')
     class SubModule(types.ModuleType):

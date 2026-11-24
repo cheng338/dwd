@@ -8,7 +8,6 @@ import numpy as np
 from _kernel_reference import kernel_route
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
-from sklearn import config_context
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
 
 import dwd.cv as cv_module
@@ -58,9 +57,7 @@ def prevent_work(monkeypatch):
 def assert_mode_error(call, mode, error_class=TypeError):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        # CV constructors retain ndarray defaults. Full repr avoids sklearn's
-        # independent changed-default comparison while checking this API error.
-        with config_context(print_changed_only=False), pytest.raises(error_class) as error:
+        with pytest.raises(error_class) as error:
             call()
     message = str(error.value)
     assert "solver_mode" in message

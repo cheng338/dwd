@@ -1,4 +1,15 @@
-# DWD 2.0.1
+# DWD 2.0.2
+
+DWD 2.0.2 preserves integer-coordinate sparse features, class labels and
+row selections in cases where dtype conversion or process serialization
+could change their values. The [shared-fold search guide](docs/shared_fold_search.md#process-parallel-fallback)
+describes how file-backed inputs and custom fold containers reach workers.
+
+For ensemble fits, install Ensemble DWD 0.4.1 with DWD 2.0.2.
+The [project metadata](pyproject.toml) lists the revised dependency minimums.
+See the [changelog](CHANGES.md#202) for the input and solver details.
+
+## DWD 2.0.1
 
 This patch corrects two regression tests present in the public 2.0.0 source
 tag. The build tests now resolve the platform-error
@@ -10,7 +21,7 @@ sources. [2.0.0 CI results](VALIDATION.md#dwd-200-source-tag-tests).
 
 ## Upgrading from 1.3.19
 
-Install DWD 2.0.1 with Ensemble DWD 0.4.0 when using the ensemble estimators.
+When using the ensemble estimators, use DWD 2.0.2 with Ensemble DWD 0.4.1 or DWD 2.0.1 with Ensemble DWD 0.4.0.
 Earlier companion versions can forward removed fitting keywords.
 
 - Remove `solver_mode`, kernel `implementation` and kernel `implicit_P` from

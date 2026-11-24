@@ -36,23 +36,25 @@ Wang, B., and Zou, H. (2018).
 
 # Installation
 
-DWD 2.0.1 requires Python 3.11+ and scikit-learn 1.6+. Download a compatible
-wheel from the [2.0.1 release assets](https://github.com/cheng338/dwd/releases/tag/v2.0.1).
+DWD 2.0.2 requires Python 3.11+, NumPy 1.26.3+, SciPy 1.11.4+,
+scikit-learn 1.6.1+, joblib 1.6.0+ and threadpoolctl 3.7.0+. Download a
+compatible wheel from the [2.0.2 release assets](https://github.com/cheng338/dwd/releases/tag/v2.0.2).
 The native wheel for 64-bit Windows and standard CPython 3.12 contains three
 compiled helpers for residuals, ordered reductions and feature expansions.
 
 ```shell
-python -m pip install ./dwd-2.0.1-cp312-cp312-win_amd64.whl
+python -m pip install ./dwd-2.0.2-cp312-cp312-win_amd64.whl
 ```
 
 The portable wheel supports Python 3.11+:
 
 ```shell
-python -m pip install ./dwd-2.0.1-py3-none-any.whl
+python -m pip install ./dwd-2.0.2-py3-none-any.whl
 ```
 
-To build from the source distribution, extract it and run
-`python -m pip install .` in its root directory. See the
+To install from source, run `python -m pip install .` in the root of the
+extracted archive or checkout.
+See the [project metadata](pyproject.toml) and the
 [compiled-helper guide](docs/compiled_residual.md) for build prerequisites
 and runtime eligibility.
 
@@ -152,9 +154,10 @@ algorithm described in historical release notes.
 
 ## Companion package and citation
 
-If you also use the companion estimators, install
-[Ensemble DWD 0.4.0](https://github.com/cheng338/ensemble-dwd/releases/tag/v0.4.0).
-Older companions can pass solver arguments that DWD 2.0.1 has removed.
+Choose a companion release whose declared DWD dependency matches the version
+you install. [Ensemble DWD 0.4.1](https://github.com/cheng338/ensemble-dwd/releases/tag/v0.4.1)
+requires exactly `dwd==2.0.2`. For the earlier pair, Ensemble DWD 0.4.0
+requires exactly `dwd==2.0.1`.
 
 The companion Ensemble DWD package implements the ensemble kernel DWD method
 described in Chapter 5 of the following dissertation.
@@ -380,9 +383,11 @@ Keep preprocessing inside the CV pipeline. Gamma remains an entry in
 `kernel_kws`, so tune whole dictionaries rather than `kernel_kws__gamma`:
 
 ```python
+from joblib import effective_n_jobs, parallel_config
 from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from threadpoolctl import threadpool_limits
 
 pipeline = make_pipeline(StandardScaler(), KernGDWD())
 search = GridSearchCV(
@@ -390,8 +395,11 @@ search = GridSearchCV(
     {'kerngdwd__lambd': [.01, .1],
      'kerngdwd__kernel': ['rbf'],
      'kerngdwd__kernel_kws': [{'gamma': .1}, {'gamma': 1.0}]},
-    cv=3, scoring='accuracy', error_score='raise',
-).fit(X, y)
+    cv=3, n_jobs=effective_n_jobs(None), scoring='accuracy', error_score='raise',
+)
+# Keep the selected model's timed refit serial. The search retains its CV worker count.
+with parallel_config(n_jobs=1), threadpool_limits(limits=1):
+    search.fit(X, y)
 selected_model = search.best_estimator_
 ```
 
@@ -414,11 +422,34 @@ grid. The existing `run_cv` API and first-maximum selection rule are unchanged.
 
 For serial `KernMD` searches over wide float64 feature matrices, the explicit
 [`fit_shared_fold_search` helper](docs/shared_fold_search.md) can reuse immutable
-feature subsets across candidates. Within the helper, exact contiguous row
-selections automatically use private views; other selections keep indexed
-copies. It preserves ordinary final-model ownership and scikit-learn's search
-and refit semantics, and delegates unsupported configurations to ordinary search.
-Measure the complete search: ordinary or moderate-sized workloads may favor
+feature subsets across candidates. Exact contiguous row selections use private
+views. On this serial route, scikit-learn scores the candidates and handles
+refitting. The final model owns its feature data.
+
+On the stock `GridSearchCV.fit` fallback in DWD `2.0.2`, the helper
+prepares mapped NumPy features, targets and direct array-valued fit parameters
+when multiple process workers are configured on entry. It copies inputs backed
+by copy-on-write mappings and mapped views with a reversed non-singleton axis
+or a contiguous memory order that differs from the backing map. These copies
+apply to arrays of exact type `numpy.ndarray` or `numpy.memmap` whose dtype
+contains no Python objects. If a setup callback will switch a serial search
+to process workers, make owning copies of those affected inputs before calling
+the helper.
+
+For supported explicit fold indices and exact pandas DataFrame features, the
+helper uses the workers selected for candidate evaluation, including after a
+setup callback changes the worker count. The parent splitter and final refit
+use the original DataFrame.
+For explicit train/test selectors of exact type `pandas.Index` or `pandas.Series`,
+standard joblib process workers receive the parent's row order or Boolean mask,
+including private edits to supported mapped buffers.
+Keep object-valued data in ordinary in-memory arrays for
+process fitting. With the published
+DWD 2.0.1 or a direct process-parallel `GridSearchCV.fit`, make an owning copy
+of each affected view before fitting. For fold formats and custom scorers, see the
+[process-parallel guidance](docs/shared_fold_search.md#process-parallel-fallback).
+Wheel users can find `docs/shared_fold_search.md` in the matching source archive.
+Measure the complete search. Ordinary or moderate-sized workloads may favor
 ordinary search, and caching can add storage through the final refit. The helper
 clears its private fold registry when it exits, after recording cache use.
 Keep statistically chosen folds; ordinary search remains the general route,
@@ -553,8 +584,8 @@ install the exact artifact in a fresh environment, prepare tests outside the
 checkout, verify installed origins and payloads, then run the detached suite.
 
 For a separate environment without CVXPY, install `.[test-base]` and run the same
-suite; optional SOCP tests skip. The [November 19 comparison](VALIDATION.md#november-19-2026-paired-release-comparison)
-identifies the candidate wheels and the platforms used.
+suite. Optional SOCP tests skip. The candidates for DWD 2.0.0 and Ensemble DWD
+0.4.0 were tested in the [November 19, 2026 comparison](VALIDATION.md#november-19-2026-paired-release-comparison).
 Passing numerical and API tests is not a universal accuracy or speed guarantee.
 Historical notebooks and figures under `doc/` describe earlier implementations;
 they have not been relabeled as new release results.
@@ -636,7 +667,7 @@ object does not remove stale requests.
 
 # Release history
 
-DWD 2.0.1 corrects regression tests for native builds and CPU affinity during kernel fitting.
+DWD 2.0.2 corrects sparse integer and class-label handling and preserves file-backed inputs during parallel cross-validation.
 
 If you are upgrading from 1.3.19, see the [migration guide](RELEASE_NOTES.md#upgrading-from-1319) for changes to fitting arguments, parameter grids, checkpoints, and Ensemble DWD compatibility.
 

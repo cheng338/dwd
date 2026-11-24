@@ -14,6 +14,7 @@ import psutil
 import pytest
 
 from _residual_probe_python import probe_python
+from _residual_native_threads import live_native_ids, require_native_exit, worker_completion_probe
 
 
 def test_probe_preserves_python_prefix_and_direct_parent():
@@ -75,7 +76,8 @@ def test_interrupted_native_start_drains_owned_worker_process(mode):
     assert result["cancelled_before_return"] is True
     assert result["native_calls"] >= (2 if mode == "registered" else 1)
     assert result["omitted_registered"] is False
-    assert result["owned_native_threads_remaining"] == []
+    assert set(result["owned_native_threads_remaining"]) <= set(result["completed_worker_ids_at_propagation"])
+    assert result["owned_native_threads_after_poll"] == []
     assert result["foreign_thread_survived"] is True
     assert result["scope_retired"] is True
     assert result["deferred_interrupts"] == (2 if mode == "repeated" else 0)
@@ -196,6 +198,7 @@ def _startup_control(mode):
     omitted = []
     owned_ids = []
     starts = []
+    completion_probes = {}
     native_calls = []
     wait_line = cleanup._qualified_wait_line()
     assert wait_line is not None
@@ -227,6 +230,8 @@ def _startup_control(mode):
                 starts.append(worker)
                 number = len(starts) - 1
                 assert entered[number].wait(5), "native worker did not enter"
+                assert worker.native_id in owned_ids and worker.native_id not in completion_probes
+                completion_probes[worker.native_id] = worker_completion_probe(worker)
                 if mode != "registered" or number == 1:
                     assert worker not in pool._threads
                     assert worker not in impl._threads_queues
@@ -253,21 +258,37 @@ def _startup_control(mode):
                 compiled.compiled_values(np.eye(65), np.ones(65), np.zeros(65), .125, .3)
             except KeyboardInterrupt as error:
                 caught = error
+                assert caught is primary
+                # Sample before leaving the reusable scope or releasing any
+                # gates. Only a worker whose captured primitive is done may
+                # still be present during the bounded kernel-exit poll.
+                completed_ids = {tid for tid, done in completion_probes.items() if done()}
+                tasks_finished = sorted(finished) == sorted(native_calls)
+                scope_retired = scope is None or scope.executor is None
+                cancellation_published = cancelled.is_set()
+                current_ids = live_native_ids([*owned_ids, foreign_id])
+                native_remaining = sorted(set(owned_ids) & current_ids)
+                foreign_survived = foreign.is_alive() and foreign_id in current_ids
+                assert owned_ids and completed_ids == set(owned_ids), (completed_ids, owned_ids)
+                assert tasks_finished and scope_retired and cancellation_published and foreign_survived
+                require_native_exit(native_remaining, completed_ids)
+                native_after_poll = sorted(live_native_ids(owned_ids))
+                assert not native_after_poll
             finally:
                 sys.settrace(previous_trace)
         assert caught is primary
         assert len(omitted) == 1
         worker, pool = omitted[0]
         assert pool._shutdown
-        assert sorted(finished) == sorted(native_calls)
-        current_ids = {row.id for row in psutil.Process().threads()}
         result = {"primary_preserved": caught is primary,
-                  "cancelled_before_return": cancelled.is_set(),
+                  "cancelled_before_return": cancellation_published,
                   "native_calls": len(native_calls),
                   "omitted_registered": worker in pool._threads or worker in impl._threads_queues,
-                  "owned_native_threads_remaining": sorted(set(owned_ids) & current_ids),
-                  "foreign_thread_survived": foreign.is_alive() and foreign_id in current_ids,
-                  "scope_retired": scope is None or scope.executor is None,
+                  "owned_native_threads_remaining": native_remaining,
+                  "completed_worker_ids_at_propagation": sorted(completed_ids),
+                  "owned_native_threads_after_poll": native_after_poll,
+                  "foreign_thread_survived": foreign_survived,
+                  "scope_retired": scope_retired,
                   "deferred_interrupts": len(repetitions),
                   "cleanup_note": next(n for n in primary.__notes__ if n.startswith("Owned executor cleanup:"))}
     finally:

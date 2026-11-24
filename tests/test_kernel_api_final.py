@@ -11,6 +11,8 @@ from legacy_solver_fixtures import load_legacy_case
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
 
+from _search_resources import single_worker_search_parent
+
 from dwd.cv import run_cv
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV, solve_gen_kern_dwd, c_from_lambd
 from dwd.utils import parameters_equal
@@ -75,6 +77,7 @@ class FinalKernelAPITests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, 'solver_mode'):
             self.model(solver_mode='legacy', random_state=83).fit(self.X, self.y)
 
+    @single_worker_search_parent()
     def test_clone_and_grid_search_keep_notation_and_new_controls(self):
         base = self.model(initialization='zero', backend='spectral', prediction_batch_size=3)
         fitted = base.fit(self.X, self.y)
@@ -146,6 +149,7 @@ class FinalKernelAPITests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 fitted.set_params(prediction_batch_size=bad).decision_function(self.query)
 
+    @single_worker_search_parent()
     def test_precomputed_orientation_batches_and_standard_cv(self):
         K = rbf_kernel(self.X, gamma=.3)
         query_K = rbf_kernel(self.query, self.X, gamma=.3)

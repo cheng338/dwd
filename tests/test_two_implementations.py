@@ -15,6 +15,8 @@ from sklearn.model_selection import GridSearchCV, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from _search_resources import single_worker_search_parent
+
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
 from dwd._reference_mm import reference_update
 from _kernel_reference import kernel_route
@@ -134,6 +136,7 @@ class PublicAndPrivateReferenceTests(unittest.TestCase):
             assert_allclose(zero.dual_coef_[0], np.zeros(len(self.y)), atol=1e-14)
             assert_allclose(random.dual_coef_[0], expected, rtol=2e-13, atol=2e-13)
 
+    @single_worker_search_parent()
     def test_external_gridsearch_selects_supported_backends_and_refits_public_classifier(self):
         base = Pipeline([('scale', StandardScaler()), ('model', self.model('optimized', max_iter=3))])
         search = GridSearchCV(base, {'model__backend': ['auto', 'spectral'],
@@ -148,6 +151,7 @@ class PublicAndPrivateReferenceTests(unittest.TestCase):
         self.assertEqual(best.diagnostics_['implementation'], 'optimized')
         self.assertTrue(set(search.predict(self.query)).issubset(set(self.y)))
 
+    @single_worker_search_parent()
     def test_external_pairwise_gridsearch_matches_explicit_fold_slicing_for_each_backend(self):
         K = rbf_kernel(self.X, gamma=.3)
         query_K = rbf_kernel(self.query, self.X, gamma=.3)

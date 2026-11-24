@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from _feature_expansion_test_support import (
-    arithmetic, facade, feature, genuine, literal, native_bundle, prepare, reference,
+    arithmetic, facade, feature, expansion_bridge, genuine, literal, native_bundle, prepare, reference,
     layout, LAYOUTS,
 )
 
@@ -220,7 +220,7 @@ def test_explicit_fault_injection_preserves_fallback_and_exceptions(genuine, mon
         assert len(visited) == 17
 
 
-def test_scalar_branch_imports_neither_fused_nor_ordered(genuine, monkeypatch):
+def test_scalar_branch_imports_neither_fused_nor_ordered(monkeypatch):
     names = ('dwd._feature_expansion', 'dwd._feature_expansion_accel',
              'dwd._ordered_gradient_reduction', 'dwd._ordered_reduction_accel')
     for name in names:
@@ -232,9 +232,9 @@ def test_scalar_branch_imports_neither_fused_nor_ordered(genuine, monkeypatch):
     assert all(name not in sys.modules for name in names)
 
 
-def test_first_eligible_tile_does_not_import_new_native_before_old_facade(genuine, monkeypatch):
+def test_first_eligible_tile_does_not_import_new_native_before_old_facade(monkeypatch):
     columns, prepared, splits = data()
-    monkeypatch.delitem(sys.modules, 'dwd._ordered_gradient_reduction')
+    monkeypatch.delitem(sys.modules, 'dwd._ordered_gradient_reduction', raising=False)
     def forbidden(*args, **kwargs): raise AssertionError('No new native load before old facade')
     monkeypatch.setattr(facade, '_native_entry', forbidden)
     assert facade.try_gradient(feature, columns, prepared, splits) is None

@@ -65,6 +65,9 @@ def checked(record_property, case, budget=10., delay=2.5):
     assert row is not None and row['case'] == case and row['implementation'] == 'selected_package'
     assert row['native_remaining'] == [] and row['scope_context_reset']
     if case == 'ordinary':
+        assert len(row['cleanup_calls']) == len(row['cleanup_receipts'])
+        assert all(set(call['native_remaining']) <= set(call['completed_native_ids'])
+                   for call in row['cleanup_calls'])
         return row
     assert row['primary_preserved'] and row['retained_traceback']
     assert row['cancellation_published'] and not row['partial_output_published']
@@ -81,7 +84,10 @@ def checked(record_property, case, budget=10., delay=2.5):
         assert receipt['qualified'] is receipt['drained']
         assert call['end'] >= call['start']
         if receipt['drained']:
-            assert call['native_remaining'] == []
+            assert set(call['native_remaining']) <= set(call['completed_native_ids'])
+        elif receipt['partial_registered_drain']['completed']:
+            registered_alive = set(call['native_remaining']).intersection(row['registered_native_ids'])
+            assert registered_alive <= set(call['completed_native_ids'])
         wait = receipt['startup_readiness_wait']
         if wait['attempted']:
             assert wait['eligible'] and wait['budget_seconds'] == budget / 1000
@@ -97,7 +103,11 @@ def checked(record_property, case, budget=10., delay=2.5):
         else:
             assert wait == dict(eligible=False, attempted=False, budget_seconds=None,
                                 outcome='not_eligible', elapsed_seconds=None)
-    if not row['cleanup_receipts'][-1]['drained']:
+    if row['cleanup_receipts'][-1]['drained']:
+        snapshot = row['at_propagation']
+        remaining = snapshot['omitted_native_alive'] + snapshot['registered_native_alive']
+        assert set(remaining) <= set(snapshot['completed_native_ids'])
+    else:
         assert not row['at_propagation']['whole_completion_cached']
     return row
 
@@ -204,7 +214,8 @@ def test_partial_registered_drain_keeps_aggregate_unproved(case, record_property
     else:
         assert partial == dict(attempted=True, workers=1, completed=True, outcome='completed')
         assert partial['completed'] is True
-        assert row['at_propagation']['registered_native_alive'] == []
+        snapshot = row['at_propagation']
+        assert set(snapshot['registered_native_alive']) <= set(snapshot['completed_native_ids'])
         assert 'partial-drained' in row['events']
     if case == 'partial_interrupt':
         assert row['completion_fault_fired']

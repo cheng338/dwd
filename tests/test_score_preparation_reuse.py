@@ -86,8 +86,8 @@ def dense_cases():
     yield 'first_block_all_reliable', late, alpha
     rng = np.random.default_rng(36192)
     for columns in (1, 2, 7, 32):
-        query = np.ldexp(rng.uniform(-1., 1., size=(9, columns)), rng.integers(-400, 401, size=(9, columns)))
-        coefficients = np.ldexp(rng.uniform(-1., 1., size=columns), rng.integers(-400, 401, size=columns))
+        query = np.ldexp(rng.uniform(-1., 1., size=(9, columns)), rng.integers(-400, 401, size=(9, columns)).astype(np.intc))
+        coefficients = np.ldexp(rng.uniform(-1., 1., size=columns), rng.integers(-400, 401, size=columns).astype(np.intc))
         yield 'exponent_mix_' + str(columns), query, coefficients
 
 

@@ -91,7 +91,7 @@ class CurrentZeroCertificate(unittest.TestCase):
         certified = 0
         for i in range(400):
             width = int(rng.integers(1, 17))
-            powers = rng.integers(-540, 490, size=(2, width))
+            powers = rng.integers(-540, 490, size=(2, width)).astype(np.intc)
             left = np.ldexp(rng.uniform(0.5, 1.0, width), powers[0])
             alpha = np.ldexp(rng.uniform(0.5, 1.0, width), powers[1])
             row = np.repeat(left, 2)

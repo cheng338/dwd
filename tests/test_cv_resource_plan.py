@@ -116,10 +116,10 @@ with threadpool_limits(3):
     old_receipts = {str(p): p.read_bytes() for p in (root / 'two' / 'receipts').rglob('*.json')}
     replay = run(root / 'two', resume=True, jobs=1, cv_native_threads=2,
                  cv_memory_budget_mib=1000, cv_worker_memory_mib=1000,
-                 final_native_threads=2)
+                 final_native_threads=1)
     assert replay['work_summary']['fold_workers'] == 0
     assert replay['work_summary']['replayed_evaluations'] == 4
-    assert all(p['num_threads'] == 2 for p in replay['work_summary']['final_refit']['runtime']['native_pools'])
+    assert all(p['num_threads'] == 1 for p in replay['work_summary']['final_refit']['runtime']['native_pools'])
     assert old_receipts == {str(p): p.read_bytes() for p in (root / 'two' / 'receipts').rglob('*.json')}
     try:
         run(root / 'two', resume=True, cv_native_threads=1)

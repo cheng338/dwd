@@ -233,8 +233,8 @@ def auto_dwd_C(X, y, const=100):
         raise ValueError('const must be finite and strictly positive.')
 
     # pariwise distances between points in each class
-    D = euclidean_distances(X[y == labels[0], :],
-                            X[y == labels[1], :])
+    D = euclidean_distances(X[y == labels[:1], :],
+                            X[y == labels[1:2], :])
 
     d = np.median(D.ravel())
     if not np.isfinite(d) or d <= 0:

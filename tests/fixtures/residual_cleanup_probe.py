@@ -6,10 +6,11 @@ import os
 from pathlib import Path
 import sys
 import threading
-import time
 
 import psutil
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _residual_native_threads import live_native_ids, wait_native_gone
 
 _RETAINED = []
 
@@ -20,18 +21,6 @@ def _line(function, text):
     if len(found) != 1:
         raise RuntimeError('Unqualified interpreter source line: '+text)
     return found[0]
-
-
-def _native_ids():
-    return {row.id for row in psutil.Process().threads()}
-
-
-def _wait_gone(ids, seconds=5):
-    end = time.monotonic()+seconds
-    while set(ids) & _native_ids():
-        if time.monotonic() >= end:
-            raise RuntimeError('Owned native worker did not exit after cleanup.')
-        time.sleep(0.001)
 
 
 def _origins(root):
@@ -146,13 +135,13 @@ def _declined_startup(exit_probe):
         assert events == ['first_interrupt_before_readiness', 'second_interrupt_before_queue_put']
         assert len(workers) == len(pools) == 1 and len(owned_ids) == 1
         unready_at_propagation = not workers[0]._started.is_set()
-        native_at_propagation = sorted(set(owned_ids) & _native_ids())
+        native_at_propagation = sorted(live_native_ids(owned_ids))
         assert unready_at_propagation and native_at_propagation == owned_ids
         # Release only the controlled bootstrap gate after recording the
         # unproved package return. The package has already supplied the wake.
         release_bootstrap.set()
         assert workers[0]._started.wait(5)
-        _wait_gone(owned_ids)  # Natural exit after test gate release; no rescue wake.
+        wait_native_gone(owned_ids)  # Natural exit after test gate release; no rescue wake.
         result = dict(case='declined_exit' if exit_probe else 'declined_observe', variant='selected_source',
             injection='deterministic trace at two exact Python source lines; not ordinary Ctrl+C',
             evaluator='unused stand-in; real owned ThreadPoolExecutor/native worker',
@@ -160,7 +149,7 @@ def _declined_startup(exit_probe):
             secondary_is_cause=caught.__cause__ is secondary,
             cancellation_published=cancellation.is_set(), cleanup_receipts=receipts,
             omitted_registered=workers[0] in impl._threads_queues,
-            owned_native_remaining=sorted(set(owned_ids) & _native_ids()),
+            owned_native_remaining=sorted(live_native_ids(owned_ids)),
             shutdown_flag=pools[0]._shutdown, retained_traceback=True,
             bootstrap_unready_at_propagation=unready_at_propagation,
             owned_native_at_propagation=native_at_propagation,

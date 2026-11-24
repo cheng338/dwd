@@ -284,7 +284,7 @@ def affine_scores(K, alpha, b, *, policy='adaptive', return_info=False, _reporti
         if not sparse and K.shape[0] > 1:
             with np.errstate(over='ignore', invalid='ignore', under='ignore'):
                 split_alpha = _split_operand(alpha)
-            _expanded_dense_rows(K, alpha, b, np.arange(K.shape[0]), split_alpha,
+            _expanded_dense_rows(K, alpha, b, np.arange(K.shape[0], dtype=np.intp), split_alpha,
                                  output, exact_used, reporting=_reporting)
         else:
             for index in range(K.shape[0]):

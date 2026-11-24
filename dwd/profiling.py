@@ -129,8 +129,17 @@ def residual_profile():
 
     Example::
 
+        from joblib import parallel_config
+        from threadpoolctl import threadpool_limits
+        from dwd.gen_kern_dwd import KernGDWD
         from dwd.profiling import residual_profile
-        with residual_profile() as profile:
+
+        model = KernGDWD(kernel='rbf', random_state=42)
+        with (
+            parallel_config(backend='sequential', n_jobs=1),
+            threadpool_limits(limits=1),
+            residual_profile() as profile,
+        ):
             model.fit(X, y)
         observations = profile.as_dict()
 

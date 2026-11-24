@@ -13,13 +13,18 @@ import sys
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
+from scipy.sparse import dia_array
 from sklearn.exceptions import NotFittedError
 from sklearn.model_selection import GridSearchCV
+from sklearn.svm import SVC
 from sklearn.utils.validation import check_is_fitted
 
 from dwd.kern_md import KernMD
 from dwd import model_selection as selection
 from dwd.model_selection import fit_shared_fold_search
+
+
+pytestmark = pytest.mark.usefixtures("numerical_search_parent")
 
 
 def _data():
@@ -254,6 +259,25 @@ def test_unsupported_search_uses_stock_and_preserves_complete_results(kind):
     assert _snapshot(X) == before
     if kind != 'precomputed':
         assert not np.shares_memory(shared.best_estimator_._Xfit, X)
+
+
+def test_svc_fallback_with_int32_dia_array_matches_dense_search():
+    # Older SciPy widened the indices during DIA-to-CSR conversion on Linux.
+    data = np.tile(np.arange(1, 5, dtype=np.int16), (3, 1))
+    offsets = np.array([0, -1, 2], dtype=np.int32)
+    X = dia_array((data, offsets), shape=(4, 4))
+    y = np.array([0, 1, 0, 1])
+    assert X.offsets.dtype == np.int32
+    search = GridSearchCV(SVC(), {'C': [1.]}, cv=2, n_jobs=1, error_score='raise')
+    dense = X.toarray()
+    expected = copy.deepcopy(search).fit(dense, y)
+    actual = fit_shared_fold_search(search, X, y)
+    assert actual.shared_fold_info['route'] == 'stock'
+    for split in ('split0_test_score', 'split1_test_score'):
+        assert_array_equal(actual.cv_results_[split], expected.cv_results_[split])
+    assert_array_equal(actual.predict(X), expected.predict(dense))
+    assert_allclose(actual.decision_function(X), expected.decision_function(dense),
+                    rtol=1e-10, atol=1e-10)
 
 
 class _ArrayProvider:

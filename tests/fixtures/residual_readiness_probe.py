@@ -15,20 +15,12 @@ import weakref
 
 import psutil
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _residual_native_threads import (
+    live_native_ids, require_native_exit, wait_native_gone, worker_completion_probe,
+)
 
 RETAINED = []
-
-
-def native_ids():
-    return {row.id for row in psutil.Process().threads()}
-
-
-def wait_gone(ids, timeout=5):
-    deadline = time.perf_counter() + timeout
-    while set(ids) & native_ids():
-        if time.perf_counter() >= deadline:
-            raise AssertionError('Owned native worker remained after explicit test containment')
-        time.sleep(.001)
 
 
 def source_line(function, text):
@@ -61,13 +53,33 @@ def clock_metadata():
     return result
 
 
+def readiness_completion_probe(worker):
+    token_done = worker_completion_probe(worker)
+
+    def completed():
+        # CPython 3.12 Thread.run deletes these after its target returns.
+        # A prematurely released sentinel cannot vouch for an active task.
+        return token_done() and not hasattr(worker, '_target') and not hasattr(worker, '_args')
+
+    return completed
+
+
+def completed_native_ids(probes):
+    return sorted(tid for tid, complete in tuple(probes.items()) if complete())
+
+
 def ordinary(cleanup, scope):
-    receipts, pools, ids, outputs = [], [], set(), []
+    receipts, calls, pools, ids, outputs = [], [], [], set(), []
     real = scope.drain_owned_executor
 
     def observed(pool, *args, **kwargs):
+        probes = {worker.native_id: readiness_completion_probe(worker) for worker in pool._threads}
         value = real(pool, *args, **kwargs)
+        completed = completed_native_ids(probes)
+        remaining = sorted(live_native_ids(probes))
+        require_native_exit(remaining, completed)
         receipts.append(value[0])
+        calls.append(dict(native_remaining=remaining, completed_native_ids=completed))
         return value
 
     def task(value):
@@ -85,12 +97,12 @@ def ordinary(cleanup, scope):
             scope.retire_for_serial_call()
             assert lifetime.executor is None
         assert pools[0] is pools[1] and pools[1] is not pools[2]
-        wait_gone(ids)
+        assert not live_native_ids(ids)
         assert outputs == [4, 4, 1]
         assert all(row['drained'] for row in receipts)
         assert all(not row.get('startup_readiness_wait', {}).get('attempted', False)
                    for row in receipts)
-        return dict(case='ordinary', cleanup_receipts=receipts, exact_outputs=outputs,
+        return dict(case='ordinary', cleanup_receipts=receipts, cleanup_calls=calls, exact_outputs=outputs,
                     native_remaining=[], scope_context_reset=scope._SCOPE.get() is None,
                     reused_same_pool=True, budget_retired_pool=True, serial_retired_pool=True,
                     test_containment_release=False)
@@ -121,6 +133,7 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
     partial_wait_entered = threading.Event()
     cancellation = threading.Event()
     workers, pools, owned_ids, known_ids, foreign_ids = [], [], [], [], []
+    completion_probes = {}
     receipts, cleanup_calls, events, timing_snapshots = [], [], [], []
     mutations, scheduled_at, release_times, readiness_observed = [], [], [], []
     task_calls, task_results = [], []
@@ -190,6 +203,7 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
         if (event == 'line' and frame.f_code is threading.Thread._bootstrap_inner.__code__
                 and frame.f_locals['self']._started.is_set() and not readiness_observed):
             readiness_observed.append(time.perf_counter())
+            completion_probes[threading.get_native_id()] = readiness_completion_probe(frame.f_locals['self'])
             sys.settrace(None)
         return bootstrap_trace
 
@@ -236,7 +250,7 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
                     assert native_sentinel_snapshot == dict(published=True, locked=False, started=False)
                 elif case == 'bootstrap_failure':
                     bootstrap_gate.set()
-                    wait_gone(owned_ids)
+                    wait_native_gone(owned_ids)
                 if case == 'wrong_owner':
                     old_args = worker._args
                     worker._args = (weakref.ref(foreign_pool),) + old_args[1:]
@@ -333,7 +347,7 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
         if (case == 'partial_interrupt' and not completion_fault_fired
                 and frame.f_code.co_name == '_wait_completions'):
             completion_fault_fired = True
-            assert set(known_ids) & native_ids()
+            assert live_native_ids(known_ids)
             partial_wait_entered.set()
             events.append('partial_wait_interrupted_with_native_alive')
             raise capture_interrupt
@@ -351,13 +365,16 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
                                       deferred_type=None if deferred is None else type(deferred).__name__,
                                       capture_interrupt_preserved=deferred is capture_interrupt,
                                       first_repeated_interrupt_preserved=deferred is repeated_first,
-                                      native_remaining=sorted(set(owned_ids + known_ids) & native_ids())))
+                                      completed_native_ids=completed_native_ids(completion_probes),
+                                      native_remaining=sorted(live_native_ids(owned_ids + known_ids))))
             return receipt, deferred
         finally:
             sys.settrace(old_trace)
 
     def known_task():
-        known_ids.append(threading.get_native_id())
+        tid = threading.get_native_id()
+        known_ids.append(tid)
+        completion_probes[tid] = readiness_completion_probe(threading.current_thread())
         known_entered.set()
         assert known_release.wait(15)
         return 17
@@ -373,6 +390,13 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
     # Used only as a deliberately wrong weakref owner; it never starts work.
     foreign_pool = impl.ThreadPoolExecutor(max_workers=1)
     scope.drain_owned_executor = observed_cleanup
+
+    def verify_claimed_exit(receipt, remaining, completed):
+        if receipt['drained']:
+            require_native_exit(remaining, completed)
+        elif receipt['partial_registered_drain']['completed']:
+            require_native_exit(set(remaining).intersection(known_ids), completed)
+
     began = time.perf_counter()
     propagated = None
     at_propagation = None
@@ -398,11 +422,21 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
         caught = error
         RETAINED.append(error)
         propagated = time.perf_counter()
-        at_propagation = dict(omitted_native_alive=sorted(set(owned_ids) & native_ids()),
-                              registered_native_alive=sorted(set(known_ids) & native_ids()),
-                              foreign_native_alive=sorted(set(foreign_ids) & native_ids()))
+        at_propagation = dict(completed_native_ids=completed_native_ids(completion_probes),
+                              omitted_native_alive=sorted(live_native_ids(owned_ids)),
+                              registered_native_alive=sorted(live_native_ids(known_ids)),
+                              foreign_native_alive=sorted(live_native_ids(foreign_ids)))
         at_propagation['whole_completion_cached'] = bool(
             pools and cleanup._owned_shutdown(pools[0]).completed(pools[0]))
+        # Waiting for OS retirement follows all return/propagation snapshots. Each
+        # claim needs completion evidence captured at its own return, even
+        # when the underlying OS thread has already disappeared by this point.
+        for receipt, call in zip(receipts, cleanup_calls):
+            verify_claimed_exit(receipt, call['native_remaining'], call['completed_native_ids'])
+        if receipts:
+            verify_claimed_exit(receipts[-1], at_propagation['omitted_native_alive']
+                                + at_propagation['registered_native_alive'],
+                                at_propagation['completed_native_ids'])
     finally:
         sys.settrace(old_trace)
         threading._start_new_thread = real_launch
@@ -422,8 +456,8 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
         rescue_wake = bool(pools and not pools[0]._shutdown)
         if rescue_wake:
             impl.ThreadPoolExecutor.shutdown(pools[0], wait=False)
-        wait_gone(owned_ids + known_ids)
-        foreign_survived = bool(set(foreign_ids) & native_ids())
+        wait_native_gone(owned_ids + known_ids)
+        foreign_survived = bool(live_native_ids(foreign_ids))
         foreign_release.set()
         foreign.join(5)
         assert not foreign.is_alive()
@@ -434,8 +468,8 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
     assert receipts and all(row['shutdown_requested'] for row in receipts)
     assert at_propagation is not None and at_propagation['foreign_native_alive'] == foreign_ids
     assert foreign_survived and scope._SCOPE.get() is None
-    if all(row['drained'] for row in receipts):
-        assert not at_propagation['omitted_native_alive'] and not at_propagation['registered_native_alive']
+    if held:
+        assert owned_ids and at_propagation['omitted_native_alive'] == sorted(owned_ids)
     if case.startswith('capture_'):
         assert capture_fault_fired
     if case == 'partial_interrupt':
@@ -450,7 +484,7 @@ def exceptional(cleanup, scope, case, budget_ms, delay_ms):
                 whole_call_seconds=propagated-began, propagation_at=propagated,
                 at_propagation=at_propagation, containment_release_at=containment_at,
                 test_containment_release=True, test_rescue_wake=rescue_wake,
-                native_remaining=sorted(set(owned_ids+known_ids) & native_ids()),
+                native_remaining=sorted(live_native_ids(owned_ids+known_ids)),
                 omitted_registered=bool(workers and workers[0] in impl._threads_queues),
                 owned_native_ids=owned_ids, registered_native_ids=known_ids,
                 foreign_thread_survived=foreign_survived, scope_context_reset=scope._SCOPE.get() is None,

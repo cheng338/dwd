@@ -13,9 +13,10 @@ metadata, but no importable package source root.
 
 ## Prepare the inputs and environment
 
-- For DWD 2.0.1, use the source tree and tests from the 2.0.1 tag or its source
-  distribution. This version uses the `current` route contract. For other
-  versions, select the source and checker that accompany the wheel.
+- Use the source, tests and checker that produced the wheel. For a published
+  wheel, use its release tag or source distribution. For a development wheel,
+  use its exact source archive or checkout, since several revisions can share
+  the same development version.
 - Put exactly one compatible DWD wheel in a dedicated wheel directory. The
   default example expects a native wheel; see the portable variant below.
 - Replace every quoted absolute-path placeholder before running a command.
@@ -81,7 +82,52 @@ alone does not replace the artifact check and detached bundle.
 
 The `released-1.3.19` route contract describes historical DWD 1.3.19 route
 expectations. Use it with that version's matching artifacts and tests. For
-DWD 2.0.1 use `current`. The [CI workflow](../.github/workflows/tests.yml)
+DWD 2.0.1 and 2.0.2 use `current`. The [CI workflow](../.github/workflows/tests.yml)
 defines the build matrix. It builds a source distribution, verifies its contents, builds the wheel from
 that distribution and qualifies the installed artifact. This page reuses those
 helpers; it does not introduce a second build or validation implementation.
+
+## Focused dependency checks before release
+
+Run these cases before a release and when changing the numerical dependency
+minimums, spectral fitting, sparse conversion or scikit-learn integration.
+Use a fresh CPython 3.12 environment and the detached test bundle for the
+candidate wheel. From the bundle directory, substitute the wheel's actual
+absolute filename in the first command.
+
+```shell
+python -m pip install -c tests/scipy-floor.txt pytest "/absolute/path/to/candidate.whl"
+python -m pip check
+python -I -c "import numpy, scipy, sklearn; assert (numpy.__version__, scipy.__version__, sklearn.__version__) == ('1.26.3', '1.11.4', '1.6.1')"
+python -I -B -m pytest -q tests/test_scale_relative_psd.py::test_spectral_fit_preserves_subnormal_gram_under_strict_overflow tests/test_sparse_integer_coordinates.py::test_non_native_endian_integer_cancellation tests/test_shared_fold_search.py::test_svc_fallback_with_int32_dia_array_matches_dense_search tests/test_compatibility.py::test_routed_cross_validation_without_params
+```
+
+The numerical cases exercise a subnormal Gram matrix under strict overflow,
+exact cancellation in non-native-endian sparse integers, and DIA-to-CSR
+conversion during SVC search. The routing check compares scores and
+predictions from three scikit-learn cross-validation functions with manual
+fold fits when metadata routing is enabled and `params` is omitted. The
+portable base CI job also runs the routing case with scikit-learn 1.6.1.
+
+The Linux conic CI job on Python 3.12 installs CVXPY 1.6.7 and highspy 1.7.1
+from the wheel's `socp` extra. In that environment,
+`python -I -B tests/highs_conic_floor_probe.py` fits the SVM through CVXPY's
+conic HiGHS interface and checks equality and lower-bound multipliers on a
+linear program with a known solution.
+
+## Comparing conic fit times
+
+The `socp` and `test` extras support Clarabel 0.11.0 and later. For comparable
+timings across machines, use the [benchmark requirements](../tests/clarabel-benchmark.txt)
+in each isolated benchmark environment. Install the DWD wheel with either the
+`socp` or `test` extra to include CVXPY. Then run these commands from the
+matching DWD source directory.
+
+```shell
+python -m pip install -r tests/clarabel-benchmark.txt
+python -I -c "import clarabel, cvxpy; assert 'CLARABEL' in cvxpy.installed_solvers(); print(clarabel.__version__)"
+```
+
+Record the imported version with each result. For direct Clarabel fits, use one
+estimator worker, set `max_threads=1`, and verify the fitted linear solver
+reports one thread. Compare the same timed stage on both machines.

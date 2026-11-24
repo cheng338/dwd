@@ -6,7 +6,9 @@ from numbers import Integral, Real
 
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_array, check_random_state
-from dwd._validation import check_real_X_y, require_real
+from dwd._validation import (_MixedTemporalObservations, _label_source_and_target, _temporal_cast,
+                             _temporal_comparison_targets, _temporal_label_matches, check_real_X_y,
+                             exact_label_matches, require_real)
 
 from dwd.utils import pm1, parameters_equal
 from dwd.gen_dwd import V, V_grad
@@ -224,8 +226,8 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         It preserves the objective and free intercept but changes the
         finite-iteration estimator. Objective-change stopping need not give the
         same solution quality as ordinary MM. Spectral backend requests remain spectral.
-        The constructor request is not mutated. requested_acceleration_ and
-        acceleration_ record the fitted request and effective policy.
+        The constructor request is not mutated. ``requested_acceleration_`` and
+        ``acceleration_`` record the fitted request and effective policy.
         Missing requested acceleration uses auto for cloning and new fits;
         an explicitly stored None continues to request ordinary MM.
 
@@ -570,17 +572,47 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
             return None
         if not isinstance(validation_data, (tuple, list)) or len(validation_data) != 2:
             raise ValueError('validation_data must be an (X_validation, y_validation) pair.')
-        X_val, y_val = validation_data
+        X_val, label_source = validation_data
         X_val = promote_sparse_features(X_val, force_float64=True)
-        X_val, y_val = check_real_X_y(X_val, y_val, accept_sparse='csr', dtype=np.float64)
-        if not np.isin(y_val, self.classes_).all():
-            raise ValueError('Validation labels must belong to the training classes.')
+        label_source, original_y = _label_source_and_target(label_source, 'observations')
+        original_y, classes = _temporal_comparison_targets(original_y, self.classes_)
+        if isinstance(original_y, _MixedTemporalObservations) and not isinstance(classes, _MixedTemporalObservations):
+            # The fitted classes supply a known candidate dtype, including
+            # its tick multiplier. No held label outside this dtype can match.
+            original_y = _temporal_cast(original_y, classes.dtype, None) if classes.dtype.kind in 'Mm' else None
+            if original_y is None:
+                raise ValueError('Validation labels must belong to exactly one of the training classes.')
+        X_val, y_val = check_real_X_y(X_val, original_y, target_mode='observations',
+                                      accept_sparse='csr', dtype=np.float64)
+        # A common, unaltered native numeric dtype guarantees exact array
+        # comparison. Other numeric IDs need their original scalar operands.
+        original_dtype = getattr(original_y, 'dtype', None)
+        if isinstance(classes, _MixedTemporalObservations):
+            positive = _temporal_label_matches(original_y, classes[1:2], paired=False)
+            negative = _temporal_label_matches(original_y, classes[:1], paired=False)
+        elif (classes.dtype.kind in 'biufO' and y_val.dtype.kind in 'biufO'
+                and (y_val.dtype.kind == 'O' or y_val.dtype != classes.dtype
+                     or not isinstance(original_dtype, np.dtype) or y_val.dtype != original_dtype)):
+            # A sequence can still contain mixed scalar types before NumPy
+            # inference; an existing array supplies its own scalar dtype.
+            dtype = object if isinstance(original_y, (list, tuple)) else None
+            held = np.asarray(original_y, dtype=dtype).reshape(-1)
+            positive = exact_label_matches(held, classes[1:2], value_source=label_source)
+            negative = exact_label_matches(held, classes[:1], value_source=label_source)
+        elif classes.dtype.kind in 'Mm' and y_val.dtype.kind in 'Mm' and y_val.dtype != classes.dtype:
+            positive = _temporal_label_matches(y_val, classes[1:2], paired=False)
+            negative = _temporal_label_matches(y_val, classes[:1], paired=False)
+        else:
+            positive = y_val == classes[1:2]
+            negative = y_val == classes[:1]
+        if not np.all(positive ^ negative):
+            raise ValueError('Validation labels must belong to exactly one of the training classes.')
         if self.kernel != 'precomputed' and X_val.shape[1] != self.n_features_in_:
             raise ValueError('Validation feature count differs from training data.')
         K_val = self._compute_kernel(X_val).T
         if hasattr(K_val, 'toarray'):
             K_val = K_val.toarray()
-        return (np.asarray(K_val), np.where(y_val == self.classes_[1], 1., -1.))
+        return (np.asarray(K_val), np.where(positive, 1., -1.))
 
     def _set_fit_result(self, result):
         precision = result.get('prediction_precision', 'ordinary')
@@ -1029,7 +1061,7 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
 
     def set_params(self, **params):
         """Validate parameter names before delegating supported updates."""
-        # Avoid formatting array-valued CV defaults on an invalid-key path.
+        # Reject unknown top-level parameter names before applying any updates.
         if params:
             _validate_dwd_candidate_parameters(self, (params,))
         return super().set_params(**params)

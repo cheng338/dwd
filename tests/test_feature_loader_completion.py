@@ -30,7 +30,7 @@ tests_dir = Path(sys.argv[2])
 sys.path[:0] = [str(tests_dir), str(package_root)]
 import numpy as np
 from _feature_expansion_test_support import (
-    arithmetic, facade, feature, literal, native_bundle, prepare, reference,
+    arithmetic, facade, feature, legacy_errstate, literal, native_bundle, prepare, reference,
 )
 from dwd import _ordered_gradient_reduction as ordered
 
@@ -58,20 +58,24 @@ def warm_ordered():
     assert ordered._ACCEL is not None and ordered._ENTRY is not None
 
 
-def accepted_gradient_and_beta():
+def settled_gradient_and_beta():
     result = facade.try_gradient(feature, columns, prepared, splits)
-    assert type(result) is np.ndarray, 'Settled gradient must use genuine fusion'
-    assert result.tobytes() == expected.tobytes()
     context = facade._CONTEXT
-    assert context is not None
     mantissa, exponent = np.frexp(alpha)
     split = arithmetic._split_operand(mantissa)
     beta = facade.try_beta(feature, columns, (mantissa, exponent), split)
-    assert type(beta) is np.ndarray, 'Settled beta must use genuine fusion'
-    assert beta.tobytes() == reference._beta_tile(columns, mantissa, exponent).tobytes()
+    if legacy_errstate():
+        assert result is None and beta is None and context is None
+    else:
+        assert type(result) is np.ndarray, 'Settled gradient must use genuine fusion'
+        assert result.tobytes() == expected.tobytes() and context is not None
+        assert type(beta) is np.ndarray, 'Settled beta must use genuine fusion'
+        assert beta.tobytes() == reference._beta_tile(columns, mantissa, exponent).tobytes()
     assert feature._feature_gradient(columns.T, z, alpha, penalty).tobytes() == reference._feature_gradient(columns.T, z, alpha, penalty).tobytes()
     assert feature._feature_coefficients(columns.T, alpha).tobytes() == reference._feature_coefficients(columns.T, alpha).tobytes()
     assert facade._CONTEXT is context
+    if context is None:
+        assert facade._LOAD_ATTEMPTED is False and facade._NAME not in sys.modules
     return context
 
 
@@ -84,11 +88,11 @@ if scenario == 'cold-preimport':
     assert first.tobytes() == expected.tobytes()
     assert ordered._LOAD_COMPLETE is True
     assert facade._CONTEXT is None
-    accepted_gradient_and_beta()
+    settled_gradient_and_beta()
 
 elif scenario == 'warm-first':
     warm_ordered()
-    accepted_gradient_and_beta()
+    settled_gradient_and_beta()
 
 elif scenario in ('missing-import', 'missing-oserror'):
     original = importlib.import_module
@@ -109,7 +113,7 @@ elif scenario in ('missing-import', 'missing-oserror'):
     finally:
         importlib.import_module = original
     # A completed negative cache is terminal; it is not an in-flight load.
-    accepted_gradient_and_beta()
+    settled_gradient_and_beta()
     assert ordered._ACCEL is None and ordered._ENTRY is None
 
 elif scenario in ('negative-cached-none', 'negative-cached-module', 'negative-unsupported'):
@@ -135,7 +139,7 @@ elif scenario in ('negative-cached-none', 'negative-cached-module', 'negative-un
     finally:
         importlib.import_module = original
         ordered._GIL_DISABLED = saved_gil_disabled
-    accepted_gradient_and_beta()
+    settled_gradient_and_beta()
     assert ordered._ACCEL is None and ordered._ENTRY is None
 
 elif scenario == 'reentrant-import':
@@ -160,7 +164,7 @@ elif scenario == 'reentrant-import':
         assert len(calls) == 1
     finally:
         importlib.import_module = original
-    accepted_gradient_and_beta()
+    settled_gradient_and_beta()
 
 elif scenario == 'concurrent-inflight':
     original = importlib.import_module
@@ -198,7 +202,7 @@ elif scenario == 'concurrent-inflight':
     assert len(result) == 1 and type(result[0]) is np.ndarray
     assert result[0].tobytes() == np.zeros(len(columns)).tobytes()
     assert ordered._LOAD_ATTEMPTED is True and ordered._LOAD_COMPLETE is True
-    accepted_gradient_and_beta()
+    settled_gradient_and_beta()
 
 elif scenario in ('interrupted-runtime', 'interrupted-keyboard', 'interrupted-systemexit'):
     original = importlib.import_module
@@ -269,7 +273,7 @@ elif scenario.startswith('invalid-completion-'):
 
 elif scenario.startswith('mutate-'):
     warm_ordered()
-    context = accepted_gradient_and_beta()
+    context = settled_gradient_and_beta()
     key = scenario[len('mutate-'):]
     replacement = False if key in ('_LOAD_ATTEMPTED', '_LOAD_COMPLETE') else None
     setattr(ordered, key, replacement)
@@ -304,6 +308,10 @@ _SCENARIOS = (
 
 @pytest.mark.parametrize('scenario', _SCENARIOS)
 def test_ordered_loader_completion_in_fresh_process(scenario):
+    if scenario.startswith('mutate-'):
+        from _feature_expansion_test_support import legacy_errstate
+        if legacy_errstate():
+            pytest.skip('Mutation of a settled fused context requires eligible NumPy callbacks.')
     package = importlib.util.find_spec('dwd')
     assert package is not None and package.origin is not None
     package_root = Path(package.origin).resolve().parent.parent

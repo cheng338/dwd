@@ -106,11 +106,11 @@ checkpoint files remain untouched.
 Each saved evaluation belongs to a specific candidate and fold. Compatibility
 checks cover the data, materialized folds, candidate settings, scaling, source
 and numerical runtime. A changed search requires a new run directory. Existing
-checkpoints are not silently treated as a new run. You may change `jobs`,
-`refit_best` or `final_native_threads` when resuming with the same source and
-runtime. Final thread counts do not enter CV identity because the requested
-final model is fitted afresh. `cv_native_threads` does enter CV identity:
-changing it requires a new run directory, including when all folds are saved.
+checkpoints are not silently treated as a new run. You may change `jobs` and
+`refit_best` when resuming with the same source and runtime. The selected
+model is fitted afresh with one estimator worker and one native thread.
+Changing `cv_native_threads` requires a new run directory, including when all
+folds are saved.
 A corrupt or incompatible receipt stops the run
 before new CV fitting; it is not silently dropped. Source and runtime files
 must remain unchanged while the process is running.
@@ -139,9 +139,9 @@ with the updated example. Start a new run directory, or use the matching old
 example and runtime to resume the earlier run; missing fields are not inferred
 or migrated.
 
-The final-thread option also changes the recorded example source identity.
-Checkpoints from an earlier example version still require its matching source
-and runtime, or a new run directory; this option does not relax that check.
+The single-thread final-refit update changes the example source identity.
+Use the matching source and runtime to resume an earlier checkpoint, or
+start a new run directory with the updated example.
 
 The finite-grid reporting update changes `resumable_kernel_cv.py`, whose source
 hash is part of checkpoint identity. A checkpoint created before this update
@@ -185,11 +185,10 @@ request, unfinished folds, effective workers, native-thread count and supplied
 memory allowances. It reports zero active workers on complete CV replay.
 The example restores the caller's thread limits after success or failure.
 
-`--final-native-threads` remains independent: it applies to fresh final scaling
-and fitting only. The final runtime is recorded separately. For fitting time,
-combine the reported final scaling and estimator-fit intervals when describing
-the complete preprocessing-plus-fit procedure; neither includes CV search or
-summary publication.
+Full-data scaling and the timed final fit run with one estimator worker and
+one native thread regardless of the CV allocation. The final runtime is
+recorded separately. Add the reported final scaling and estimator-fit
+intervals to obtain the time for the complete preprocessing-plus-fit procedure.
 
 The run directory contains `identity.json`, `generation.json` and completed
 evaluations under `receipts/fold-0000/candidate-000000.json`, with zero-based
@@ -347,9 +346,9 @@ The `work_summary` describes only the current invocation:
   scaling durations of replayed evaluations.
 - `fold_workers` is the number of workers used, which is zero on complete CV
   replay. `final_refit` records whether a fresh final model was fitted and
-  includes that model's termination diagnostics, `native_threads_requested`
-  and the observed `runtime` fingerprint. The runtime is `None` when final
-  fitting is skipped.
+  includes its termination diagnostics, `estimator_workers` (one when fitted,
+  zero when skipped), `native_threads_requested` and the observed `runtime`
+  fingerprint. The runtime is `None` when final fitting is skipped.
 
 Preparation, fit, score and scaling totals sum elapsed worker intervals. They
 are neither CPU time nor overall wall time. The wall interval begins on entry
@@ -374,29 +373,13 @@ Each active fold may require its own dense kernel and solver workspace. Choose
 has not been benchmarked for this example. Small folds can spend more time
 starting workers than they save through concurrent fitting.
 
-`final_native_threads` is a positive integer with default `1`; the CLI spelling
-is `--final-native-threads`. For example, add `--final-native-threads 4` to request
-four native threads per detected pool for full-data scaling, the fresh final
-fit and its diagnostics. It does not change the fold worker count or CV thread
-limits. The option controls library pools, not a process-wide or machine-wide
-CPU quota, physical-core affinity, or an automatic scheduling policy.
-
-The example verifies the requested final pool counts together with the same
-source and runtime identity used for CV. After final fitting it restores the
-CV limit, and on return or an exception it restores the caller's prior limits.
-An interrupted final fit is rerun from the beginning on resume; completed CV
-receipts remain reusable when compatible. Increasing the count can change
-floating-point reductions and fitted values. It can also consume more CPU time
-without reducing elapsed time, so no universal speedup or cross-thread bitwise
-agreement is promised.
-
-Request more final native threads when the full-data scaling/fit is a material
-part of the intended workflow and representative measurements show useful
-scaling at an admissible memory cost. Keep the candidate, data and numerical
-settings fixed for that comparison; measure the complete scaling-plus-fit
-phase and inspect its returned diagnostics. Extra threads are not a substitute
-for a larger iteration budget or a tighter numerical target. Leave the default
-at one when the extra allocation has no demonstrated benefit.
+The compatibility argument `final_native_threads` (CLI `--final-native-threads`)
+accepts only `1`. During the final phase, the sequential joblib backend also
+limits named kernels that request workers through `kernel_kws['n_jobs']`.
+The example verifies the final native pool counts and restores the caller's
+joblib and native thread settings on success or failure. The fitted estimator
+retains its selected parameters for later predictions. Resuming an interrupted
+final fit reuses compatible CV receipts and fits a fresh full-data model.
 
 ## Supported scope
 

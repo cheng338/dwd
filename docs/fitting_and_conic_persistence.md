@@ -1,8 +1,9 @@
 # Fitting arguments and conic persistence
 
 DWD 2.0.0 removes the unused training-weight argument and makes the
-fitting controls below keyword-only where indicated. Use Ensemble DWD 0.4.0
-with DWD 2.0.1. Earlier companion versions can forward removed DWD keywords.
+fitting controls below keyword-only where indicated. Use the
+[matching Ensemble DWD version](../README.md#companion-package-and-citation).
+Earlier companion versions can forward removed DWD keywords.
 
 ## Fitting arguments and metadata
 

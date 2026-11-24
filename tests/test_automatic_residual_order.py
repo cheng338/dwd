@@ -11,6 +11,8 @@ from sklearn.base import clone
 from sklearn.exceptions import NotFittedError
 from sklearn.model_selection import GridSearchCV
 from threadpoolctl import threadpool_limits
+from _search_resources import single_worker_search_parent
+
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
 from _kernel_reference import kernel_route
 from dwd.cv import run_cv
@@ -109,6 +111,7 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(a.residual_check_order_, 'adaptive')
         self.assertEqual(a.backend_, 'cholesky')
 
+    @single_worker_search_parent()
     def test_05_cv_and_sklearn_pipeline_forwarding(self):
         seen = []
         original = KernGDWD.fit

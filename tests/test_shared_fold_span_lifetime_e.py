@@ -16,6 +16,9 @@ from dwd import model_selection as selection
 from dwd.kern_md import KernMD
 
 
+pytestmark = pytest.mark.usefixtures("numerical_search_parent")
+
+
 def dataset():
     X = np.arange(16*4, dtype=np.float64).reshape(16, 4)/8.
     y = np.array([-1, 1]*8)

@@ -47,9 +47,9 @@ def _cases():
                 x.fill(2.**200)
             elif kind == 'broad_exponents':
                 K = np.ldexp(rng.choice([-.5, .5], size=(n, n)),
-                             rng.integers(-199, 201, size=(n, n)))
+                             rng.integers(-199, 201, size=(n, n)).astype(np.intc))
                 x = np.ldexp(rng.choice([-.5, .5], size=n),
-                             rng.integers(-199, 201, size=n))
+                             rng.integers(-199, 201, size=n).astype(np.intc))
             elif kind == 'signed_zero':
                 K.fill(-0.)
                 x.fill(-0.)

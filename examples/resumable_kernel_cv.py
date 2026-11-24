@@ -484,6 +484,7 @@ def _work_summary(records, replayed, started, refit_seconds, final_scaling_secon
         'current_seconds': current, 'historical_seconds': historical,
         'final_refit': {'performed': refit_best, 'fresh_model': refit_best,
                         'diagnostics': refit_diagnostics,
+                        'estimator_workers': 1 if refit_best else 0,
                         'native_threads_requested': final_native_threads,
                         'runtime': final_runtime},
         'interpretation': 'Preparation, fit, score and scaling are summed elapsed '
@@ -547,16 +548,16 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
     ``jobs=-1`` divides logical CPU count by the native-thread count, allowing
     at least one worker and capped by the number of unfinished folds.
     Scaling, when requested, is fitted using each training fold only.
-    ``final_native_threads`` is a positive integer (default 1) used only for
-    full-data scaling and the fresh final fit. The optional paired memory
+    Full-data scaling and the timed final fit use one estimator worker and
+    one native thread. The compatibility argument ``final_native_threads``
+    accepts only 1. The optional paired memory
     allowances cap simultaneous CV workers; they are supplied by the caller,
     not measured memory limits or a guarantee against allocation failure.
     The caller's thread limits are restored before return. Changing native
     threads may change floating-point reductions; no faster fit is guaranteed.
 
     ``resume=True`` requires matching data, materialized folds, parameters,
-    source and numerical runtime. Jobs, refit choice and final native-thread
-    count may change. Each saved
+    source and numerical runtime. Jobs and refit choice may change. Each saved
     evaluation is checksummed and checked semantically before new fits begin.
     An unfinished evaluation is rerun; models and partial solver state are not
     serialized. ``refit_best=True`` therefore performs fresh full-data fitting
@@ -573,6 +574,8 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
     if jobs == 0 or jobs < -1:
         raise ValueError('jobs must be positive or -1.')
     final_native_threads = _integer(final_native_threads, 'final_native_threads', 1)
+    if final_native_threads != 1:
+        raise ValueError('final_native_threads must be 1 for timed final refitting.')
     cv_native_threads = _integer(cv_native_threads, 'cv_native_threads', 1)
     cv_memory_budget_mib, cv_worker_memory_mib = _memory_allowances(
         cv_memory_budget_mib, cv_worker_memory_mib)
@@ -657,13 +660,14 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
             refit_seconds = final_scaling_seconds = 0.0
             if refit_best:
                 expected_final_runtime = expected_runtime
-                if final_native_threads != cv_native_threads:
+                if cv_native_threads != 1:
                     expected_final_runtime = deepcopy(expected_runtime)
                     for pool in expected_final_runtime['native_pools']:
-                        pool['num_threads'] = final_native_threads
-                final_limits = (threadpool_limits(limits=final_native_threads)
-                                if final_native_threads != cv_native_threads else nullcontext())
-                with final_limits:
+                        pool['num_threads'] = 1
+                final_limits = threadpool_limits(limits=1) if cv_native_threads != 1 else nullcontext()
+                # Named kernels can request joblib workers through kernel_kws.
+                # The sequential backend also overrides an enclosing parallel_config.
+                with final_limits, parallel_config(backend='sequential', n_jobs=1):
                     final_X = X
                     if scale:
                         scale_started = perf_counter()
@@ -672,20 +676,12 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
                         final_scaling_seconds = perf_counter() - scale_started
                     best_clf = clone(clf).set_params(**best_params)
                     checkpoint.assert_current()
-                    if final_native_threads == 1:
-                        final_runtime = _check_runtime(expected_final_runtime, check_inventory=False)
-                    else:
-                        final_runtime = _check_runtime(
-                            expected_final_runtime, check_inventory=False,
-                            native_threads=final_native_threads)
+                    final_runtime = _check_runtime(expected_final_runtime, check_inventory=False)
                     fit_started = perf_counter()
                     best_clf.fit(final_X, y)
                     refit_seconds = perf_counter() - fit_started
-                    if final_native_threads != 1 or cv_native_threads != 1:
-                        final_guard = ({} if final_native_threads == 1 else
-                                       {'native_threads': final_native_threads})
-                        _check_runtime(expected_final_runtime, check_inventory=False,
-                                       **final_guard)
+                    if cv_native_threads != 1:
+                        _check_runtime(expected_final_runtime, check_inventory=False)
                     try:
                         refit_diagnostics = _diagnostics(best_clf)
                     except Exception as error:
@@ -707,6 +703,7 @@ def run_resumable_cv(clf, X, y, params, run_dir, *, cv=5, scoring='accuracy',
                     'cv_resource_plan': plan,
                     'final_refit': {'performed': refit_best, 'fresh_model': refit_best,
                                     'diagnostics': refit_diagnostics,
+                                    'estimator_workers': 1 if refit_best else 0,
                                     'native_threads_requested': final_native_threads,
                                     'runtime': final_runtime}}
             result = {'best_params': best_params, 'best_score': best_score,

@@ -3,7 +3,7 @@ from copy import deepcopy
 import numpy as np
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_array
-from dwd._validation import check_real_X_y, require_real
+from dwd._validation import check_real_X_y, exact_sparse_uint64_target, require_real
 
 from dwd.kernel_utils import KernelClfMixin
 from dwd._fit_state import fit_with_cleanup
@@ -68,8 +68,8 @@ def kern_md(K, y, naive_bayes=False):
 
     """
     K = check_array(K, dtype='numeric')
-    y = np.asarray(y)
-    require_real(y, 'y')
+    y = np.asarray(exact_sparse_uint64_target(y))
+    require_real(y, 'y', training_labels=True)
     labels = np.unique(y)
     if K.shape[0] != K.shape[1] or y.ndim != 1 or len(y) != K.shape[0]:
         raise ValueError('K must be square with one row per label.')
@@ -83,8 +83,10 @@ def kern_md(K, y, naive_bayes=False):
             'and produced inconsistent query scores. Use naive_bayes=False '
             'until a train/query-consistent formulation is specified.')
 
-    pos_ind = y == labels[1]
-    neg_ind = y == labels[0]
+    # A one-element slice keeps boxed class representatives in NumPy's
+    # object comparison loop, including their custom scalar equality.
+    pos_ind = y == labels[1:2]
+    neg_ind = y == labels[:1]
     n_pos = sum(pos_ind)
     n_neg = sum(neg_ind)
 

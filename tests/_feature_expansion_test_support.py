@@ -1,9 +1,10 @@
 """Shared fixtures for package-native feature expansion correctness tests.
 
 No package path is inserted: dwd resolves from the selected source or installed
-wheel. A missing optional artifact skips only native-required fixtures; the
-installed-wheel CI route preflight independently requires native acceptance.
+wheel. The installed-wheel CI preflight independently checks the artifact
+and whether the public route is eligible on this NumPy runtime.
 """
+from contextlib import ContextDecorator
 import importlib.util
 import math
 import sys
@@ -18,6 +19,13 @@ LITERALS = ('zeros', 'signed-zero', 'dyadic', 'three-family-cancel',
             'erased-coefficient', 'regularizer-low', 'half-even', 'subnormal-final',
             'restored-underflow', 'restored-erasure', 'overflow', 'nonfinite')
 LAYOUTS = ('C', 'F', 'strided', 'reversed', 'readonly')
+
+
+def legacy_errstate():
+    if np.__version__.startswith('1.26.'):
+        assert np.errstate.__bases__ == (ContextDecorator,)
+        return True
+    return False
 
 
 def prepare(z, alpha, penalty=0.2):
@@ -97,7 +105,7 @@ def layout(columns, name):
 
 
 @pytest.fixture(scope='module')
-def genuine():
+def expansion_bridge():
     if importlib.util.find_spec('dwd._feature_expansion_accel') is None:
         pytest.skip('This build has no feature-expansion extension.')
     assert sys.getprofile() is None and sys.gettrace() is None
@@ -116,11 +124,23 @@ def genuine():
     assert ordered._LOAD_ATTEMPTED is True
     feature._gradient_tile(columns, prepared, _splits=splits)
     output = facade.try_gradient(feature, columns, prepared, splits)
+    if legacy_errstate():
+        assert output is None and facade._LOAD_ATTEMPTED is False
+        assert facade._CONTEXT is None and facade._ACCEL is None
+        # Direct binary checks may exercise refusal without a callback context.
+        return importlib.import_module('dwd._feature_expansion_accel'), None
     assert type(output) is np.ndarray, 'The actual fused path must accept ordinary input'
     assert output.tobytes() == reference._gradient_tile(columns, prepared).tobytes()
     assert facade._ACCEL is sys.modules['dwd._feature_expansion_accel']
     assert facade._ENTRY.__self__ is facade._ACCEL
     return facade._ACCEL, facade._CONTEXT
+
+
+@pytest.fixture(scope='module')
+def genuine(expansion_bridge):
+    if expansion_bridge[1] is None:
+        pytest.skip('Requires a genuine fused context unavailable with NumPy 1.26 errstate.')
+    return expansion_bridge
 
 
 def native_bundle(context, columns, prepared, splits, *, copy_tile=True):
@@ -132,8 +152,8 @@ def native_bundle(context, columns, prepared, splits, *, copy_tile=True):
     return (context, tuple(memoryview(v) for v in arrays), pe), arrays, output
 
 
-def checked(genuine, columns, prepared, splits):
-    module, context = genuine
+def checked(expansion_bridge, columns, prepared, splits):
+    module, context = expansion_bridge
     bundle, arrays, output = native_bundle(context, columns, prepared, splits)
     before = [v.tobytes() for v in arrays]
     entry = module.gradient_from_splits
@@ -144,6 +164,16 @@ def checked(genuine, columns, prepared, splits):
         expected_error = type(exc)
     status = entry(bundle)
     assert all(v.tobytes() == b for v, b in zip(arrays[:-1], before[:-1]))
+    if context is None:
+        assert status == module.GUARD and output.tobytes() == before[-1]
+        assert facade.try_gradient(feature, columns, prepared, splits) is None
+        if expected_error:
+            with pytest.raises(expected_error):
+                feature._gradient_tile(columns, prepared, _splits=splits)
+        else:
+            output = feature._gradient_tile(columns, prepared, _splits=splits)
+            assert output.tobytes() == expected.tobytes()
+        return status, output
     if expected_error:
         assert status != 0
         assert output.tobytes() == before[-1]

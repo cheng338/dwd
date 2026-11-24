@@ -8,6 +8,7 @@ they are numerical consistency checks, not interval-arithmetic certificates.
 """
 import numpy as np
 from scipy.linalg import eigh, LinAlgError
+from scipy.linalg.lapack import dsyevd
 from dwd._validation import contains_complex
 
 
@@ -17,6 +18,15 @@ class EigenDecompositionError(FloatingPointError):
         super().__init__(message)
         self.info = info
         self.attempts = info['attempts']
+
+
+def _singleton_evd(A, eigvals_only):
+    # For n=1, SciPy 1.12's high-level EVD queries a workspace of one that its
+    # own wrapper rejects. The wrapper defaults work for both EVD jobs.
+    values, vectors, status = dsyevd(A, compute_v=not eigvals_only, lower=1, overwrite_a=0)
+    if status != 0:
+        raise LinAlgError(f'Singleton dsyevd returned LAPACK info={status}.')
+    return values if eigvals_only else (values, vectors)
 
 
 def _matrix_statistics(A):
@@ -206,7 +216,11 @@ def validated_eigh(A, *, eigvals_only=False, supplied=None, return_info=False,
         # Do not retain a rejected full basis while preparing its replacement.
         result = values = vectors = None
         try:
-            result = eigh(A,eigvals_only=eigvals_only,driver=driver,check_finite=False,overwrite_a=False)
+            if driver == 'evd' and len(A) == 1:
+                result = _singleton_evd(A, eigvals_only)
+            else:
+                result = eigh(A, eigvals_only=eigvals_only, driver=driver,
+                              check_finite=False, overwrite_a=False)
             if eigvals_only:
                 values=result
                 issues,details=_validate_values(values,statistics)

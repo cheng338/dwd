@@ -21,7 +21,7 @@ import psutil
 import pytest
 
 from _feature_expansion_test_support import (
-    arithmetic, facade, feature, genuine, literal, layout, prepare, reference,
+    arithmetic, facade, feature, expansion_bridge, genuine, literal, layout, prepare, reference,
     native_bundle,
 )
 
@@ -50,20 +50,22 @@ def beta_bundle(context, columns, prep, split):
     return (context, tuple(memoryview(value) for value in arrays)), arrays, output
 
 
-def run_direct(genuine, route, columns, z, alpha, penalty):
-    module, context = genuine
+def run_direct(expansion_bridge, route, columns, z, alpha, penalty):
+    module, context = expansion_bridge
     if route == 'gradient':
         prep, splits = prepare(z, alpha, penalty)
         bundle, arrays, output = native_bundle(context, columns, prep, splits)
         entry = module.gradient_from_splits
         calculate = lambda: reference._gradient_tile(columns, prep)
         public = lambda: facade.try_gradient(feature, columns, prep, splits)
+        tile = lambda: feature._gradient_tile(columns, prep, _splits=splits)
     else:
         prep, split = beta_prepare(alpha)
         bundle, arrays, output = beta_bundle(context, columns, prep, split)
         entry = module.beta_from_split
         calculate = lambda: reference._beta_tile(columns, *prep)
         public = lambda: facade.try_beta(feature, columns, prep, split)
+        tile = lambda: feature._beta_tile(columns, *prep, _split=split)
     before = [value.tobytes() for value in arrays]
     error = None
     try:
@@ -73,7 +75,15 @@ def run_direct(genuine, route, columns, z, alpha, penalty):
     status = entry(bundle)
     actual = public()
     assert before[:-1] == [value.tobytes() for value in arrays[:-1]]
-    if error is None:
+    if context is None:
+        assert status == module.GUARD and actual is None and output.tobytes() == before[-1]
+        if error is None:
+            assert tile().tobytes() == expected.tobytes()
+        else:
+            with pytest.raises(type(error)) as caught:
+                tile()
+            assert str(caught.value) == str(error)
+    elif error is None:
         assert status == module.OK and type(actual) is np.ndarray
         assert output.tobytes() == actual.tobytes() == expected.tobytes()
         assert actual.flags.owndata and not np.shares_memory(actual, columns)
@@ -85,8 +95,8 @@ def run_direct(genuine, route, columns, z, alpha, penalty):
 @pytest.mark.parametrize('route', ('gradient', 'beta'))
 @pytest.mark.parametrize('shape', ((2, 1), (64, 32), (64, CAP//64),
     (CAP//1024, 1024), (65, 1), (2, 1025), (64, CAP//64+1), (1, 1), (2, 0)))
-def test_native_caps_and_atomic_refusal(native_required, genuine, route, shape):
-    module, context = genuine
+def test_native_caps_and_atomic_refusal(native_required, expansion_bridge, route, shape):
+    module, context = expansion_bridge
     assert (module.API_VERSION, module.MAX_ROWS, module.MAX_WIDTH, module.MAX_ENTRIES) == (2, 64, 1024, CAP)
     columns = np.ones(shape)
     if route == 'gradient':
@@ -100,7 +110,9 @@ def test_native_caps_and_atomic_refusal(native_required, genuine, route, shape):
     before = [value.tobytes() for value in arrays]
     status = entry(bundle)
     accepted = 2 <= shape[0] <= 64 and 0 < shape[1] <= 1024 and shape[0]*shape[1] <= CAP
-    if accepted:
+    if accepted and context is None:
+        assert status == module.GUARD and output.tobytes() == before[-1]
+    elif accepted:
         assert status == module.OK and output.tobytes() == np.full(shape[0], shape[1]*.5).tobytes()
     else:
         assert status == module.ARGUMENT and output.tobytes() == before[-1]
@@ -109,10 +121,12 @@ def test_native_caps_and_atomic_refusal(native_required, genuine, route, shape):
 
 @pytest.mark.parametrize('beta', (False, True))
 @pytest.mark.parametrize('n', (32, 128, 256, 512, 1024, 1025, 2049))
-def test_real_warm_hint_respects_all_caps(native_required, genuine, beta, n):
+def test_real_warm_hint_respects_all_caps(native_required, expansion_bridge, beta, n):
     width = feature._tile_columns(n, 137)
     actual = feature._warm_native_batch_columns(n, 137, width, beta=beta)
-    expected = width if width <= 1 or n > 1024 else width*(min(64, CAP//n, 137)//width)
+    expected = width
+    if expansion_bridge[1] is not None and width > 1 and n <= 1024:
+        expected = width*(min(64, CAP//n, 137)//width)
     assert actual == expected
     if actual > width:
         assert actual % width == 0 and actual <= 64 and n <= 1024 and actual*n <= CAP
@@ -123,7 +137,7 @@ def test_real_warm_hint_respects_all_caps(native_required, genuine, beta, n):
 @pytest.mark.parametrize('name', ('dyadic', 'half-even', 'subnormal-final',
     'restored-underflow', 'restored-erasure', 'overflow', 'nonfinite'))
 @pytest.mark.parametrize('arrangement', ('C', 'reversed', 'readonly'))
-def test_larger_literal_bits_and_error_atomicity(native_required, genuine, route, name, arrangement):
+def test_larger_literal_bits_and_error_atomicity(native_required, expansion_bridge, route, name, arrangement):
     columns, z, alpha, penalty = literal(name)
     # Repetition preserves each operation's literal operand values and order.
     # Use z as beta coefficients so its edge literals remain exercised.
@@ -132,21 +146,21 @@ def test_larger_literal_bits_and_error_atomicity(native_required, genuine, route
     z, alpha = np.tile(z, 32), np.tile(alpha, 32)
     columns = layout(columns, arrangement)
     before = columns.tobytes(), z.tobytes(), alpha.tobytes()
-    run_direct(genuine, route, columns, z, alpha, penalty)
+    run_direct(expansion_bridge, route, columns, z, alpha, penalty)
     assert before == (columns.tobytes(), z.tobytes(), alpha.tobytes())
 
 
 @pytest.mark.parametrize('route', ('gradient', 'beta'))
 @pytest.mark.parametrize('failure', ('nonfinite', 'overflow'))
-def test_failed_late_row_publishes_no_prefix(native_required, genuine, route, failure):
+def test_failed_late_row_publishes_no_prefix(native_required, expansion_bridge, route, failure):
     rows, width = CAP//256, 256
     columns = np.ones((rows, width))
     columns[-1, -1] = math.inf if failure == 'nonfinite' else sys.float_info.max
     if failure == 'overflow':
         columns[-1, -2] = sys.float_info.max
     z, alpha = np.ones(width), np.ones(width)
-    status, _ = run_direct(genuine, route, columns, z, alpha, .25)
-    assert status != genuine[0].OK
+    status, _ = run_direct(expansion_bridge, route, columns, z, alpha, .25)
+    assert status != expansion_bridge[0].OK
 
 
 @pytest.mark.parametrize('route', ('gradient', 'beta'))

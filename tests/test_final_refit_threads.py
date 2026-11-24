@@ -12,6 +12,8 @@ from unittest.mock import patch
 import warnings
 
 import numpy as np
+from joblib import effective_n_jobs, parallel_config
+from sklearn.metrics import pairwise
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from threadpoolctl import threadpool_info, threadpool_limits
@@ -80,19 +82,20 @@ class FinalRefitThreadTests(unittest.TestCase):
         resources.enter_context(threadpool_limits(1))
         self.path = Path(resources.enter_context(tempfile.TemporaryDirectory())) / 'run'
 
-    def check_provenance(self, result, requested, performed=True):
+    def check_provenance(self, result, cv_threads=1, performed=True):
         final = result['work_summary']['final_refit']
-        self.assertEqual(final['native_threads_requested'], requested)
+        self.assertEqual(final['native_threads_requested'], 1)
+        self.assertEqual(final['estimator_workers'], 1 if performed else 0)
         self.assertEqual(final['performed'], performed)
         self.assertEqual(final['fresh_model'], performed)
         if performed:
-            self.assertEqual({p['num_threads'] for p in final['runtime']['native_pools']}, {requested})
+            self.assertEqual({p['num_threads'] for p in final['runtime']['native_pools']}, {1})
             self.assertIn('accelerator', final['runtime'])
             self.assertIn('files_sha256', final['runtime'])
         else:
             self.assertIsNone(final['runtime'])
         if 'native_threads_per_worker' in result['work_summary']:
-            self.assertEqual(result['work_summary']['native_threads_per_worker'], 1)
+            self.assertEqual(result['work_summary']['native_threads_per_worker'], cv_threads)
 
     def test_default_and_explicit_one_keep_original_runtime_scope(self):
         self.assertEqual(inspect.signature(example.run_resumable_cv)
@@ -122,8 +125,10 @@ class FinalRefitThreadTests(unittest.TestCase):
             records.append((limits, guards))
         self.assertEqual(records[0], records[1])
 
-    def test_two_threads_only_in_final_phase_and_caller_restored(self):
+    def test_parallel_cv_serial_final_fit_and_caller_restored(self):
         observed = []
+        pairwise_workers = []
+        original_pairwise = pairwise._parallel_pairwise
         original_fit, original_init = KernGDWD.fit, KernGDWD.cv_init
         original_scale, original_score = StandardScaler.fit_transform, example._fit_and_score
         original_publish = example._publish_summaries
@@ -148,38 +153,58 @@ class FinalRefitThreadTests(unittest.TestCase):
             observed.append(('publish', 0, counts()))
             return original_publish(*a, **k)
 
-        with threadpool_limits(3), patch.object(KernGDWD, 'fit', fit), \
+        def kernel(X, Y, func, n_jobs, **kwargs):
+            pairwise_workers.append((len(X), n_jobs, effective_n_jobs(n_jobs)))
+            return original_pairwise(X, Y, func, n_jobs, **kwargs)
+
+        estimator = model().set_params(kernel_kws={'gamma': .12, 'n_jobs': 2})
+        with threadpool_limits(3), parallel_config(backend='threading', n_jobs=3), \
+                patch.object(pairwise, '_parallel_pairwise', kernel), \
+                patch.object(KernGDWD, 'fit', fit), \
                 patch.object(KernGDWD, 'cv_init', initialize), \
                 patch.object(StandardScaler, 'fit_transform', scale), \
                 patch.object(example, '_fit_and_score', score), \
                 patch.object(example, '_publish_summaries', publish):
             before = counts()
-            result = run_example(self.path, final_native_threads=np.int64(2))
+            result = run_example(self.path, clf=estimator, cv_native_threads=2,
+                                 final_native_threads=np.int64(1))
             self.assertEqual(counts(), before)
+            self.assertEqual(effective_n_jobs(None), 3)
+            training_workers = pairwise_workers.copy()
+            pairwise_workers.clear()
+            query = result['scaler'].transform(Q)
+            fitted = result['best_clf']
+            parallel_labels = fitted.predict(query)
+            self.assertEqual(pairwise_workers, [(len(y), 2, 2)])
+            pairwise_workers.clear()
+            with parallel_config(backend='sequential', n_jobs=1), threadpool_limits(1):
+                serial_labels = fitted.predict(query)
+            self.assertEqual(pairwise_workers, [(len(y), 2, 1)])
+            np.testing.assert_array_equal(parallel_labels, serial_labels)
         for stage, rows, pools in observed:
-            self.assertEqual(set(pools.values()), {2 if rows == len(y) else 1}, (stage, rows, pools))
+            self.assertEqual(set(pools.values()), {1 if rows == len(y) else 2}, (stage, rows, pools))
+        self.assertIn((len(y), 2, 1), training_workers)
+        self.assertIn((len(y) // 2, 2, 2), training_workers)
+        self.assertTrue(all(workers == 1 for rows, _, workers in training_workers if rows == len(y)))
+        self.assertEqual(result['best_clf'].kernel_kws_, estimator.kernel_kws)
         self.assertTrue(any(stage == 'publish' for stage, _, _ in observed))
         self.check_provenance(result, 2)
         stored = json.loads((self.path / 'cv-results.json').read_text())
         self.assertEqual(stored['final_refit'], result['work_summary']['final_refit'])
 
-    def test_resume_changes_only_fresh_final_threads_and_preserves_cv_receipts(self):
-        with threadpool_limits(1):
-            first = run_example(self.path, final_native_threads=1)
+    def test_resume_fits_fresh_serial_model_and_preserves_cv_receipts(self):
+        first = run_example(self.path)
         saved = receipts(self.path)
         identity = (self.path / 'identity.json').read_bytes()
-        prior_model = first['best_clf']
-        for threads in (2, 1):
-            with self.subTest(final_threads=threads), threadpool_limits(1), patch.object(
-                    example, '_fit_and_score', side_effect=AssertionError('CV must replay')):
-                result = run_example(self.path, resume=True, final_native_threads=threads)
-                self.assertIsNot(prior_model, result['best_clf'])
-                self.assertEqual(receipts(self.path), saved)
-                self.assertEqual((self.path / 'identity.json').read_bytes(), identity)
-                self.assertEqual(result['work_summary']['executed_evaluations'], 0)
-                self.assertEqual(result['work_summary']['replayed_evaluations'], 4)
-                self.check_provenance(result, threads)
-                prior_model = result['best_clf']
+        with threadpool_limits(3), patch.object(
+                example, '_fit_and_score', side_effect=AssertionError('CV must replay')):
+            result = run_example(self.path, resume=True)
+        self.assertIsNot(first['best_clf'], result['best_clf'])
+        self.assertEqual(receipts(self.path), saved)
+        self.assertEqual((self.path / 'identity.json').read_bytes(), identity)
+        self.assertEqual(result['work_summary']['executed_evaluations'], 0)
+        self.assertEqual(result['work_summary']['replayed_evaluations'], 4)
+        self.check_provenance(result)
 
     def test_cv_only_does_not_enter_final_scope(self):
         limits = []
@@ -190,22 +215,22 @@ class FinalRefitThreadTests(unittest.TestCase):
             return original(*a, **k)
 
         with patch.object(example, 'threadpool_limits', observed):
-            result = run_example(self.path, refit_best=False, final_native_threads=2)
+            result = run_example(self.path, refit_best=False, cv_native_threads=2)
         self.assertTrue(limits)
-        self.assertEqual(set(limits), {1})
+        self.assertEqual(set(limits), {2})
         self.assertIsNone(result['best_clf'])
         self.check_provenance(result, 2, performed=False)
 
-    def test_two_worker_cv_keeps_one_thread_identity_with_two_thread_final(self):
+    def test_two_worker_cv_keeps_one_thread_identity_with_serial_final(self):
         with threadpool_limits(3):
             before = counts()
-            result = run_example(self.path, jobs=2, final_native_threads=2)
+            result = run_example(self.path, jobs=2)
             self.assertEqual(counts(), before)
         self.assertEqual(result['work_summary']['fold_workers'], 2)
         identity = json.loads((self.path / 'identity.json').read_text())['payload']['identity']
         self.assertEqual(identity['native_threads'], 1)
         self.assertEqual({p['num_threads'] for p in identity['runtime']['native_pools']}, {1})
-        self.check_provenance(result, 2)
+        self.check_provenance(result)
         saved = receipts(self.path)
         with patch.object(example, '_fit_and_score', side_effect=AssertionError('CV must replay')):
             replayed = run_example(self.path, jobs=1, resume=True, final_native_threads=1)
@@ -223,9 +248,12 @@ class FinalRefitThreadTests(unittest.TestCase):
                 self.assertFalse(self.path.exists())
                 with self.assertRaises(ValueError):
                     checkpoint.runtime_fingerprint(expected_native_threads=value)
+        with self.assertRaisesRegex(ValueError, 'final_native_threads must be 1'):
+            run_example(self.path, final_native_threads=2)
+        self.assertFalse(self.path.exists())
 
     def test_final_failures_restore_caller_and_resume_completed_cv(self):
-        run_example(self.path, refit_best=False)
+        run_example(self.path, refit_best=False, cv_native_threads=2)
         saved = receipts(self.path)
         for stage in ('scale', 'fit', 'runtime'):
             for error_type in (RuntimeError, KeyboardInterrupt):
@@ -233,23 +261,27 @@ class FinalRefitThreadTests(unittest.TestCase):
                             'runtime': example._check_runtime}[stage]
 
                 def fail(*a, **k):
-                    final = (k.get('native_threads') == 2 if stage == 'runtime' else len(a[1]) == len(y))
+                    final = (k.get('check_inventory') is False and 'native_threads' not in k
+                             if stage == 'runtime' else len(a[1]) == len(y))
                     if final:
-                        assert_counts(self, 2)
+                        assert_counts(self, 1)
+                        self.assertEqual(effective_n_jobs(3), 1)
                         raise error_type('manufactured final failure')
                     return original(*a, **k)
 
                 target, name = {'scale': (StandardScaler, 'fit_transform'),
                                 'fit': (KernGDWD, 'fit'), 'runtime': (example, '_check_runtime')}[stage]
-                with self.subTest(stage=stage, error=error_type.__name__), threadpool_limits(3):
+                with self.subTest(stage=stage, error=error_type.__name__), threadpool_limits(3), \
+                        parallel_config(backend='threading', n_jobs=3):
                     before = counts()
                     with patch.object(target, name, fail), patch.object(
                             example, '_fit_and_score', side_effect=AssertionError('CV must replay')):
                         with self.assertRaisesRegex(error_type, 'manufactured final failure'):
-                            run_example(self.path, resume=True, final_native_threads=2)
+                            run_example(self.path, resume=True, cv_native_threads=2)
                     self.assertEqual(counts(), before)
+                    self.assertEqual(effective_n_jobs(None), 3)
                     self.assertEqual(receipts(self.path), saved)
-                    result = run_example(self.path, resume=True, final_native_threads=2)
+                    result = run_example(self.path, resume=True, cv_native_threads=2)
                     self.assertEqual(counts(), before)
                     self.check_provenance(result, 2)
 
@@ -266,7 +298,7 @@ class FinalRefitThreadTests(unittest.TestCase):
                        else patch.object(example, '_work_summary', side_effect=RuntimeError('manufactured reporting failure')))
             with self.subTest(stage=stage), warnings.catch_warnings(), context, threadpool_limits(3):
                 warnings.simplefilter('error', RuntimeWarning)
-                result = run_example(self.path / stage, final_native_threads=2)
+                result = run_example(self.path / stage, cv_native_threads=2)
                 assert_counts(self, 3)
                 self.check_provenance(result, 2)
                 self.assertIsNotNone(result['best_clf'])
@@ -290,14 +322,14 @@ class FinalRefitThreadTests(unittest.TestCase):
     def test_cli_validates_and_forwards_final_threads(self):
         common = ['--data', 'missing.npz', '--run-dir', 'unused', '--lambd', '.1', '--gamma', '.2']
         with redirect_stderr(io.StringIO()):
-            for value in ('0', '-1', '1.5', 'True'):
+            for value in ('0', '2', '-1', '1.5', 'True'):
                 with self.subTest(invalid=value), self.assertRaises(SystemExit) as caught:
                     command.main(common + ['--final-native-threads', value])
                 self.assertEqual(caught.exception.code, 2)
         self.path.mkdir(parents=True)
         np.savez(self.path / 'data.npz', X=X, y=y)
         common[1] = str(self.path / 'data.npz')
-        for extra, expected in (([], 1), (['--final-native-threads', '2', '--cv-only'], 2)):
+        for extra in ([], ['--final-native-threads', '1', '--cv-only']):
             with self.subTest(extra=extra), patch.object(command, 'run_resumable_cv', return_value={
                     'best_score': .5, 'best_params': {}, 'work_summary': {},
                     'finite_grid_report': {
@@ -305,7 +337,7 @@ class FinalRefitThreadTests(unittest.TestCase):
                         'scope': 'best_among_supplied_candidates',
                         'reporting_error': 'RuntimeError'}}) as called, redirect_stdout(io.StringIO()):
                 command.main(common + extra)
-            self.assertEqual(called.call_args.kwargs['final_native_threads'], expected)
+            self.assertEqual(called.call_args.kwargs['final_native_threads'], 1)
 
 
 if __name__ == '__main__':

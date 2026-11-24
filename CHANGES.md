@@ -6,6 +6,94 @@ development is guided by Chang Cheng. The original implementation by Iain
 Carmichael, upstream maintenance by David Allemang and Kitware, and the MIT
 license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
+## 2.0.2
+
+- The test extras support pandas 2.2.2 on Python 3.11 and 3.12 and require
+  pandas 2.2.3 or later on Python 3.13 and later.
+- Require NumPy 1.26.3 or later and SciPy 1.11.4 or later. NumPy 1.26.3
+  fixes a spurious overflow when scaling very small kernel values. SciPy 1.11.4
+  preserves 32-bit indices when cross-validation converts diagonal sparse arrays.
+- Estimators that accept sparse features now handle two-dimensional integer COO matrices and arrays,
+  including inputs with duplicate entries at the same coordinate.
+  Eigenvalue decomposition of a one-by-one matrix also works with the EVD
+  driver at this minimum.
+- On Windows with NumPy 1.26, spectral recovery uses the supported exponent
+  type, and compiled affine reporting uses pointer-width row indices.
+- Training rejects NaN and infinite class labels in extended-precision and
+  byte-swapped floating arrays on the minimum scikit-learn version. Accuracy
+  scoring preserves exact integer IDs outside the signed integer range when
+  supplied in these floating dtypes.
+
+- Classifier accuracy accepts NumPy variable-width string labels, including
+  those supplied by a pandas sparse target. Weighted scoring preserves
+  distinct labels such as `"q"` and `"q\0"`.
+
+- Fitting rejects datetime and duration targets with a missing (`NaT`)
+  training row. A sparse target may still use `NaT` as its fill value when
+  every training row has a stored label.
+
+- Fitting, scoring and validation preserve distinct instants and durations
+  in pandas sparse targets, including object-typed targets whose observed
+  labels use different time units. If fitting cannot infer a shared unit,
+  supply a NumPy datetime or timedelta array built from exact tick counts
+  in a unit that represents every label. Scoring can compare individual
+  observations across units even when the whole target has no such unit.
+  When sparse fitting produces native datetime or timedelta classes,
+  scoring and validation accept the same scalars in an object array or
+  an object-typed pandas Series.
+
+- Preserve distinct class IDs when a boxed target mixes a NumPy floating-point
+  label with an adjacent large integer. This includes NumPy scalar subclasses
+  with inherited numeric ordering and pandas sparse object labels. Binary
+  estimators and the kernel mean-difference helper recognize both classes and
+  reject a third distinct ID. Fitting, validation monitoring and scoring
+  preserve custom scalar equality for boxed integer class labels, including
+  comparisons with numeric IDs stored in zero-dimensional arrays. Numeric
+  lists and tuples preserve scalar-defined comparisons during training,
+  scoring and held-out validation, including for a single row. Numeric labels
+  that override integer or floating conversion retain their stored IDs, and
+  validation checks the stored values for finiteness. Realness checks respect
+  the original label's dtype and NumPy dispatch. Targets and individual rows
+  with explicit array representations use their projected labels consistently
+  during fitting, scoring and validation. Training rejects mixed
+  comparisons that assign observations to overlapping classes.
+  A pandas sparse integer target with an occupied text fill keeps integer
+  `1` distinct from string `"1"`. Fitting rejects the mixed labels, and
+  accuracy scoring compares each prediction with the original observed label.
+  Scoring also accepts a fill such as a `str` subclass that inherits ordinary
+  string behavior, on pandas versions that support that sparse dtype.
+  When a sparse target supplies labels by iteration, fitting and validation
+  also distinguish numeric IDs from such strings. For example, an integer
+  `1` in validation data cannot match the training class `"1"`. A trailing
+  NUL also distinguishes text labels such as `"a"` and `"a\0"`.
+  Large integer IDs also survive mixed sparse fill and stored values,
+  numeric scalar object arrays, and positional sequences such as a UserList or deque.
+  A DataFrame or sparse categorical level subclass can supply values that
+  match an ordinary pandas conversion that changes a stored class ID. When
+  that leaves two possible label sets, pass `np.asarray(y)` to choose the
+  projected labels or supply exact labels built from the stored sparse scalars.
+
+- Preserve large integer class IDs in pandas nullable integer targets and
+  categoricals with sparse integer categories, including during kernel DWD
+  validation monitoring. Fitting and scoring also preserve sparse `uint64`
+  labels. Mixed numeric sequences preserve the original scalars when a
+  single native integer dtype cannot hold them. Shared-fold search checks
+  for label changes during pandas row selection and array conversion,
+  including a second sparse output alongside a categorical column whose
+  integer levels use sparse object storage. It also checks sparse datetime
+  and duration labels whose fill or unit can change during conversion, and
+  integer endpoints in directly stored sparse intervals that can round or
+  overflow when a fold selects only intervals.
+
+- Require threadpoolctl 3.7.0 or later. The dependency-floor CI check exercises
+  residual worker planning with BLAS limits of one and two threads.
+
+- Require joblib 1.6.0 or later so the process backend can track and clean up temporary files on CPython 3.15. See the [shared-fold search guide](docs/shared_fold_search.md#process-parallel-fallback) for how a process-parallel fallback handles training data and fold indices.
+
+- The conic extra requires CVXPY 1.6.7, Clarabel 0.11.0, OSQP 1.0.4,
+  SCS 3.2.4.post3 and highspy 1.7.1 or later, excluding SCS 3.3.0.
+  See the [project metadata](pyproject.toml) for the complete dependency ranges.
+
 ## 2.0.1
 
 - Repair the native-build tests' lookup of the platform-error exception in

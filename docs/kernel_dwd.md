@@ -213,7 +213,8 @@ implementation differences to an AOCL or MKL version upgrade.
 
 #### Paired releases, caches and saved objects
 
-Use DWD 2.0.1 and Ensemble DWD 0.4.0 together. DWD 2.0.0 rejects the
+Use the [matching DWD and Ensemble DWD versions](../README.md#companion-package-and-citation).
+DWD 2.0.0 rejects the
 `implementation` keyword forwarded by earlier Ensemble versions. Upgrade both
 packages before refitting an ensemble or starting a new parameter search.
 

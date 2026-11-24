@@ -6,37 +6,39 @@ import numpy as np
 import pytest
 from _arithmetic_mode_test_support import changed_arithmetic
 from _feature_expansion_test_support import (
-    arithmetic, facade, feature, genuine, literal, layout, prepare, reference,
+    arithmetic, facade, feature, expansion_bridge, genuine, literal, layout, prepare, reference,
     native_bundle, checked, LITERALS, LAYOUTS,
 )
 
 @pytest.mark.parametrize('arrangement', LAYOUTS)
 @pytest.mark.parametrize('name', LITERALS)
-def test_literal_expansion_and_complete_input_bytes(genuine, arrangement, name):
+def test_literal_expansion_and_complete_input_bytes(expansion_bridge, arrangement, name):
     columns, z, alpha, penalty = literal(name)
     prepared, splits = prepare(z, alpha, penalty)
     columns = layout(columns, arrangement)
-    status, result = checked(genuine, columns, prepared, splits)
+    status, result = checked(expansion_bridge, columns, prepared, splits)
     if name == 'subnormal-final':
-        assert status == 0 and result[0] == math.ulp(0.)
+        module, context = expansion_bridge
+        assert status == (module.GUARD if context is None else module.OK)
+        assert result[0] == math.ulp(0.)
     if name in ('zeros', 'signed-zero'):
         assert result.tobytes() == np.zeros(len(columns)).tobytes()
 
 
 @pytest.mark.parametrize('penalty', (.25, -.25, 2.**-100), ids=('positive-quarter', 'negative-quarter', 'tiny-positive'))
 @pytest.mark.parametrize('exponent', (-1022, -900, -500, -1, 0, 400, 900, 1023))
-def test_fixed_scale_corners(genuine, penalty, exponent):
+def test_fixed_scale_corners(expansion_bridge, penalty, exponent):
     columns = np.ldexp(np.array([[.5, -.5, .75, -.75], [1., -1., .5, -.5]]), exponent)
     z = np.array([.5, .5, -.25, -.25])
     alpha = np.array([.25, -.25, .125, -.125])
     prepared, splits = prepare(z, alpha, penalty)
-    checked(genuine, columns, prepared, splits)
+    checked(expansion_bridge, columns, prepared, splits)
 
 
 @pytest.mark.parametrize('over', (False, True))
 @pytest.mark.parametrize('rows', (1, 2, 16, 32, 33, 63, 64))
-def test_exact_tile_caps(genuine, over, rows):
-    module, context = genuine
+def test_exact_tile_caps(expansion_bridge, over, rows):
+    module, context = expansion_bridge
     width = min(1024, 16384//rows) + int(over)
     columns = np.ones((rows, width))
     prepared, splits = prepare(np.full(width, .5), np.zeros(width), .25)
@@ -45,6 +47,8 @@ def test_exact_tile_caps(genuine, over, rows):
     status = module.gradient_from_splits(bundle)
     if over or rows == 1:
         assert status == module.ARGUMENT and output.tobytes() == before
+    elif context is None:
+        assert status == module.GUARD and output.tobytes() == before
     else:
         assert status == 0 and output.tobytes() == np.full(rows, width*.5).tobytes()
 
@@ -52,8 +56,8 @@ def test_exact_tile_caps(genuine, over, rows):
 @pytest.mark.parametrize('fault', ('float32', 'big-endian', 'unaligned', 'F', 'negative',
                                   'strided', 'output-readonly', 'output-length', 'alias',
                                   'exponent64', 'bad-exponent', 'penalty-type', 'view-type', 'bundle-type'))
-def test_malformed_bridge_is_atomic(genuine, fault):
-    module, context = genuine
+def test_malformed_bridge_is_atomic(expansion_bridge, fault):
+    module, context = expansion_bridge
     columns, z, alpha, penalty = literal('dyadic')
     prepared, splits = prepare(z, alpha, penalty)
     bundle, arrays, output = native_bundle(context, columns, prepared, splits)
@@ -78,7 +82,10 @@ def test_malformed_bridge_is_atomic(genuine, fault):
     if fault == 'bundle-type': bundle = list(bundle)
     before = tuple(v.tobytes() for v in arrays)
     status = module.gradient_from_splits(bundle)
-    assert status != 0
+    if fault == 'bad-exponent':
+        assert status != 0
+    else:
+        assert status == module.ARGUMENT
     assert tuple(v.tobytes() for v in arrays) == before
 
 
@@ -109,16 +116,18 @@ def test_staging_and_first_rounding(genuine, case):
 
 
 @pytest.mark.parametrize('shift', (-8, 0, 8))
-def test_independent_exact_dyadic_fraction(genuine, shift):
+def test_independent_exact_dyadic_fraction(expansion_bridge, shift):
     columns, z, alpha, _ = literal('dyadic')
     columns = np.ldexp(columns, shift)
     penalty = .25
     prepared, splits = prepare(z, alpha, penalty)
-    status, result = checked(genuine, columns, prepared, splits)
+    status, result = checked(expansion_bridge, columns, prepared, splits)
     expected = np.array([float(sum((Fraction(float(x))*
                          (Fraction(float(a))+Fraction(penalty)*Fraction(float(b)))
                          for x, a, b in zip(row, z, alpha)), Fraction())) for row in columns])
-    assert status == 0 and result.tobytes() == expected.tobytes()
+    module, context = expansion_bridge
+    assert status == (module.GUARD if context is None else module.OK)
+    assert result.tobytes() == expected.tobytes()
 
 
 
@@ -137,8 +146,8 @@ def test_native_mode_declines_without_writes(genuine, mode):
     assert output.tobytes() == before
 
 
-def test_real_extension_contract(genuine):
-    module, _ = genuine
+def test_real_extension_contract(expansion_bridge):
+    module, _ = expansion_bridge
     assert module.API_VERSION == 2 and module.COMPILED_PY_HEX == sys.hexversion
     assert (module.MAX_ROWS, module.MAX_ENTRIES) == (64, 16384)
     assert module.MAX_WIDTH == 1024
@@ -160,8 +169,8 @@ def erasure_fixture(dtype):
 
 
 
-def test_native_long_exponents_refuse_atomically_and_preserve_literal_fallback(genuine):
-    module, context = genuine
+def test_native_long_exponents_refuse_atomically_and_preserve_literal_fallback(expansion_bridge):
+    module, context = expansion_bridge
     columns, prepared, splits = erasure_fixture('long')
     assert memoryview(prepared[1]).format == memoryview(prepared[4]).format == 'l'
     assert prepared[1].itemsize in (4, 8)

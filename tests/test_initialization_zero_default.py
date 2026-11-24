@@ -13,6 +13,8 @@ from sklearn.base import clone
 from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 
+from _search_resources import single_worker_search_parent
+
 from dwd.cv import run_cv
 from dwd.gen_dwd import GenDWD, GenDWDCV, solve_gen_dwd
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
@@ -271,6 +273,7 @@ def test_cv_forwards_the_initialization_to_every_fold_and_final_refit(cls, base,
 
 
 @pytest.mark.parametrize('family', ['linear', 'kernel'])
+@single_worker_search_parent()
 def test_valid_grid_keeps_zero_and_random_as_distinct_requests(family):
     search = GridSearchCV(_model(family, random_state=29),
                           {'initialization': ['zero', 'random']},

@@ -231,10 +231,16 @@ Version 1.3.13 provides an opt-in context for diagnosing which guarded native
 residual route is used:
 
 ```python
+from joblib import parallel_config
+from threadpoolctl import threadpool_limits
+
+from dwd.gen_kern_dwd import KernGDWD
 from dwd.profiling import residual_profile
 
-with residual_profile() as profile:
-    model.fit(X_train, y_train)
+model = KernGDWD(kernel='rbf', random_state=42)
+with parallel_config(backend='sequential', n_jobs=1), threadpool_limits(limits=1):
+    with residual_profile() as profile:
+        model.fit(X_train, y_train)
 
 observations = profile.as_dict()
 ```
@@ -373,7 +379,10 @@ The helper uses CPython's full ABI. Builds include it only for GIL-enabled
 array, callback, floating-point mode and source-definition guards must also
 pass. It is not an abi3 extension. An unavailable, older or incompatible
 extension, active tracing/profiling, or a refused operand/context retains the
-original checked implementation. Installing a cp312 wheel does not establish
+original checked implementation. With NumPy 1.26, `errstate` inherits methods
+from `contextlib.ContextDecorator`, so gradient and beta calculations use that
+checked implementation even when the extension is installed.
+Installing a cp312 wheel does not establish
 that this private route qualified on a different interpreter micro version.
 Python support outside this native domain is preserved through fallback.
 

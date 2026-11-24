@@ -83,24 +83,42 @@ def reference_results():
 @pytest.mark.parametrize('solver', SOLVERS)
 @pytest.mark.parametrize('storage', ('dense', 'csr'))
 @pytest.mark.parametrize('case', CASES)
-def test_actual_svm_objective(case, storage, solver, reference_results):
+def test_actual_svm_objective(case, storage, solver, reference_results, monkeypatch):
     if solver not in cp.installed_solvers(): pytest.skip('Optional solver unavailable: ' + solver)
     X, labels = fixture(case)
     input_X = sparse.csr_matrix(X) if storage == 'csr' else X.copy()
     before = input_X.copy()
     model = SVM(C=.25, solver_kws=solver_options(solver))
     saved_params = copy.deepcopy(model.get_params(deep=False))
+    native_stops = []
     if case == 'large_scale' and solver == 'OSQP':
+        import osqp
         ordinary_X, ordinary_y = fixture('original')
         model.fit(ordinary_X, ordinary_y)
         assert hasattr(model, 'coef_') and hasattr(model, 'problem_')
+        # CVXPY versions expose OSQP's iteration limit through different exceptions.
+        # Observe the real solver's return for this refit before CVXPY translates it.
+        solve = osqp.OSQP.solve
+        def observe_stop(instance, *args, **kwargs):
+            result = solve(instance, *args, **kwargs)
+            native_stops.append((result.info.status, result.info.iter))
+            return result
+        monkeypatch.setattr(osqp.OSQP, 'solve', observe_stop)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         try:
             model.fit(input_X, labels)
-        except RuntimeError as error:
-            if not (case == 'large_scale' and solver == 'OSQP'
-                    and str(error) == "SVM conic solver failed with status 'user_limit'."):
+        except (RuntimeError, cp.error.SolverError) as error:
+            if case != 'large_scale' or solver != 'OSQP':
+                raise
+            if native_stops != [('maximum iterations reached', saved_params['solver_kws']['max_iter'])]:
+                raise
+            user_limit = (isinstance(error, RuntimeError)
+                          and str(error) == "SVM conic solver failed with status 'user_limit'.")
+            cvxpy_refusal = (isinstance(error, cp.error.SolverError)
+                             and str(error) == "Solver 'OSQP' failed. Try another solver, "
+                                               "or solve with verbose=True for more information.")
+            if not (user_limit or cvxpy_refusal):
                 raise
             assert model.get_params(deep=False) == saved_params
             assert not any(name.endswith('_') and not name.startswith('_') for name in vars(model))
@@ -144,3 +162,38 @@ def test_signed_constant_margin_algebra(storage):
     new = cp.multiply(y, X) @ beta + cp.multiply(y, bias)
     assert old.shape == new.shape == (16, 1)
     np.testing.assert_allclose(old.value, new.value, rtol=2e-15, atol=2e-15)
+
+
+def test_osqp_infeasible_refit_reports_status_and_clears_state(monkeypatch):
+    import osqp
+
+    X, labels = fixture('original')
+    original_X, original_labels = X.copy(), labels.copy()
+    model = SVM(C=.25, solver_kws={'solver': 'OSQP'}).fit(X, labels)
+    assert model.predict(X).shape == labels.shape
+
+    # Loose stopping options make the real solver report primal infeasibility.
+    options = {'solver': 'OSQP', 'eps_prim_inf': 1., 'check_termination': 1}
+    original_options = options.copy()
+    model.set_params(solver_kws=options)
+    solve = osqp.OSQP.solve
+    native_statuses = []
+
+    def observe_status(instance, *args, **kwargs):
+        result = solve(instance, *args, **kwargs)
+        native_statuses.append(result.info.status)
+        return result
+
+    monkeypatch.setattr(osqp.OSQP, 'solve', observe_status)
+    with pytest.raises(RuntimeError, match=r"^SVM conic solver failed with status 'infeasible'\.$"):
+        model.fit(X, labels)
+
+    assert native_statuses == ['primal infeasible']
+    assert model.solver_kws == original_options
+    assert options == original_options
+    np.testing.assert_array_equal(X, original_X)
+    np.testing.assert_array_equal(labels, original_labels)
+    assert not any(name.endswith('_') and not name.startswith('_') for name in vars(model))
+    assert '_Xfit' not in vars(model)
+    with pytest.raises(NotFittedError):
+        model.predict(X)

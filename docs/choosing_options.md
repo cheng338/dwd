@@ -210,12 +210,9 @@ See [direct RBF](kernel_dwd.md#optional-direct-rbf-computation),
   when the current task is evaluating the grid and no deployable full-training
   model is needed yet. It skips final fitting, not CV or winner selection.
   With `refit_best=True`, the selected model is fitted afresh even if all CV
-  results were resumed. Raise `final_native_threads` above its default of 1
-  only when a measured full-data scaling/refit comparison supports useful
-  native-library scaling within the available resources. It does not change
-  CV worker threads and can change floating-point reductions. Use
-  `cv_native_threads` and `jobs` to allocate the separate CV phase, avoiding
-  nested oversubscription; more threads do not guarantee a faster fit.
+  results were resumed. The example times full-data scaling and the fresh
+  refit using one estimator worker and one native thread. Use
+  `cv_native_threads` and `jobs` to allocate the CV phase.
 
 ## Optional conic models
 

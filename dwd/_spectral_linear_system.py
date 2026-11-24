@@ -55,7 +55,8 @@ class SpectralLinearSystem(KernelLinearSystem):
             diagonal = np.diag(self.K) + self.shift
             if not np.isfinite(diagonal).all() or np.any(diagonal <= 0.):
                 raise FloatingPointError('The shifted diagonal cannot be equilibrated.')
-            powers = np.rint(-.5 * np.log2(diagonal)).astype(np.int64)
+            # Binary64 scaling exponents and their pairwise sums fit a C int.
+            powers = np.rint(-.5 * np.log2(diagonal)).astype(np.intc)
             scale = np.ldexp(np.ones(self.n), powers)
             if not np.isfinite(scale).all() or np.any(scale <= 0.):
                 raise FloatingPointError('Unrepresentable spectral equilibration scale.')

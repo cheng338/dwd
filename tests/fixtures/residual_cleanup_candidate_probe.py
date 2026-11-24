@@ -4,7 +4,10 @@ import sys
 import threading
 import types
 
-from residual_cleanup_probe import _line, _native_ids, _wait_gone
+from residual_cleanup_probe import _line
+from _residual_native_threads import (
+    live_native_ids, require_native_exit, wait_native_gone, worker_completion_probe,
+)
 
 
 def interrupted_native(mode):
@@ -94,7 +97,7 @@ def interrupted_native(mode):
         if 'completion_wait' not in faults:
             assert mechanism == 'sentinel'
             assert tokens and all(token.locked() for token in tokens)
-            assert set(native_ids) <= _native_ids() and not release.is_set()
+            assert native_ids and live_native_ids(native_ids) == set(native_ids) and not release.is_set()
             assert all(worker._tstate_lock is not None for worker in captured)
             if owner is not None:
                 assert owner.executor is pools[0], 'Ownership cleared before drain'
@@ -117,10 +120,10 @@ def interrupted_native(mode):
             finally:
                 sys.settrace(original_trace)
         assert caught is primary and not returned
-        _wait_gone(native_ids)
+        wait_native_gone(native_ids)
         assert len(receipts) == 1 and receipts[0]['drained']
         assert sorted(completed) == sorted(calls)
-        assert foreign.is_alive() and foreign_id in _native_ids()
+        assert foreign.is_alive() and live_native_ids([foreign_id]) == {foreign_id}
         assert scopes._SCOPE.get() is None
         return dict(case=mode, variant='selected_source', primary_preserved=True, partial_output_published=False,
                     cancellation_published=cancelled.is_set(), native_calls=len(calls),
@@ -137,7 +140,7 @@ def interrupted_native(mode):
         for pool in pools:
             pool.shutdown(wait=False)
         if native_ids:
-            _wait_gone(native_ids)
+            wait_native_gone(native_ids)
         foreign_release.set()
         foreign.join(5)
         assert not foreign.is_alive()
@@ -167,7 +170,7 @@ def scope_exit_interrupt():
         assert scope.executor is pool
         if not observations:
             assert tokens and all(token.locked() for token in tokens)
-            assert ids[0] in _native_ids() and not finished.is_set()
+            assert live_native_ids(ids) == {ids[0]} and not finished.is_set()
             observations.append('interrupted_while_alive')
             raise interruption
         release.set()
@@ -185,24 +188,32 @@ def scope_exit_interrupt():
             scope.executor, scope.workers = pool, 1
             future = pool.submit(task)
             assert started.wait(5)
-    except BaseException as error:
+            worker, = pool._threads
+            assert ids == [worker.native_id]
+            worker_completed = worker_completion_probe(worker)
+    except KeyboardInterrupt as error:
         caught = error
-        # Observe before finally releases anything: rescue must never hide an
-        # early cleanup return or convert it into evidence of completed drain.
-        return_state = dict(native_remaining=sorted(set(ids) & _native_ids()),
-                            task_finished=finished.is_set(), future_done=future.done(),
-                            handle_retired=scope.executor is None)
+        assert caught is interruption
+        # Capture the worker's raw completion token and application state at
+        # propagation. A kernel thread ID can outlast its CPython thread state.
+        return_state = dict(worker_completed=worker_completed(), task_finished=finished.is_set(),
+                            future_done=future.done(), handle_retired=scope.executor is None,
+                            scope_context_reset=scopes._SCOPE.get() is None,
+                            native_remaining=sorted(live_native_ids(ids)))
+        assert return_state['worker_completed'] and return_state['task_finished'], return_state
+        assert return_state['future_done'] and future.result(0) == 42, return_state
+        assert return_state['handle_retired'] and return_state['scope_context_reset'], return_state
+        require_native_exit(return_state['native_remaining'], [worker.native_id])
+        native_after_poll = sorted(live_native_ids(ids))
+        assert not native_after_poll
     finally:
         cleanup._wait_completions, scopes.drain_owned_executor = real_wait, real_owned
         release.set()
         pool.shutdown(wait=False)
-        _wait_gone(ids)
-    assert caught is interruption and future.result(0) == 42 and finished.is_set()
-    assert return_state == dict(native_remaining=[], task_finished=True,
-                                future_done=True, handle_retired=True)
-    assert scope.executor is None and scopes._SCOPE.get() is None
+        wait_native_gone(ids)
+    assert caught is interruption and observations == ['interrupted_while_alive']
     return dict(case='scope_exit_interrupt', variant='selected_source', cleanup_receipts=receipts,
-                original_cleanup_interrupt_preserved=True, owned_native_remaining=[],
+                original_cleanup_interrupt_preserved=True, owned_native_remaining=native_after_poll,
                 scope_handle_retired=True, scope_context_reset=True,
                 completion_interrupted_while_native_alive=True, observed_before_rescue=return_state)
 
@@ -243,7 +254,7 @@ def ordinary_retirement(mode):
                 assert scope.executor is not old and old._shutdown and scope.workers == 3
             else:
                 assert mode == 'normal_reused' and scope.executor is old
-        _wait_gone(owned_ids)
+        wait_native_gone(owned_ids)
         assert scope.executor is None and scopes._SCOPE.get() is None
         assert all(r['drained'] and r['repeated_interrupts'] == 0 for r in receipts)
         return dict(case=mode, variant='selected_source', exact_output_equality=True, cleanup_receipts=receipts,
@@ -288,7 +299,7 @@ def unqualified_scope():
     assert len(receipts) == 1 and receipts[0]['shutdown_requested']
     assert not receipts[0]['qualified'] and not receipts[0]['drained']
     assert all(impl._threads_queues.get(worker) is queue for worker, queue in before)
-    _wait_gone([identity])  # Independent observation, not a claimed helper drain.
+    wait_native_gone([identity])  # Independent observation, not a claimed helper drain.
     return dict(case='unqualified_scope', variant='selected_source', cleanup_receipts=receipts,
                 unproved_drain_raised=True, exact_handle_retained=retained,
                 registry_unchanged=True, scope_context_reset=True,

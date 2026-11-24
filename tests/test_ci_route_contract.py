@@ -41,8 +41,9 @@ RUNTIME_CASES = [
 
 
 @pytest.mark.parametrize('contract', ['current', 'released-1.3.19'])
+@pytest.mark.parametrize('numpy_version,fused_callbacks', [('1.26.4', False), ('2.5.4', True)])
 @pytest.mark.parametrize('case', RUNTIME_CASES, ids=['-'.join(row[:3]) for row in RUNTIME_CASES])
-def test_declared_routes_do_not_depend_on_runtime_guards(contract, case):
+def test_declared_routes_do_not_depend_on_runtime_guards(contract, case, numpy_version, fused_callbacks):
     backend, system, version, raw, large, small, ordinary, reporting = case
     expected = {
         'raw_compiled_residual': raw,
@@ -55,8 +56,8 @@ def test_declared_routes_do_not_depend_on_runtime_guards(contract, case):
     }
     if contract == 'current':
         expected['ordered_gradient'] = backend == 'native'
-        expected['feature_expansion'] = backend == 'native' and version == '3.12'
-    assert routes.expected_routes(backend, contract, system, version) == expected
+        expected['feature_expansion'] = backend == 'native' and version == '3.12' and fused_callbacks
+    assert routes.expected_routes(backend, contract, system, version, numpy_version) == expected
 
 
 @pytest.mark.parametrize('expected_native,observed', [
@@ -91,7 +92,7 @@ def test_ordered_portable_witness_rejects_native_entry():
     (3, '3.13', 'unknown expected Python'),
 ])
 def test_unknown_contract_arguments_fail_explicitly(index, value, message):
-    args = ['native', 'current', 'windows', '3.12']
+    args = ['native', 'current', 'windows', '3.12', '2.5.4']
     args[index] = value
     with pytest.raises(RuntimeError, match='^Native route preflight: ' + message + '$'):
         routes.expected_routes(*args)

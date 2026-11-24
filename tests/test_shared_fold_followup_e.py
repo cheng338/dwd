@@ -17,6 +17,9 @@ from dwd import model_selection as selection
 from dwd.kern_md import KernMD
 
 
+pytestmark = pytest.mark.usefixtures("numerical_search_parent")
+
+
 def data():
     X = ((np.arange(16 * 3).reshape(16, 3) * 5) % 19 - 9) / 8.
     y = np.where(np.arange(16) % 2, 7, -3)

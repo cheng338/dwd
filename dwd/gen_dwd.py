@@ -281,7 +281,7 @@ class GenDWDCV(LinearClassifierMixin, BaseEstimator):
 
     def set_params(self, **params):
         """Validate parameter names before delegating supported updates."""
-        # Avoid formatting array-valued CV defaults on an invalid-key path.
+        # Reject unknown top-level parameter names before applying any updates.
         if params:
             _validate_dwd_candidate_parameters(self, (params,))
         return super().set_params(**params)

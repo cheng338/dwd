@@ -97,7 +97,7 @@ def make_invalid(path, kind):
 def arguments(path, run):
     return ["--data", str(path), "--run-dir", str(run), "--lambd", ".1", ".2",
             "--gamma", ".3", ".4", "--folds", "2", "--seed", "17", "--max-iter", "3",
-            "--jobs", "2", "--cv-native-threads", "1", "--final-native-threads", "2",
+            "--jobs", "2", "--cv-native-threads", "1", "--final-native-threads", "1",
             "--cv-memory-budget-mib", "8", "--cv-worker-memory-mib", "4"]
 
 
@@ -236,7 +236,7 @@ def test_valid_npz_forwards_arrays_options_after_resources_close(
     folds = options.pop("cv")
     assert folds.n_splits == 2 and folds.shuffle is True and folds.random_state == 17
     assert options == {"jobs": 2, "resume": scale, "scale": scale, "refit_best": not scale,
-                       "final_native_threads": 2, "cv_native_threads": 1,
+                       "final_native_threads": 1, "cv_native_threads": 1,
                        "cv_memory_budget_mib": 8.0, "cv_worker_memory_mib": 4.0}
     assert_closed(records, archive_expected=True)
     assert not run.exists() and path.read_bytes() == original

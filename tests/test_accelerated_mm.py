@@ -12,6 +12,8 @@ from sklearn.model_selection import GridSearchCV, StratifiedKFold
 
 import dwd._acceleration_policy as acceleration_policy
 import dwd._eigen as eigen
+from _search_resources import single_worker_search_parent
+
 from dwd._accelerated_mm import RestartedMM
 from dwd._kernel_solver import solve_kernel
 from dwd.gen_kern_dwd import KernGDWD, KernGDWDCV
@@ -290,6 +292,7 @@ class AccelerationPublicApiTests(unittest.TestCase):
                         acceleration='restart')
         parameters.update(kwargs);return KernGDWD(**parameters)
 
+    @single_worker_search_parent()
     def test_parameter_clone_gridsearch_and_internal_cv_pass_through(self):
         model=self.model();self.assertEqual(clone(model).get_params()['acceleration'],'restart')
         self.assertTrue(is_classifier(model))
