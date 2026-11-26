@@ -169,12 +169,11 @@ See [direct RBF](kernel_dwd.md#optional-direct-rbf-computation),
 ## Prediction, preparation and searches
 
 - **Prediction batches:** a positive `prediction_batch_size`, or a per-call
-  override, bounds query rows in temporary kernel blocks. Use it to control
-  allocation granularity, then measure the full prediction call and check scores
-  and labels. Partitioning can change low-order rounding and add overhead. Do not
-  recommend a slower setting solely for memory savings; smaller buffers do not
-  establish a performance improvement. Batching does not shrink the training
-  Gram matrix or caller-owned precomputed inputs. Explicit `None` disables it.
+  override, bounds query rows in temporary kernel blocks. Smaller batches can
+  add overhead and change low-order
+  rounding. Compare full prediction times, scores and labels when choosing a
+  batch size. The training Gram matrix and caller-owned precomputed inputs
+  retain their full size. Explicit `None` disables batching.
   See [batching](kernel_dwd.md#kernels-batching-and-caches).
 - **Prepared kernels/eigensystems:** `cv_init(X)`, supplied kernel `K`/`K_eig`,
   or linear `P0_eig` are useful for repeated compatible fits where preparation

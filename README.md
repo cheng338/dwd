@@ -58,9 +58,12 @@ See the [project metadata](pyproject.toml) and the
 [compiled-helper guide](docs/compiled_residual.md) for build prerequisites
 and runtime eligibility.
 
-The current validation policy targets Python 3.11 and 3.12 for complete suites.
-Python 3.13 and later Python 3.x releases are supported without dedicated
-complete-suite runs. The recorded 3.13 checks retain their historical scope.
+The complete test matrix targets Python 3.11 and 3.12. The package also
+supports later Python 3.x releases. On CPython 3.14 and 3.15, the DWD 2.0.2
+portable wheel passed eight focused pandas tests per interpreter on both
+Windows and Linux. These covered nullable row selectors, exact accuracy
+scoring and fits with adjacent unsigned class labels. The Python 3.16 check
+evaluated dependency markers only.
 
 Python 3.10 is no longer supported. Previously released companion wheels
 remain available as historical artifacts and will not receive updates.
@@ -94,10 +97,9 @@ OS or architecture restriction; the independent compiled-residual gate above
 remains Windows x86-64. A present binary or an eligible runtime does not prove
 that a particular fit executed native arithmetic or accepted its result.
 
-Recorded numerical validation covers Python 3.11 through 3.13; forward
-eligibility is not a claim of testing on later runtimes. Portable wheels can
-use the guarded scalar route when available. Python 3.11 has no `math.sumprod`,
-so a missing or declining compiled helper uses portable compensated arithmetic.
+Portable wheels can use the guarded scalar route when available. Python 3.11
+has no `math.sumprod`, so a missing or declining compiled helper uses portable
+compensated arithmetic.
 See the [runtime contract](docs/compiled_residual.md) for dispatch and fallback
 details, including the current Linux reporting scope and its recorded
 validation. These choices do not disable or select NumPy/SciPy BLAS acceleration.
@@ -143,14 +145,9 @@ artifacts are distributed through GitHub, not PyPI. Installing `dwd` by name
 from PyPI may retrieve a different upstream release. See
 [VALIDATION.md](VALIDATION.md) for the tested environments and evidence scope.
 
-Version 1.3.11 includes the optional `rbf_computation='direct'`,
-`affine_computation='joint'` and `exact_recovery='extended'` described below.
-Those were opt-in when introduced; the 1.3.10 wheels do not provide them.
-Version 1.3.17 makes automatic affine scoring and residual ordering the
-defaults for new kernel fits, as described below. Explicit scoring and residual-order policies
-remain available; models fitted and saved with earlier versions retain their
-recorded scoring behavior. This does not retain the retired legacy fitting
-algorithm described in historical release notes.
+`KernGDWD` and `KernGDWDCV` default to `affine_computation='joint'` for
+scoring and `residual_check_order='auto'` for residual checks. For earlier
+settings and saved models, see [joint affine scoring](docs/kernel_dwd.md#joint-affine-scoring).
 
 ## Companion package and citation
 
@@ -252,9 +249,14 @@ The default `affine_computation='joint'` uses joint scoring for corrected
 kernel fits: it evaluates uncertain products and the intercept together
 before rounding. It preserves the expression `K @ alpha + b`,
 the free intercept and the class tie rule. `KernGDWDCV` accepts the same option.
-The former affine `'auto'` alias is removed; replace it with `'joint'` in
-constructor settings and parameter grids. The previous default already used
-joint scoring, so this spelling change adds no numerical work.
+Version 1.3.11 introduced joint scoring as an option alongside
+`rbf_computation='direct'` and `exact_recovery='extended'`. Versions 1.3.16
+through 1.3.19 defaulted to `affine_computation='auto'`, which selected
+joint scoring for corrected fits. Version 2.0.0 made `'joint'` the explicit
+default.
+When migrating constructor settings and parameter grids, replace the retired
+affine `'auto'` alias with `'joint'`. The separate `residual_check_order='auto'`
+setting remains supported.
 Compared with separate product-and-intercept evaluation, joint scoring can
 change rounded scores, labels or validation choices and can take longer,
 especially for difficult cancellation. Explicit `'standard'` retains the
@@ -614,11 +616,11 @@ classifiers with dense feature input.
 | `KernMD` | Dense training input, including a dense square Gram matrix when `kernel='precomputed'`. |
 
 Where sparse features are supported, validation accepts CSR, CSC and COO
-matrices and CSR arrays; conversion to CSR can allocate a copy. Callable kernels
-receive the training features as their first argument and the supplied
-training/query features as their second. A callback used with sparse features
-must handle those sparse
-arguments and return a usable dense training Gram matrix. Its output has one
+matrices, CSR arrays, and two-dimensional integer COO arrays. Conversion to
+CSR can allocate a copy. Callable kernels receive the training features as
+their first argument and the supplied training/query features as their second.
+A callback used with sparse features must handle those sparse arguments and
+return a usable dense training Gram matrix. Its output has one
 row per training sample and one column per supplied sample. The callable sparse
 tag describes this supported delegation; it does not guarantee that an
 arbitrary callback accepts sparse input or produces a valid kernel.

@@ -337,9 +337,9 @@ this documentation does not change bounds, tolerances, defaults or dispatch.
 
 ## Ordered linear-feature gradient reduction
 
-DWD 2.0.1 also builds a separate private
-`_ordered_reduction_accel` extension. Eligible dense named-linear L-BFGS reports
-use it automatically for the final sums of already-restored gradient terms.
+Native builds include a separate private `_ordered_reduction_accel` extension.
+Eligible dense named-linear L-BFGS reports use it automatically for the final
+sums of already-restored gradient terms.
 The six product-expansion planes retain their original order. Product formation,
 scaling, restoration checks, objective and gradient acceptance are unchanged.
 Beta/coefficient computation and the existing residual and score entries do not
@@ -414,10 +414,10 @@ Rebuild `_feature_expansion_accel` from matching sources for private
 `API_VERSION = 2` and the new capacity. Older binaries decline this route and
 retain the checked fallback; there is no new public option.
 
-The reviewed Windows/Linux CPython 3.12 measurements found larger and repeated
-fit benefits, plus cold-start and missing-extension costs. The smaller-buffer
-recomputing interface and separate native dual-reduction candidate were not
-selected. See [the measured scope and limitations](kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting).
+On Windows and Linux with CPython 3.12, the helper sped up the larger tested
+fits. Some first fits and fits with a missing extension took longer. See the
+[fit timings](kernel_dwd.md#dense-named-linear-l-bfgs-final-reporting) and
+[implementation comparisons](../VALIDATION.md#exact-feature-report-expansion-integration-2026-11-09).
 
 ## Building and installing
 
@@ -444,8 +444,9 @@ the runtime loading and numerical guards above.
 
 Set `DWD_BUILD_ACCEL=0` to build a portable wheel without a compiler.
 This flag applies during a source build. An existing wheel retains the helpers
-it was built with. The DWD 2.0.1 Windows CPython 3.12 native wheel contains all
-three helpers. The portable wheel contains no compiled extension.
+it was built with. The DWD 2.0.2 native wheel for Windows x86-64 and
+CPython 3.12 contains all three helpers. The portable wheel contains no
+compiled extension.
 
 Builds retain strict floating-point flags. MSVC uses `/fp:strict`; GCC/Clang
 builds disable implicit contraction, reassociation and fast-math. For the

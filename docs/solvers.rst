@@ -13,14 +13,14 @@ DWD Classifiers
 
 .. autoclass:: dwd.gen_kern_dwd.KernGDWD
 
-The classifiers inherit scikit-learn's
-`accuracy score method <https://scikit-learn.org/stable/modules/generated/sklearn.base.ClassifierMixin.html#sklearn.base.ClassifierMixin.score>`_
-and `metadata-routing interface <https://scikit-learn.org/stable/metadata_routing.html>`_.
+The classifiers' ``score(X, y)`` returns the fraction of correctly predicted
+labels and preserves exact class identities, including large integer IDs.
+Passing ``sample_weight`` to ``score`` gives weighted accuracy. The classifiers
+support scikit-learn's `metadata-routing interface <https://scikit-learn.org/stable/metadata_routing.html>`_.
 
-Training ``sample_weight`` is not supported and is no longer an accepted fit
-or standalone-solver argument, even when its value is ``None``. Weighted
-accuracy through ``score(..., sample_weight=...)`` remains supported. See the
-`fitting and conic persistence guide <https://github.com/cheng338/dwd/blob/v2.0.1/docs/fitting_and_conic_persistence.md>`_
+Omit ``sample_weight`` from fitting and standalone-solver calls, even when its
+value is ``None``. See the
+`fitting and conic persistence guide <https://github.com/cheng338/dwd/blob/v2.0.2/docs/fitting_and_conic_persistence.md>`_
 for argument boundaries, metadata migration, solver diagnostics and saving
 fitted conic problems.
 

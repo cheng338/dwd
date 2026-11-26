@@ -164,10 +164,11 @@ protection changes, not the cost of diagnostic conversion alone:
 | SVM / OSQP / dense | +0.157 ms (+0.67%) | +4.845 ms (+8.94%) |
 | SVM / OSQP / CSR | +0.311 ms (+1.32%) | +0.892 ms (+1.62%) |
 
-These small panels are descriptive, not precision estimates, a uniform
-no-slowdown claim or a comparison between AOCL and MKL. The changes address
-correctness and state preservation; they are not adopted for memory savings.
-Larger workloads and other solvers can have different costs.
+Fit times varied with solver and input layout on each host. The signed SVM
+margin recovered the reference objective in the dense HIGHS/SCIPY case above,
+and the tested conic models retained their fitted values when saved and loaded.
+The timings cover these small workloads. They do not isolate a BLAS effect or
+predict the cost for other solvers and input sizes.
 
 Separate expression comparisons at 128-by-12 and 1024-by-24 showed that an
 explicit epigraph formulation can be faster. It adds auxiliary variables and

@@ -619,15 +619,13 @@ Without the new binary, ordinary Linux costs were about +5.6%/+3.6%
 ordinary speedup nor a fixed penalty is established. First use includes lazy
 loading, but source files were read beforehand; it is not cold operating-system
 cache timing. No overall workload-weighted speedup is claimed, and smaller
-reports or portable builds need not benefit. The earlier beta-extension
-candidate was excluded after its component savings failed to provide a useful
-incremental full-fit result across both hosts. This historical result is
-separate from the subsequent warm-context candidate described below.
+reports or portable builds need not benefit. In this earlier comparison, the
+time saved in isolated beta calculations did not yield a consistent additional
+full-fit benefit across the two hosts.
 
-The November 9 follow-up selected three changes to final reporting. It reuses
-report-specific scores, computes native gradient tiles from existing operand
-splits, and uses the same expansion machinery for eligible coefficient
-calculations once the context exists. The first call starts without a warm-up,
+The November 9 implementation reuses report-specific scores, computes native
+gradient tiles from existing operand splits, and uses the same expansion
+machinery for eligible coefficient calculations once the context exists. The first call starts without a warm-up,
 and unsupported calls follow the checked fallback. The model, optimizer work,
 error bounds, callbacks and numerical thresholds are unchanged. The
 [expansion contract](compiled_residual.md#exact-feature-expansion-tiles) gives
@@ -1191,8 +1189,6 @@ timing support its accuracy/cost tradeoff; it is not a shortcut for sensitive
 near-zero decisions. See [when to choose arithmetic policies](choosing_options.md#arithmetic-and-recovery)
 and [validation scope](../VALIDATION.md) for the evidence and limits.
 
-### Fitted state, cross-validation and caches
-
 ### Default CV grids and display
 
 `GenDWDCV` and `KernGDWDCV` use immutable tuple defaults for `lambd_vals`
@@ -1222,6 +1218,8 @@ explicit array-valued grid.
 Plain-text estimator representation and notebook HTML also involve
 scikit-learn. The separate affected-version HTML encoding issue is described
 in [estimator display and dependency maintenance](dependency_display.md).
+
+### Fitted state, cross-validation and caches
 
 Starting a new fit clears learned state, including the kernel prediction-precision
 flag and fitted affine policy. If fitting or refitting fails, learned state is cleared before the exception

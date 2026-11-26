@@ -156,10 +156,8 @@ def test_natural_small_ridge_factor_outcomes_use_independent_equations(structure
     X = _representation(dense, kind)
     before = _snapshot(X)
     penalty = 1e-12
-    # Final D4 evidence accepted these six design/representation pairs on local
-    # AOCL and Robust MKL. Preserve their usability and independent equation/
-    # descent checks on the supported explicit route; unresolved private
-    # fixtures below retain their separate refusal allowances.
+    # All six dense and CSR cases must solve the original equation and descend
+    # on the explicit Schur path, even with this small ridge penalty.
     one = _solve(X, y, penalty, mode=mode, steps=1)
     record_property("factor_one_step", "accepted")
     assert len(one[2]) == 2

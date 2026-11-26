@@ -13,11 +13,10 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
   2.3.3 on Python 3.14, and 3.0.6 on Python 3.15 and later.
 - Require NumPy 1.26.3 or later and SciPy 1.11.4 or later. NumPy 1.26.3
   fixes a spurious overflow when scaling very small kernel values. SciPy 1.11.4
-  preserves 32-bit indices when cross-validation converts diagonal sparse arrays.
+  preserves 32-bit indices when cross-validation converts diagonal sparse arrays
+  and supports the EVD driver for eigenvalue decomposition of a one-by-one matrix.
 - Estimators that accept sparse features now handle two-dimensional integer COO matrices and arrays,
   including inputs with duplicate entries at the same coordinate.
-  Eigenvalue decomposition of a one-by-one matrix also works with the EVD
-  driver at this minimum.
 - On Windows with NumPy 1.26, spectral recovery uses the supported exponent
   type, and compiled affine reporting uses pointer-width row indices.
 - Training rejects NaN and infinite class labels in extended-precision and
