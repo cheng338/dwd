@@ -1,6 +1,6 @@
 import numpy as np
 from collections.abc import Mapping
-from dwd._validation import exact_sparse_uint64_target, require_real
+from dwd._validation import _comparison_labels, exact_sparse_uint64_target, require_real
 
 
 def parameters_equal(left, right):
@@ -52,10 +52,11 @@ def pm1(y):
     ------
     y: array-like, (n_samples, )
         y with +/- 1 values. Note the positive label is determined
-        by np.unique(y)[1].
+        by the second class in sorted order.
     """
     y = np.array(exact_sparse_uint64_target(y)).reshape(-1)
     require_real(y, 'y', training_labels=True)
+    y = _comparison_labels(y)
     labels = np.unique(y)
 
     # check binary

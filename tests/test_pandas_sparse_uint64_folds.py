@@ -1759,13 +1759,18 @@ def test_missing_row_can_change_a_boundary_duration_into_integer_ticks():
     if integer:
         assert int(observed) == -limit * 10**9
     _check_instant_ranking(grid(y).fit(X, y), y, not integer)
-    # A singleton can also overflow when its companion infers nanoseconds.
+    # Nanosecond conversion can wrap the singleton silently or raise.
+    # Convert to exact whole seconds before comparing, so the reference
+    # itself never needs to fit in an int64 nanosecond count.
+    from datetime import timedelta
     try:
-        np.asarray(y.take([2]))
-    except OverflowError:
-        lossy = True
-    else:
-        lossy = integer
+        singleton = np.asarray(y.take([2]))[0, 0]
+        same_duration = isinstance(singleton, (timedelta, np.timedelta64)) and (
+            int(pd.Timedelta(singleton).as_unit("s", round_ok=False).asm8.astype("i8")) == -limit - 1
+        )
+    except (ValueError, OverflowError):
+        same_duration = False
+    lossy = integer or not same_duration
     checked = grid(y)
     if lossy:
         with pytest.raises(ValueError, match="loses class IDs"):

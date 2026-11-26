@@ -3,7 +3,7 @@ from numbers import Real
 import numpy as np
 
 from sklearn.base import BaseEstimator
-from dwd._validation import check_real_X_y
+from dwd._validation import _comparison_labels, _sorted_class_labels, check_real_X_y
 from sklearn.metrics.pairwise import euclidean_distances
 from sklearn.utils.validation import check_is_fitted
 
@@ -69,7 +69,7 @@ class DWD(LinearClassifierMixin, BaseEstimator):
         X = (_prepare_auto_C_features(X) if self.C == 'auto' else
              promote_sparse_features(X, force_float64=True))
         X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
-        self.classes_ = np.unique(y)
+        self.classes_ = _sorted_class_labels(y)
         if self.classes_.size != 2:
             raise ValueError('DWD requires exactly two classes.')
         self.n_features_in_ = X.shape[1]
@@ -150,7 +150,7 @@ def solve_dwd_socp(X, y, C=1.0, *, solver_kws=None):
     X, y = check_real_X_y(X, y,
                      accept_sparse='csr',
                      dtype='numeric')
-    if np.unique(y).size != 2:
+    if _sorted_class_labels(y).size != 2:
         raise ValueError('DWD requires exactly two classes.')
 
     # convert y to +/- 1
@@ -226,6 +226,7 @@ def auto_dwd_C(X, y, const=100):
     X = _prepare_auto_C_features(X)
     X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
     X = canonical_sparse_features(X)
+    y = _comparison_labels(y)
     labels = np.unique(y)
     if len(labels) != 2:
         raise ValueError('Automatic DWD C requires exactly two classes.')

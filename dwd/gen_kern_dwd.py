@@ -6,7 +6,8 @@ from numbers import Integral, Real
 
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_array, check_random_state
-from dwd._validation import (_MixedTemporalObservations, _label_source_and_target, _temporal_cast,
+from dwd._validation import (_MixedTemporalObservations, _comparison_labels, _label_source_and_target,
+                             _sorted_class_labels, _temporal_cast,
                              _temporal_comparison_targets, _temporal_label_matches, check_real_X_y,
                              exact_label_matches, require_real)
 
@@ -353,7 +354,7 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
         X = promote_sparse_features(X, force_float64=True)
         X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype=np.float64)
-        self.classes_ = np.unique(y)
+        self.classes_ = _sorted_class_labels(y)
         if len(self.classes_) != 2:
             raise ValueError('KernGDWD requires exactly two classes.')
         self.n_features_in_ = X.shape[1]
@@ -603,6 +604,8 @@ class KernGDWD(KernelClfMixin, BaseEstimator):
             positive = _temporal_label_matches(y_val, classes[1:2], paired=False)
             negative = _temporal_label_matches(y_val, classes[:1], paired=False)
         else:
+            y_val = _comparison_labels(y_val)
+            classes = _comparison_labels(classes)
             positive = y_val == classes[1:2]
             negative = y_val == classes[:1]
         if not np.all(positive ^ negative):
@@ -1096,7 +1099,7 @@ class KernGDWDCV(KernelClfMixin, BaseEstimator):
         X, y = check_real_X_y(X, y, accept_sparse='csr',
                          dtype='numeric')
 
-        self.classes_ = np.unique(y)
+        self.classes_ = _sorted_class_labels(y)
         if len(self.classes_) != 2:
             raise ValueError('KernGDWDCV requires exactly two classes.')
         self.n_features_in_ = X.shape[1]

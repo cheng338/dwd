@@ -12,7 +12,6 @@ import importlib.util
 import math
 from pathlib import Path
 import struct
-import sys
 import weakref
 
 import numpy as np
@@ -27,7 +26,6 @@ FIXTURE_SHA = 'fc1b138e92347fc22da231d9fa9780f504e05aa1cadffd617f7f067800e2777d'
 assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == FIXTURE_SHA
 SPEC = importlib.util.spec_from_file_location('dwd._ir13_scalar_feature_oracle', FIXTURE)
 scalar = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = scalar
 SPEC.loader.exec_module(scalar)
 
 

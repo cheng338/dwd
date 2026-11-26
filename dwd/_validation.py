@@ -17,10 +17,26 @@ import numpy as np
 from sklearn.base import ClassifierMixin
 from sklearn.metrics import accuracy_score
 from sklearn.utils.multiclass import check_classification_targets
-from sklearn.utils.validation import assert_all_finite, check_X_y, check_consistent_length, column_or_1d
+from sklearn.utils.validation import (
+    assert_all_finite, check_array, check_X_y, check_consistent_length, column_or_1d,
+    validate_data,
+)
 
 
 _SKLEARN_NATIVE_FLOAT_DTYPES = frozenset(map(np.dtype, (np.float16, np.float32, np.float64)))
+
+
+def _comparison_labels(y):
+    """Preserve complete variable-width strings during class comparisons."""
+    # Some NumPy versions stop comparing same-length StringDType values at
+    # their first embedded NUL, including during sorting and unique grouping.
+    return np.asarray(y, dtype=object) if y.dtype.kind == 'T' else y
+
+
+def _sorted_class_labels(y):
+    """Return sorted, distinct representatives in the training label dtype."""
+    classes = np.unique(_comparison_labels(y))
+    return classes.astype(y.dtype) if y.dtype.kind == 'T' else classes
 
 
 def _check_other_float_labels(y, *, discrete=False):
@@ -45,7 +61,7 @@ def _discrete_training_labels(y):
         y = _wide_integral_float_target(y, native_only=True)
     else:
         _reject_nat_training_labels(y)
-    check_classification_targets(y)
+    check_classification_targets(_comparison_labels(y))
     return y
 
 
@@ -552,6 +568,96 @@ def _numeric_sequence_after_conversion_error(y):
     return boxed[:, None] if column else boxed
 
 
+def _unbox_unicode_scalar(value):
+    if type(value) is np.ndarray and value.ndim == 0 and value.dtype.kind in 'UT':
+        return value[()]
+    return value
+
+
+def _plain_unicode_scalar(value, cache):
+    cls = type(value)
+    return (cls is str or cls is np.str_ or issubclass(cls, str)
+            and _passive_scalar(value, _TEXT_TYPES, _TEXT_FIELDS, cache))
+
+
+def _native_string_subclass_rows(rows):
+    """Replace inherited Unicode scalars only in a plain native-string sequence."""
+    if not _plain_sequence_container(rows) or not rows:
+        return None
+    column = _label_row(rows[0])
+    native = False
+    result = None
+    cache = {}
+    for i, row in enumerate(rows):
+        value = row
+        if column and type(row) is not np.ndarray:
+            if not _plain_sequence_container(row) or len(row) != 1:
+                return None
+            value = row[0]
+        if type(value) is np.ndarray:
+            shape = (1,) if column and row is value else ()
+            if value.shape != shape or value.dtype.kind not in 'UT':
+                return None
+            native |= value.dtype.kind == 'T'
+        elif type(value) is not str and type(value) is not np.str_:
+            if not _plain_unicode_scalar(value, cache):
+                return None
+            if result is None:
+                result = list(rows)
+            text = str.__str__(value)
+            result[i] = [text] if column else text
+    return result if native else None
+
+
+def _infer_label_sequence(rows):
+    try:
+        return np.asarray(rows)
+    except ValueError as error:
+        # Older NumPy can reject a passive str subclass next to a strict
+        # StringDType box. Retain the box, including all its dtype metadata.
+        if (len(error.args) != 1 or type(error.args[0]) is not str
+                or error.args[0] != 'StringDType only allows string data when string coercion is disabled.'):
+            raise
+        compatible = _native_string_subclass_rows(rows)
+        if compatible is None:
+            raise
+        return np.asarray(compatible)
+
+
+def _string_sequence_target(rows, inferred):
+    """Preserve observable Unicode scalar values through string dtype inference."""
+    variable = inferred.dtype.kind == 'T'
+    if inferred.ndim == 1:
+        values = rows
+    elif inferred.ndim == 2 and inferred.shape[1] == 1 and _singleton_label_rows(rows):
+        values = (row[0] for row in rows)
+    else:
+        return inferred if variable else rows
+    scalar_types = {}
+    if variable:
+        # Casting a NumPy Unicode scalar to StringDType can trim its trailing
+        # NULs. Assign the full Python string into the already inferred dtype,
+        # which also retains the selected coercion and missing-value metadata.
+        for i, value in enumerate(values):
+            if _plain_unicode_scalar(value, scalar_types) and str.endswith(value, '\0'):
+                inferred.flat[i] = str.__getitem__(value, slice(None))
+        return inferred
+    padded = False
+    for value in values:
+        if type(value) is np.ndarray:
+            value = _unbox_unicode_scalar(value)
+        if not _plain_unicode_scalar(value, scalar_types):
+            return rows
+        padded = padded or str.endswith(value, '\0')
+    if not padded:
+        return rows
+    boxed = _boxed_label_vector(rows, column=inferred.ndim == 2)
+    for i, value in enumerate(boxed):
+        if type(value) is np.ndarray:
+            boxed[i] = _unbox_unicode_scalar(value)
+    return boxed.reshape(inferred.shape)
+
+
 def _exact_numeric_sequence(y, *, mode='normalize', ordinary=False, iterated=False):
     """Recover integer observations lost by mixed numeric type inference."""
     if ordinary and len(y) and type(y[0]) is int and np.dtype(int).itemsize == 8:
@@ -562,7 +668,7 @@ def _exact_numeric_sequence(y, *, mode='normalize', ordinary=False, iterated=Fal
         except OverflowError:
             pass
     try:
-        inferred = np.asarray(y)
+        inferred = _infer_label_sequence(y)
     except (MemoryError, RecursionError):
         raise
     except Exception:
@@ -579,6 +685,8 @@ def _exact_numeric_sequence(y, *, mode='normalize', ordinary=False, iterated=Fal
             return _label_source_and_target(exact, mode)[1]
         if inferred.dtype.kind in 'SUT':
             return inferred
+    if inferred.dtype.kind in 'UT':
+        return _string_sequence_target(y, inferred)
     if inferred.dtype.kind == 'O':
         temporal = _temporal_sequence_target(y, mode)
         if temporal is not None:
@@ -1721,9 +1829,13 @@ def _observed_iteration(array, selected, key='rows'):
     def capture():
         # Exceptions while yielding rows belong to consumption, after NumPy
         # has successfully obtained the iterator.
-        rows, _ = _sequence_source(list(source))
+        rows, ordinary = _sequence_source(list(source))
         selected[key] = rows
-        yield from rows
+        # NumPy consumes a pandas-selected iterator outside our own inference
+        # call. Keep the original operands for comparison and yield compatible
+        # text to the native dtype without invoking the provider again.
+        compatible = None if ordinary else _native_string_subclass_rows(rows)
+        yield from rows if compatible is None else compatible
 
     return capture()
 
@@ -2520,7 +2632,7 @@ def _pandas_array_target(y, array, pd, mode):
             # Expose them once, preserving a one-column frame's shape.
             return np.asarray(array).reshape(frame_shape or array.shape)
         if isinstance(array, getattr(pd.arrays, 'NumpyExtensionArray', ())):
-            if mode == 'score' and array.dtype.kind == 'T':
+            if array.dtype.kind == 'T':
                 return np.asarray(y)
             if array.dtype.kind == 'O':
                 return _boxed_numeric_target(y, array.to_numpy(copy=False), mode=mode)
@@ -2727,6 +2839,14 @@ def exact_label_matches(values, labels, *, value_source=None, label_source=None)
         values = list(map(_unbox_numeric_array, values))
         labels = list(map(_unbox_numeric_array, labels))
         custom = _custom_comparison_types(values, labels)
+        text_types = {}
+        if custom and (custom <= _TEXT_TYPES or all(
+                _plain_unicode_scalar(v, text_types) for v in chain(values, labels)
+                if id(type(v)) in custom)):
+            # A zero-dimensional Unicode array compared with a text scalar
+            # can trim the scalar's trailing NULs during dtype promotion.
+            values = list(map(_unbox_unicode_scalar, values))
+            labels = list(map(_unbox_unicode_scalar, labels))
     others = repeat(labels[0]) if len(labels) == 1 else iter(labels)
     # A custom comparator sees the same scalars as during fitting, including
     # the NumPy scalar stored inside an individual zero-dimensional array.
@@ -2793,11 +2913,9 @@ class ExactLabelClassifierMixin(ClassifierMixin):
         # sklearn attaches dtype metadata while checking class labels. NumPy's
         # variable-width strings cannot carry that metadata. Object arrays
         # keep the original string values, including trailing NULs.
-        if isinstance(exact_y, np.ndarray) and exact_y.dtype.kind == 'T':
-            exact_y = np.asarray(exact_y, dtype=object)
-        if predictions.dtype.kind == 'T':
-            predictions = np.asarray(predictions, dtype=object)
-        return accuracy_score(exact_y, predictions, sample_weight=sample_weight)
+        if isinstance(exact_y, np.ndarray):
+            exact_y = _comparison_labels(exact_y)
+        return accuracy_score(exact_y, _comparison_labels(predictions), sample_weight=sample_weight)
 
 
 def _refused_real_conversion(value):
@@ -2911,20 +3029,44 @@ def _reject_nat_training_labels(y):
         missing = any(_is_boxed_nat(value, pd) for value in y.flat
                       if type(value) is not str and type(value) is not int)
     elif y.dtype.kind == 'T':
-        sentinel = getattr(y.dtype, 'na_object', None)
-        # StringDType returns its configured sentinel at each missing row.
-        missing = _is_temporal_nat(sentinel, modules.get('pandas')) and any(
-            value is sentinel for value in y.flat)
+        if not hasattr(y.dtype, 'na_object'):
+            return
+        sentinel = y.dtype.na_object
+        # String sentinels compare as ordinary class names. For any other
+        # sentinel, NumPy returns the configured object at a missing row.
+        if issubclass(type(sentinel), str) or not any(value is sentinel for value in y.flat):
+            return
+        missing = _is_temporal_nat(sentinel, modules.get('pandas'))
+        if not missing:
+            raise ValueError('Training labels contain missing values.')
     else:
         return
     if missing:
         raise ValueError('Training labels contain NaT.')
 
 
+def _validate_prepared_X_y(X, y, *, estimator=None, **kwargs):
+    """Validate a single classifier target and retain its original labels."""
+    if isinstance(y, np.ndarray) and y.dtype.kind == 'T':
+        # Older NumPy versions reject StringDType in sklearn's floating-dtype
+        # query. Validate features normally and preserve the string scalars
+        # and their missing-value policy for the estimator's label checks.
+        if estimator is None:
+            X = check_array(X, **kwargs)
+        else:
+            X = validate_data(estimator, X, **kwargs)
+        y = column_or_1d(y, warn=True)
+        check_consistent_length(X, y)
+        return X, y
+    if estimator is None:
+        return check_X_y(X, y, **kwargs)
+    return validate_data(estimator, X, y, **kwargs)
+
+
 def check_real_X_y(X, y, *, target_mode='fit', **kwargs):
     """Apply sklearn data validation and reject object-wrapped complex labels."""
     prepared = exact_sparse_uint64_target(y, mode=target_mode)
-    X, y = check_X_y(X, prepared, **kwargs)
+    X, y = _validate_prepared_X_y(X, prepared, **kwargs)
     if y.dtype.kind == 'O' and y is not prepared:
         y = _boxed_numeric_target(y, y, mode=target_mode)
     require_real(y, 'y', training_labels=target_mode == 'fit')

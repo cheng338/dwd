@@ -21,9 +21,10 @@ for _name, _expected in json.loads((OLD/'provenance.json').read_text())['files']
     if hashlib.sha256((OLD/_name).read_bytes()).hexdigest() != _expected:
         raise RuntimeError('Frozen performance oracle changed: ' + _name)
 
-def load(name,path):
-    spec=importlib.util.spec_from_file_location('dwd.'+name,path)
-    module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+def load(name, path):
+    spec = importlib.util.spec_from_file_location('dwd.' + name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     return module
 
 old_scores=load('_perf_old_scores',OLD/'_kernel_scores.py')

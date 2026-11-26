@@ -3,7 +3,8 @@ from copy import deepcopy
 import numpy as np
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_array
-from dwd._validation import check_real_X_y, exact_sparse_uint64_target, require_real
+from dwd._validation import (_comparison_labels, _sorted_class_labels, check_real_X_y,
+                             exact_sparse_uint64_target, require_real)
 
 from dwd.kernel_utils import KernelClfMixin
 from dwd._fit_state import fit_with_cleanup
@@ -25,7 +26,7 @@ class KernMD(KernelClfMixin, BaseEstimator):
     @fit_with_cleanup
     def fit(self, X, y):
         X, y = check_real_X_y(X, y, dtype='numeric')
-        self.classes_ = np.unique(y)
+        self.classes_ = _sorted_class_labels(y)
         self.n_features_in_ = X.shape[1]
         self.kernel_ = self.kernel
         self.kernel_kws_ = deepcopy(self.kernel_kws)
@@ -70,6 +71,7 @@ def kern_md(K, y, naive_bayes=False):
     K = check_array(K, dtype='numeric')
     y = np.asarray(exact_sparse_uint64_target(y))
     require_real(y, 'y', training_labels=True)
+    y = _comparison_labels(y)
     labels = np.unique(y)
     if K.shape[0] != K.shape[1] or y.ndim != 1 or len(y) != K.shape[0]:
         raise ValueError('K must be square with one row per label.')

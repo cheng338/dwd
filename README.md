@@ -584,7 +584,11 @@ install the exact artifact in a fresh environment, prepare tests outside the
 checkout, verify installed origins and payloads, then run the detached suite.
 
 For a separate environment without CVXPY, install `.[test-base]` and run the same
-suite. Optional SOCP tests skip. The candidates for DWD 2.0.0 and Ensemble DWD
+suite. Optional SOCP tests skip. Both test extras support pandas 2.2.0 with
+NumPy 1.26 on Python 3.11 and 3.12. The pandas minimum is 2.2.3 on Python
+3.13, 2.3.3 on Python 3.14, and 3.0.6 on Python 3.15 and later.
+
+The candidates for DWD 2.0.0 and Ensemble DWD
 0.4.0 were tested in the [November 19, 2026 comparison](VALIDATION.md#november-19-2026-paired-release-comparison).
 Passing numerical and API tests is not a universal accuracy or speed guarantee.
 Historical notebooks and figures under `doc/` describe earlier implementations;

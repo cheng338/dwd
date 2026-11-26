@@ -1,10 +1,17 @@
 from sklearn.base import clone, is_classifier
-from sklearn.metrics import check_scoring
-from dwd._validation import check_real_X_y
-from sklearn.model_selection import check_cv, ParameterGrid
+from sklearn import metrics
+from sklearn.metrics import check_scoring, get_scorer, get_scorer_names
+from sklearn.utils import get_tags
+from dwd._validation import check_real_X_y, _plain_unicode_scalar
+from sklearn.model_selection import (
+    check_cv, ParameterGrid, RepeatedStratifiedKFold, StratifiedGroupKFold,
+    StratifiedKFold, StratifiedShuffleSplit,
+)
 from time import time
-from copy import deepcopy
+from copy import copy, deepcopy
+from inspect import getattr_static
 from fractions import Fraction
+from functools import cache, partial
 from numbers import Integral
 import numpy as np
 
@@ -90,6 +97,128 @@ def _validate_dwd_candidate_parameters(clf, settings):
                     raise ValueError(f'Invalid parameter {name!r} for {type(clf).__name__}.')
 
 
+def _stock_stratified_splitter(cv):
+    # Inherited sklearn splitting can use boxed strings. A caller's split or
+    # row-generation hook must receive the caller's original label dtype.
+    for cls in (StratifiedKFold, RepeatedStratifiedKFold,
+                StratifiedShuffleSplit, StratifiedGroupKFold):
+        if isinstance(cv, cls):
+            if cls is RepeatedStratifiedKFold and getattr_static(cv, 'cv', None) is not StratifiedKFold:
+                return False
+            hooks = ('split', '_make_test_folds', '_iter_test_masks',
+                     '_iter_test_indices', '_iter_indices', '__getattribute__')
+            return all(getattr_static(cv, name, None) is getattr_static(cls, name, None)
+                       for name in hooks)
+    return False
+
+
+def _escaped_label(value):
+    if isinstance(value, str):
+        # sklearn displays this key when rejecting a positive class. The
+        # space sorts before any next hex digit, including for prefix labels.
+        key = str.encode(value, 'utf-8', 'surrogatepass').hex()
+        return key + ' ' + str.__repr__(value)
+    return value
+
+
+def _contains_nul(value):
+    return isinstance(value, str) and str.__contains__(value, '\0')
+
+
+def _metric_string_array(values, escaped):
+    boxed = np.asarray(values, dtype=object)
+    if escaped:
+        # Rows typically repeat the same two class names. Reuse their keys
+        # within this array without hashing a caller's custom scalar.
+        encode = cache(_escaped_label)
+        boxed = np.array([encode(value) if type(value) is str else _escaped_label(value) for value in boxed.flat],
+                         dtype=object).reshape(boxed.shape)
+    return boxed
+
+
+class _StringScoreView:
+    """Give sklearn compatible class metadata while calling the real fitted estimator."""
+
+    def __init__(self, estimator, escaped, convert_predictions):
+        self.estimator = estimator
+        self.escaped = escaped
+        self.convert_predictions = convert_predictions
+        self.classes_ = _metric_string_array(estimator.classes_, escaped)
+
+    def __sklearn_tags__(self):
+        return get_tags(self.estimator)
+
+    def __getattr__(self, name):
+        method = getattr(self.estimator, name)
+        if name == 'predict' and self.convert_predictions and method is not None:
+            def predict(X):
+                return _metric_string_array(method(X), self.escaped)
+            return predict
+        return method
+
+
+@cache
+def _sklearn_metric_functions():
+    # Some registered scorers use a function that sklearn.metrics does not export.
+    return (*vars(metrics).values(),
+            *(get_scorer(name)._score_func for name in get_scorer_names()))
+
+
+def _keyword_partial(func):
+    """Recover a callable and the effective options from keyword-only partials."""
+    options = {}
+    while type(func) is partial and not func.args:
+        options = func.keywords | options
+        func = func.func
+    return func, options
+
+
+def _string_cv_scorer(original, strings, escaped, variable_width):
+    """Preserve public make_scorer metric arguments across sklearn's dtype checks."""
+    base, call_options = _keyword_partial(original)
+    if type(base) is not type(get_scorer('accuracy')):
+        return original, None
+    metric, bound = _keyword_partial(base._score_func)
+    builtin_metric = any(metric is func for func in _sklearn_metric_functions())
+    converted = {}
+    if builtin_metric:
+        options = bound | base._kwargs | call_options
+        labels = options.get('labels')
+        boxed = None if labels is None else np.asarray(labels, dtype=object)
+        if not escaped and (_contains_nul(options.get('pos_label')) or
+                            (boxed is not None and any(map(_contains_nul, boxed.flat)))):
+            # An absent class named by the scorer can collide with a training class.
+            escaped = True
+            strings = _metric_string_array(strings, escaped=True)
+        if escaped and 'pos_label' in options:
+            converted['pos_label'] = _escaped_label(options['pos_label'])
+        if escaped and boxed is not None and boxed.ndim == 1:
+            converted['labels'] = [_escaped_label(label) for label in boxed]
+        elif isinstance(labels, np.ndarray) and labels.dtype.kind == 'T':
+            converted['labels'] = boxed
+    if not (variable_width or escaped or converted):
+        return original, None
+    scorer = copy(base)
+    if converted:
+        # sklearn validates call-time metadata separately from make_scorer options.
+        scorer._kwargs = base._kwargs.copy()
+        for key, value in converted.items():
+            if key in call_options:
+                call_options[key] = value
+            else:
+                scorer._kwargs[key] = value
+    if escaped:
+        # sklearn selects the response using the configured metric's positive
+        # class before applying call-time metric metadata.
+        get_pos_label = base._get_pos_label
+        scorer._get_pos_label = lambda: _escaped_label(get_pos_label())
+
+    def score(model, X, y):
+        return scorer(_StringScoreView(model, escaped, builtin_metric), X, y, **call_options)
+
+    return score, strings if builtin_metric else None
+
+
 def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     """
     Run serial cross-validation with fold-specific preparation.
@@ -155,8 +284,29 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
     accuracy_scoring = isinstance(scoring, str) and scoring == 'accuracy'
 
     # init cross-validation generator
-    cv = check_cv(cv, y=y, classifier=is_classifier(clf))
-    folds = list(cv.split(X, y))
+    split_y = y
+    score_y = None
+    variable_width = y.dtype.kind == 'T'
+    unicode_types = {}
+    if (y.dtype.kind in 'UT' or (y.dtype.kind == 'O' and
+            all(_plain_unicode_scalar(value, unicode_types) for value in y))):
+        # Stock sklearn splitters and named scorers may reject StringDType.
+        # Object strings preserve the scalar values, including trailing NULs.
+        strings = y.astype(object) if variable_width else y
+        escaped = any(map(_contains_nul, strings))
+        if escaped:
+            # sklearn can collapse 'x' and 'x\0' while collecting metric labels.
+            # Escaped strings keep equality, lexical order and string pos_label
+            # semantics. Keep missing-value sentinels available for validation.
+            strings = _metric_string_array(strings, escaped=True)
+        cv = check_cv(cv, y=strings, classifier=is_classifier(clf))
+        if _stock_stratified_splitter(cv):
+            split_y = strings
+        if is_classifier(clf):
+            scorer, score_y = _string_cv_scorer(scorer, strings, escaped, variable_width)
+    else:
+        cv = check_cv(cv, y=y, classifier=is_classifier(clf))
+    folds = list(cv.split(X, split_y))
     n_folds = len(folds)
 
     # get tuning path for each fold
@@ -175,6 +325,7 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
                                        params=params,
                                        fold_index=f_idx,
                                        _accuracy_scoring=accuracy_scoring,
+                                       _score_targets=None if score_y is None else (score_y[train], score_y[test]),
                                        _fold_source=(X, train, test))
 
         all_cv_results.append(fold_results)
@@ -225,12 +376,14 @@ def run_cv(clf, X, y, params, scoring='accuracy', cv=5, refit_best=True):
 
 
 def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
-                    *, fold_index=None, _fold_source=None, _accuracy_scoring=False):
+                    *, fold_index=None, _fold_source=None, _accuracy_scoring=False,
+                    _score_targets=None):
 
     all_param_settings = DoL2LoD(params)
     _validate_dwd_candidate_parameters(clf, all_param_settings)
 
     # initalize classifier before cross validation
+    score_train, score_test = (y_train, y_test) if _score_targets is None else _score_targets
     cv_results = {'params': [],
                   'train_score': [],
                   'test_score': [],
@@ -276,9 +429,9 @@ def get_path_scores(clf, X_train, y_train, X_test, y_test, scorer, params,
         clf.fit(X_train, y_train)
         runtime = time() - start_time
 
-        tr_score = _validate_score(scorer(clf, X_train, y_train),
+        tr_score = _validate_score(scorer(clf, X_train, score_train),
                                    param_setting, 'train score', fold_index)
-        tst_score = _validate_score(scorer(clf, X_test, y_test),
+        tst_score = _validate_score(scorer(clf, X_test, score_test),
                                     param_setting, 'test score', fold_index)
 
         cv_results['params'].append(param_setting)

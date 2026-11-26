@@ -8,8 +8,9 @@ license remain credited in the [README](README.md) and [license](LICENSE.txt).
 
 ## 2.0.2
 
-- The test extras support pandas 2.2.2 on Python 3.11 and 3.12 and require
-  pandas 2.2.3 or later on Python 3.13 and later.
+- The `test` and `test-base` extras support pandas 2.2.0 with NumPy 1.26
+  on Python 3.11 and 3.12. The pandas minimum is 2.2.3 on Python 3.13,
+  2.3.3 on Python 3.14, and 3.0.6 on Python 3.15 and later.
 - Require NumPy 1.26.3 or later and SciPy 1.11.4 or later. NumPy 1.26.3
   fixes a spurious overflow when scaling very small kernel values. SciPy 1.11.4
   preserves 32-bit indices when cross-validation converts diagonal sparse arrays.

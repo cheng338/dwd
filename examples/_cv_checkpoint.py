@@ -4,7 +4,7 @@ Runtime fingerprints require an immutable installation during a process's
 lifetime. They describe disk artifacts and observed loaded libraries, not an
 attestation of machine code mapped before this module was imported.
 """
-from contextlib import contextmanager, ExitStack
+from functools import partial
 import hashlib
 import importlib
 import importlib.metadata
@@ -34,6 +34,7 @@ _RUNTIME_ACCELERATOR = _RUNTIME_CONTROLLER = _RUNTIME_MODULE_COUNT = None
 _RUNTIME_ACCELERATOR_IDENTITY = None
 _RUNTIME_GUARDS = set()
 _RESOLVED_PATHS = {}
+_OPEN_PRIVATE = partial(os.open, mode=0o600)
 
 
 def array_fingerprint(value):
@@ -99,52 +100,106 @@ def _is_unpublished_identity_temporary(path):
                      & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0)))
 
 
-class CheckpointRun:
+class _LockOwner:
+    def _acquire_or_release(self):
+        ambient = sys.exception()
+        first = None
+        try:
+            try:
+                return self._acquire()
+            except BaseException as error:
+                first = error
+                self.__exit__(*sys.exc_info())
+                raise
+        except KeyboardInterrupt as interrupt:
+            # A second interrupt can arrive before the acquisition handler
+            # binds the first error. Python retains that error as its context.
+            if first is None:
+                context = interrupt.__context__
+                first = interrupt if context is None or context is ambient else context
+            self._release(first)
+            if first is interrupt:
+                raise
+            context = first.__context__
+            try:
+                raise first
+            finally:
+                first.__context__ = context
+
+    def __exit__(self, exc_type, error, traceback):
+        try:
+            self._release(error)
+        except KeyboardInterrupt:
+            # Closing is idempotent. Keep an exception from the owned work
+            # when a second interrupt arrives during release.
+            self._release(error)
+            if error is None:
+                raise
+
+
+class CheckpointRun(_LockOwner):
     """Own a run; refuse live orphan workers before issuing a new generation."""
     def __init__(self, run_dir, identity, *, resume=False):
         self.directory = io_path(run_dir)
         self.identity, self.identity_hash = identity, digest(identity)
         self.resume, self.token, self._lease = resume, None, None
+        self._worker_probes = []
 
     def __enter__(self):
         self.directory.mkdir(parents=True, exist_ok=True)
+        if self._lease is not None:
+            raise CheckpointBusyError('This checkpoint coordinator is already active')
+        return self._acquire_or_release()
+
+    def _acquire(self):
         self._lease = _Lease(self.directory / 'coordinator.lock')
         self._lease.__enter__()
-        try:
-            manifest = self.directory / 'identity.json'
-            if self.resume:
-                payload = read_receipt(manifest, self.identity_hash,
-                                       expected_identity=self.identity)
-                if payload != {'schema': 1, 'identity_sha256': self.identity_hash,
-                               'identity': self.identity}:
-                    raise CheckpointError(_run_identity_mismatch_message(manifest, payload, self.identity))
-            elif any(p.name != 'coordinator.lock'
-                     and not _is_unpublished_identity_temporary(p)
-                     for p in self.directory.iterdir()):
+        manifest = self.directory / 'identity.json'
+        if self.resume:
+            payload = read_receipt(manifest, self.identity_hash,
+                                   expected_identity=self.identity)
+            if payload != {'schema': 1, 'identity_sha256': self.identity_hash,
+                           'identity': self.identity}:
+                raise CheckpointError(_run_identity_mismatch_message(manifest, payload, self.identity))
+            # Each dispatched fold already has a stable lock name. Hold every
+            # probe until publication so a delayed worker must check the new token.
+            for path in sorted(self.directory.glob('fold-*.lock')):
+                probe = _Lease(path)
+                self._worker_probes.append(probe)
+                probe.__enter__()
+        else:
+            if any(p.name != 'coordinator.lock'
+                   and not _is_unpublished_identity_temporary(p)
+                   for p in self.directory.iterdir()):
                 raise CheckpointError('Run directory is not fresh; use resume or a new directory')
-            # Pending old workers must pass the token check after taking their
-            # own lock. Active old workers prevent a replacement coordinator.
-            with ExitStack() as workers:
-                for path in sorted(self.directory.glob('fold-*.lock')):
-                    workers.enter_context(_Lease(path))
-                if not self.resume:
-                    write_receipt(manifest, {'schema': 1, 'identity_sha256': self.identity_hash,
-                                             'identity': self.identity})
-                self.token = uuid.uuid4().hex
-                write_receipt(self.directory / 'generation.json',
-                              {'identity_sha256': self.identity_hash, 'token': self.token})
-            return self
-        except BaseException:
-            self._lease.__exit__(None, None, None)
-            self._lease = None
-            raise
+            write_receipt(manifest, {'schema': 1, 'identity_sha256': self.identity_hash,
+                                     'identity': self.identity})
+        self.token = uuid.uuid4().hex
+        write_receipt(self.directory / 'generation.json',
+                      {'identity_sha256': self.identity_hash, 'token': self.token})
+        self._release_worker_probes()
+        return self
 
     def assert_current(self):
         assert_generation(self.directory, self.token)
 
-    def __exit__(self, *args):
+    def register_fold(self, fold_index):
+        # Publish the name before giving a worker any executable arguments.
+        # Opening in append mode leaves an existing lock file untouched.
+        with open(self.directory / ('fold-%04d.lock' % fold_index), 'ab',
+                  buffering=0, opener=_OPEN_PRIVATE):
+            pass
+
+    def _release_worker_probes(self, error=None):
+        # Keep the probe reachable until its descriptor has actually closed.
+        while self._worker_probes:
+            self._worker_probes[-1]._release(error)
+            self._worker_probes.pop()
+
+    def _release(self, error=None):
+        self._release_worker_probes(error)
         if self._lease is not None:
-            self._lease.__exit__(*args)
+            self._lease._release(error)
             self._lease = None
 
 
@@ -159,11 +214,9 @@ def assert_generation(run_dir, token):
         raise CheckpointError('This worker no longer owns the run generation')
 
 
-@contextmanager
 def worker_lease(run_dir, token, fold_index):
-    with _Lease(io_path(run_dir) / ('fold-%04d.lock' % fold_index)):
-        assert_generation(run_dir, token)
-        yield
+    return _Lease(io_path(run_dir) / ('fold-%04d.lock' % fold_index),
+                  generation=(run_dir, token))
 
 class CheckpointError(RuntimeError):
     """A saved identity or receipt cannot safely be reused."""
@@ -288,21 +341,22 @@ def read_receipt(path, identity_sha256, *, expected_identity=_IDENTITY_DIAGNOSTI
     return payload
 
 
-class _Lease:
+class _Lease(_LockOwner):
     """Non-inherited advisory lock; lockfiles remain as harmless stable names."""
-    def __init__(self, path):
+    def __init__(self, path, *, generation=None):
         self.path, self.stream = io_path(path), None
+        self._generation = generation
+        self._locked = False
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor = None
+        if self.stream is not None:
+            raise CheckpointBusyError('This checkpoint lock is already active')
+        return self._acquire_or_release()
+
+    def _acquire(self):
         try:
-            descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
-            os.set_inheritable(descriptor, False)
-            self.stream = os.fdopen(descriptor, 'r+b', buffering=0)
-            descriptor = None  # The stream owns the descriptor from here.
-            if os.fstat(self.stream.fileno()).st_size == 0:
-                self.stream.write(b'\0')
+            self.stream = open(self.path, 'a+b', buffering=0, opener=_OPEN_PRIVATE)
             self.stream.seek(0)
             if os.name == 'nt':
                 import msvcrt
@@ -310,27 +364,34 @@ class _Lease:
             else:
                 import fcntl
                 fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BaseException as error:
-            if self.stream is not None:
-                self.stream.close()
-                self.stream = None
-            elif descriptor is not None:
-                os.close(descriptor)
-            if isinstance(error, OSError):
-                raise CheckpointBusyError('Live or inaccessible checkpoint owner: ' + str(self.path)) from error
-            raise
-        return self
+            self._locked = True
+            if os.fstat(self.stream.fileno()).st_size == 0:
+                self.stream.write(b'\0')
+            if self._generation is not None:
+                assert_generation(*self._generation)
+                return None
+            return self
+        except OSError as error:
+            raise CheckpointBusyError('Live or inaccessible checkpoint owner: ' + str(self.path)) from error
 
-    def __exit__(self, *args):
+    def _release(self, error=None):
         if self.stream is not None:
             try:
-                self.stream.seek(0)
-                if os.name == 'nt':
-                    import msvcrt
-                    msvcrt.locking(self.stream.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
+                if self._locked:
+                    # Closing also releases the OS lock. On retry, close the
+                    # same stream without attempting a second explicit unlock.
+                    self._locked = False
+                    self.stream.seek(0)
+                    if os.name == 'nt':
+                        import msvcrt
+                        msvcrt.locking(self.stream.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
+            except OSError as unlock_error:
+                if error is None:
+                    raise
+                error.add_note('Explicit checkpoint unlock also failed: ' + str(unlock_error))
             finally:
                 self.stream.close()
                 self.stream = None

@@ -134,6 +134,25 @@ are identical. The extension must belong to the identified DWD installation.
 Runs without the optional compiled accelerator can still resume when their
 recorded runtime matches.
 
+When joblib runs folds in separate processes, the example starts workers for
+that search and closes them when it finishes. Other joblib calls in the same
+process can continue using their workers. Each new process-based search pays
+the worker startup cost. Use `jobs=1` to run folds serially. An enclosing
+joblib configuration that requires shared memory can select threads, and
+joblib's usual restrictions on nested parallelism still apply.
+If a threaded search is interrupted or a fold fails, the call waits for active
+folds to release their checkpoint files and native thread settings before it
+returns the error. A fit already in progress can delay that return. Completed
+evaluation receipts remain available on resume.
+
+If the calling process has already imported CVXPY or SCS, parallel fold workers
+import the same solver modules before checking their native libraries and thread
+counts. Both modules are optional for this example. For a new process resuming
+a run, use the example source and loaded numerical runtime recorded for that
+run. Load optional solvers before the first checkpointed search in the process.
+Loading additional native libraries after the runtime has been recorded can
+invalidate subsequent checkpoint operations.
+
 Checkpoints created before these accelerator fields were added cannot be resumed
 with the updated example. Start a new run directory, or use the matching old
 example and runtime to resume the earlier run; missing fields are not inferred
@@ -165,6 +184,10 @@ logical CPU count by `cv_native_threads`, rounding down but allowing at least on
 worker, then caps it by unfinished folds and any supplied memory allowance.
 An explicit positive `jobs` value remains the caller's concurrency choice.
 Choose a native-thread count that itself fits the available CPU budget.
+The checkpoint checks that every detected numerical-library pool reports the
+requested count. A loaded library built for one thread can satisfy a request
+for one. For a larger count, use a process in which every pool supports that
+count; otherwise the run refuses to record results.
 
 Two optional arguments can further cap concurrency:
 `--cv-memory-budget-mib B --cv-worker-memory-mib W`. Both are required together.
@@ -369,9 +392,12 @@ for the native-thread option, allowance calculation and limits of this plan.
 Candidates within each fold remain serial to share compatible matrix preparation.
 
 Each active fold may require its own dense kernel and solver workspace. Choose
-`jobs` according to available memory as well as processors. Parallel execution
-has not been benchmarked for this example. Small folds can spend more time
-starting workers than they save through concurrent fitting.
+`jobs` according to available memory as well as processors. A timing comparison
+on a 20-row dataset used two workers in both versions. It timed complete
+searches with a reusable worker pool and with a fresh pool per search. To
+measure speedup on your data, compare `jobs=1` with
+your chosen worker count using the same folds, candidate grid and native-thread
+limit. Use a fresh checkpoint directory for each run so both perform the same work.
 
 The compatibility argument `final_native_threads` (CLI `--final-native-threads`)
 accepts only `1`. During the final phase, the sequential joblib backend also

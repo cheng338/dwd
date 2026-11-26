@@ -16,7 +16,7 @@ from joblib import effective_n_jobs, parallel_config
 from sklearn.metrics import pairwise
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
-from threadpoolctl import threadpool_info, threadpool_limits
+from threadpoolctl import ThreadpoolController, threadpool_info, threadpool_limits
 
 from dwd.gen_kern_dwd import KernGDWD
 
@@ -40,6 +40,11 @@ def assert_counts(test, expected):
     observed = counts()
     test.assertTrue(observed)
     test.assertEqual(set(observed.values()), {expected})
+
+
+def requires_adjustable_pools(method):
+    method.requires_adjustable_pools = True
+    return method
 
 
 rng = np.random.RandomState(6100604)
@@ -68,9 +73,17 @@ def receipts(path):
 
 class FinalRefitThreadTests(unittest.TestCase):
     def run(self, result=None):
-        if _ISOLATED_CHILD or not _fixture_oracle_is_loaded():
-            return super().run(result)
-        return run_isolated_test(self, result, module_path=__file__)
+        if not _ISOLATED_CHILD:
+            method = getattr(self, self._testMethodName, None)
+            # Some SCS wheels load a single-threaded OpenBLAS at collection.
+            # Exercise the adjustable-pool tests on the actual clean runtime.
+            fixed_pool_loaded = (getattr(method, 'requires_adjustable_pools', False)
+                                 and sys.modules.get('scs') is not None
+                                 and any(p.get('threading_layer') == 'disabled'
+                                         for p in threadpool_info()))
+            if fixed_pool_loaded or _fixture_oracle_is_loaded():
+                return run_isolated_test(self, result, module_path=__file__)
+        return super().run(result)
 
     def setUp(self):
         # Load lazily initialized native pools before capturing thread limits.
@@ -97,13 +110,62 @@ class FinalRefitThreadTests(unittest.TestCase):
         if 'native_threads_per_worker' in result['work_summary']:
             self.assertEqual(result['work_summary']['native_threads_per_worker'], cv_threads)
 
+    @requires_adjustable_pools
+    def test_persistent_native_failure_restores_other_libraries(self):
+        controller = ThreadpoolController()
+        pools = controller.lib_controllers
+        for index, pool in enumerate(pools):
+            pool.set_num_threads(3 + index % 2)
+        original = [pool.get_num_threads() for pool in pools]
+        adjustable = [index for index, count in enumerate(original) if count is not None and count > 1]
+        if len(adjustable) < 2:
+            self.skipTest('Requires two independently adjustable native libraries')
+        first, middle = adjustable[0], adjustable[len(adjustable) // 2]
+        for blocked in ((first,), (middle,), (first, middle)):
+            with self.subTest(blocked=blocked), ExitStack() as patches:
+                for pool, count in zip(pools, original):
+                    pool.set_num_threads(count)
+                errors = []
+                for index in blocked:
+                    def reject(count, setter=pools[index].set_num_threads, index=index):
+                        if count == original[index]:
+                            error = RuntimeError(f'Persistent failure in {pools[index].filepath}')
+                            errors.append((index, error))
+                            raise error
+                        setter(count)
+
+                    patches.enter_context(patch.object(pools[index], 'set_num_threads', reject))
+                patches.enter_context(patch.object(example, 'ThreadpoolController', return_value=controller))
+                interrupted = KeyboardInterrupt('operation interrupted')
+                with patch.object(example, 'runtime_fingerprint', side_effect=interrupted) as operation:
+                    with self.assertRaises(RuntimeError) as caught:
+                        run_example(self.path)
+                operation.assert_called_once()
+                actual = [pool.get_num_threads() for pool in pools]
+                for index, count in enumerate(original):
+                    if index not in blocked:
+                        self.assertEqual(actual[index], count, pools[index].filepath)
+                chain = []
+                error = caught.exception
+                while error is not None:
+                    self.assertNotIn(error, chain)
+                    chain.append(error)
+                    error = error.__context__
+                self.assertIn(interrupted, chain)
+                self.assertIs(caught.exception, errors[-1][1])
+                for index in blocked:
+                    failures = [error for i, error in errors if i == index]
+                    self.assertGreater(len(failures), 0)
+                    self.assertLessEqual(len(failures), 4)
+                    self.assertIn(failures[-1], chain)
+
     def test_default_and_explicit_one_keep_original_runtime_scope(self):
         self.assertEqual(inspect.signature(example.run_resumable_cv)
                          .parameters['final_native_threads'].default, 1)
         records = []
         for name, options in (('omitted', {}), ('explicit', {'final_native_threads': 1})):
             limits, guards = [], []
-            original_limits, original_guard = example.threadpool_limits, example._check_runtime
+            original_limits, original_guard = example._native_thread_limit, example._check_runtime
 
             def observe_limits(*args, **kwargs):
                 limits.append(kwargs.get('limits', args[0] if args else None))
@@ -114,7 +176,7 @@ class FinalRefitThreadTests(unittest.TestCase):
                 self.assertNotIn('native_threads', kwargs)
                 return original_guard(*args, **kwargs)
 
-            with patch.object(example, 'threadpool_limits', observe_limits), \
+            with patch.object(example, '_native_thread_limit', observe_limits), \
                     patch.object(example, '_check_runtime', observe_guard):
                 result = run_example(self.path / name, **options)
             self.check_provenance(result, 1)
@@ -125,6 +187,7 @@ class FinalRefitThreadTests(unittest.TestCase):
             records.append((limits, guards))
         self.assertEqual(records[0], records[1])
 
+    @requires_adjustable_pools
     def test_parallel_cv_serial_final_fit_and_caller_restored(self):
         observed = []
         pairwise_workers = []
@@ -206,15 +269,16 @@ class FinalRefitThreadTests(unittest.TestCase):
         self.assertEqual(result['work_summary']['replayed_evaluations'], 4)
         self.check_provenance(result)
 
+    @requires_adjustable_pools
     def test_cv_only_does_not_enter_final_scope(self):
         limits = []
-        original = example.threadpool_limits
+        original = example._native_thread_limit
 
         def observed(*a, **k):
             limits.append(k.get('limits', a[0] if a else None))
             return original(*a, **k)
 
-        with patch.object(example, 'threadpool_limits', observed):
+        with patch.object(example, '_native_thread_limit', observed):
             result = run_example(self.path, refit_best=False, cv_native_threads=2)
         self.assertTrue(limits)
         self.assertEqual(set(limits), {2})
@@ -252,6 +316,7 @@ class FinalRefitThreadTests(unittest.TestCase):
             run_example(self.path, final_native_threads=2)
         self.assertFalse(self.path.exists())
 
+    @requires_adjustable_pools
     def test_final_failures_restore_caller_and_resume_completed_cv(self):
         run_example(self.path, refit_best=False, cv_native_threads=2)
         saved = receipts(self.path)
@@ -285,6 +350,7 @@ class FinalRefitThreadTests(unittest.TestCase):
                     self.assertEqual(counts(), before)
                     self.check_provenance(result, 2)
 
+    @requires_adjustable_pools
     def test_diagnostic_and_summary_failures_keep_final_runtime(self):
         for stage in ('diagnostics', 'summary'):
             original = example._diagnostics
@@ -305,6 +371,7 @@ class FinalRefitThreadTests(unittest.TestCase):
                 if stage == 'summary':
                     self.assertEqual(result['work_summary']['coverage'], 'unavailable')
 
+    @requires_adjustable_pools
     def test_runtime_count_guard_default_and_phase_identity_remain_strict(self):
         with threadpool_limits(2):
             with self.assertRaises(checkpoint.CheckpointError):
@@ -318,6 +385,21 @@ class FinalRefitThreadTests(unittest.TestCase):
                 different[field] = 'different'
                 with self.subTest(field=field), self.assertRaises(checkpoint.CheckpointError):
                     example._check_runtime(different, native_threads=2)
+
+    def test_two_thread_cv_refuses_one_fixed_pool_before_opening_run(self):
+        fixed = self.path.parent / 'fixed-native-pool'
+        fixed.write_bytes(b'synthetic single-threaded library')
+        original_info = checkpoint.ThreadpoolController.info
+
+        def mixed_counts(controller):
+            adjustable = [dict(pool, num_threads=2) for pool in original_info(controller)]
+            return [*adjustable, dict(filepath=str(fixed), user_api='blas', num_threads=1)]
+
+        with patch.object(checkpoint.ThreadpoolController, 'info', mixed_counts), patch.object(
+                KernGDWD, 'fit', side_effect=AssertionError('unexpected fit')):
+            with self.assertRaisesRegex(checkpoint.CheckpointError, 'thread count differs'):
+                run_example(self.path, cv_native_threads=2)
+        self.assertFalse(self.path.exists())
 
     def test_cli_validates_and_forwards_final_threads(self):
         common = ['--data', 'missing.npz', '--run-dir', 'unused', '--lambd', '.1', '--gamma', '.2']

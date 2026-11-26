@@ -8,7 +8,7 @@ from dwd.linear_model import LinearClassifierMixin
 from dwd._fit_state import fit_with_cleanup
 from dwd._conic_persistence import PersistentProblem
 from dwd.utils import pm1
-from dwd._validation import check_real_X_y
+from dwd._validation import _sorted_class_labels, check_real_X_y
 from dwd._sparse_features import promote_sparse_features
 
 
@@ -52,7 +52,7 @@ def solve_svm(X, y, C, *, solver_kws=None):
         raise ValueError('C must be finite and strictly positive.')
     X = promote_sparse_features(X, force_float64=True)
     X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
-    if np.unique(y).size != 2:
+    if _sorted_class_labels(y).size != 2:
         raise ValueError('SVM requires exactly two classes.')
     y = pm1(y)
 
@@ -98,7 +98,7 @@ class SVM(LinearClassifierMixin, BaseEstimator):
     def fit(self, X, y):
         X = promote_sparse_features(X, force_float64=True)
         X, y = check_real_X_y(X, y, accept_sparse='csr', dtype='numeric')
-        self.classes_ = np.unique(y)
+        self.classes_ = _sorted_class_labels(y)
         self.n_features_in_ = X.shape[1]
 
         self.coef_, self.intercept_, self.problem_ = \
